@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import FormField from "../../components/ui/FormField";
 import { api } from "../../services/functions.service";
 import { STAGES } from "../../lib/pipeline";
 import type { Opportunity, OpportunityStage, Partner } from "../../types";
@@ -59,18 +60,14 @@ export default function OpportunityForm({ opportunity, partners, defaultPartnerI
   }
 
   const field = (name: keyof FormState, label: string, input: JSX.Element, hint?: string) => (
-    <label className={`form-field${errors[name] ? " has-error" : ""}`}>
-      <span>{label}</span>{input}
-      {errors[name] ? <small className="field-error" id={`opp-${name}-error`}>{errors[name]}</small> : hint && <small>{hint}</small>}
-    </label>
+    <FormField id={`opp-${name}`} label={label} error={errors[name]} hint={hint}>{input}</FormField>
   );
-  const invalid = (name: keyof FormState) => ({ "aria-invalid": Boolean(errors[name]), "aria-describedby": errors[name] ? `opp-${name}-error` : undefined });
 
   return <form className="form-grid" onSubmit={(e) => void submit(e)} noValidate>
-    <div className="form-wide">{field("partner_id", "Partner *", <select value={form.partner_id} onChange={(e) => set("partner_id")(e.target.value)} {...invalid("partner_id")}><option value="">Select a partner…</option>{partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>)}</div>
-    <div className="form-wide">{field("title", "Opportunity title *", <input value={form.title} onChange={(e) => set("title")(e.target.value)} maxLength={200} {...invalid("title")} autoFocus />)}</div>
+    <div className="form-wide">{field("partner_id", "Partner *", <select value={form.partner_id} onChange={(e) => set("partner_id")(e.target.value)}><option value="">Select a partner…</option>{partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>)}</div>
+    <div className="form-wide">{field("title", "Opportunity title *", <input value={form.title} onChange={(e) => set("title")(e.target.value)} maxLength={200} autoFocus />)}</div>
     {field("stage", "Stage", <select value={form.stage} onChange={(e) => set("stage")(e.target.value)}>{STAGES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select>, "Stages record status only; they never imply a signed agreement.")}
-    {field("owner", "Responsible owner *", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} {...invalid("owner")} />)}
+    {field("owner", "Responsible owner *", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} />)}
     {field("next_step", "Next step", <input value={form.next_step} onChange={(e) => set("next_step")(e.target.value)} maxLength={500} />)}
     {field("next_step_date", "Next step date", <input type="date" value={form.next_step_date} onChange={(e) => set("next_step_date")(e.target.value)} />)}
     {submitError && <p className="form-wide form-error" role="alert">{submitError}</p>}

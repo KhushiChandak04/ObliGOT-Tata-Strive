@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import FormField from "../../components/ui/FormField";
 import { api } from "../../services/functions.service";
 import type { Partner, PartnerStatus } from "../../types";
 
@@ -58,20 +59,16 @@ export default function PartnerForm({ partner, onSaved, onCancel }: { partner?: 
   }
 
   const field = (name: keyof FormState, label: string, input: JSX.Element, hint?: string) => (
-    <label className={`form-field${errors[name] ? " has-error" : ""}`}>
-      <span>{label}</span>{input}
-      {errors[name] ? <small className="field-error" id={`${name}-error`}>{errors[name]}</small> : hint && <small>{hint}</small>}
-    </label>
+    <FormField id={`partner-${name}`} label={label} error={errors[name]} hint={hint}>{input}</FormField>
   );
-  const describedBy = (name: keyof FormState) => (errors[name] ? `${name}-error` : undefined);
 
   return <form className="form-grid" onSubmit={(e) => void submit(e)} noValidate>
-    {field("name", "Partner name *", <input value={form.name} onChange={(e) => set("name")(e.target.value)} maxLength={160} required aria-invalid={Boolean(errors.name)} aria-describedby={describedBy("name")} autoFocus />)}
-    {field("category", "Category *", <input value={form.category} onChange={(e) => set("category")(e.target.value)} maxLength={100} required aria-invalid={Boolean(errors.category)} aria-describedby={describedBy("category")} placeholder="e.g. Training & curriculum" />)}
+    {field("name", "Partner name *", <input value={form.name} onChange={(e) => set("name")(e.target.value)} maxLength={160} autoFocus />)}
+    {field("category", "Category *", <input value={form.category} onChange={(e) => set("category")(e.target.value)} maxLength={100} placeholder="e.g. Training & curriculum" />)}
     {field("status", "Relationship status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}>{STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}</select>)}
-    {field("owner", "Responsible owner *", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} required aria-invalid={Boolean(errors.owner)} aria-describedby={describedBy("owner")} />)}
+    {field("owner", "Responsible owner *", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} />)}
     {field("contact_name", "Contact name", <input value={form.contact_name} onChange={(e) => set("contact_name")(e.target.value)} maxLength={120} />)}
-    {field("contact_email", "Contact email", <input type="email" value={form.contact_email} onChange={(e) => set("contact_email")(e.target.value)} maxLength={254} aria-invalid={Boolean(errors.contact_email)} aria-describedby={describedBy("contact_email")} />)}
+    {field("contact_email", "Contact email", <input type="email" value={form.contact_email} onChange={(e) => set("contact_email")(e.target.value)} maxLength={254} />)}
     <div className="form-wide">{field("summary", "Summary", <textarea value={form.summary} onChange={(e) => set("summary")(e.target.value)} maxLength={1200} rows={3} />, "Record verified facts only.")}</div>
     {submitError && <p className="form-wide form-error" role="alert">{submitError}</p>}
     <div className="form-wide form-actions">

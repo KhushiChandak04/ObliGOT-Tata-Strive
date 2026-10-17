@@ -10,7 +10,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 3 | Project instructions and custom skills | Done — approved |
 | 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
 | 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
-| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | 6a approved; 6b done — awaiting review |
+| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | 6a, 6b approved; 6c done — awaiting review |
 | 7 | Deadline engine and action center | Not started |
 | 8 | Funding and compliance | Not started |
 | 9 | Gemini AI integration | Not started |
@@ -68,6 +68,16 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 6c notes — agreements/MOU register
+- Agreement fields added (optional, backward compatible): `signed_copy` (default `unknown`), `renewal_status` (default `none`), `project_id`, `opportunity_id`. Links must exist (404) and belong to the agreement's partner (422), checked on create and PATCH (including when the partner changes).
+- Security: `document_url` restricted to http(s) server-side (blocks `javascript:`/`data:` links that the UI renders as anchors); the UI renders only http(s) links, opened with `rel="noopener noreferrer"`.
+- `GET /api/agreements?expiring_within_days=N` filter evaluated on the backend against the IST business date (inclusive window, active agreements only), so the browser does no deadline date math.
+- Demo: MOU-001 signed copy received, renewal in progress, linked to demo project and a document link; addendum signed copy pending; draft MOU linked to demo-002's opportunity.
+- Frontend: Agreements register (search; status, signed-copy, and backend "expiring within 60 days" filters; sorted by expiry; add/edit with confirmed delete); Partner 360 Agreements tab gains add (partner locked) and edit. Project/opportunity choices are limited to the selected partner and cleared when the partner changes.
+- Accessibility fix (found by the browser tests): hints and errors were inside `<label>`, so they became part of each field's accessible name. New shared `FormField` links them via `aria-describedby` and sets `aria-invalid`; applied to the partner, opportunity, and agreement forms.
+- Verification: `pytest` → 70 passed (9 new in `tests/test_agreements.py`). `npm run build` passes. Headless Chrome: 6c drive (register columns, safe link attributes, filters incl. backend expiry window, partner-scoped link options, client validation, direct API `javascript:` URL → 422, create/edit/delete, Partner 360 add with locked partner, 0 px overflow at 390 px, no console errors) plus regression reruns of the 6a and 6b drives (pass; only expected 409). Field accessible names verified to equal the label text with hints/errors as descriptions.
+- Not in 6c: signed-copy-missing, expired-without-renewal, and renewal-aware expiry rules (Step 7).
 
 ## Step 6b notes — partnership pipeline
 - New `opportunities` collection and routes (`GET/POST /api/opportunities`, `GET/PATCH/DELETE /api/opportunities/{id}`); stages `identified → qualification → proposal → approval → agreement → active → renewal → closed` validated server-side; `updated_at` set on create and every PATCH; partner must exist. Additive — no existing contract changed.

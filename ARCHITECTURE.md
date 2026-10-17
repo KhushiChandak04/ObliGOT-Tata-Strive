@@ -26,7 +26,7 @@ Existing collection names and fields are preserved; new fields are optional for 
 |---|---|---|
 | `partners` | current | name, category, contribution_types, status, owner, contacts, summary, source_label; **[planned]** relationship_types |
 | `opportunities` | current (Step 6b) | partner_id, title, stage (identified → qualification → proposal → approval → agreement → active → renewal → closed), owner, next_step, next_step_date, updated_at |
-| `agreements` | current | partner_id, title, reference_number, status, start_date, expiry_date, owner, document_url; **[planned]** project_id, opportunity_id, signed_copy, renewal_status |
+| `agreements` | current | partner_id, title, reference_number, status, start_date, expiry_date, owner, document_url (http(s) only), signed_copy, renewal_status, project_id, opportunity_id (Step 6c) |
 | `projects` | current | partner_id, name, status, owner, start_date, end_date, milestone_summary |
 | `milestones` | planned | project_id, partner_id, title, due_date, completed_date, status, owner |
 | `finance` | current | partner_id, project_id, record_type (budget / fund_received / invoice / utilization_certificate), amount, currency, due_date, status (per-type allowed values, `FINANCE_STATUSES` in `models.py`); **[planned]** issue_date, received_date |

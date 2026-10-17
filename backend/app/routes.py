@@ -1,4 +1,5 @@
-from datetime import date
+from collections.abc import Callable
+from datetime import date, timedelta
 from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
@@ -143,15 +144,35 @@ def delete_action(action_id: str):
     return None
 
 @router.get("/agreements", response_model=list[Agreement], tags=["agreements"])
-def list_agreements(partner_id: str | None = None) -> list[dict]:
-    records = list_records("agreements")
-    return [r for r in records if not partner_id or r.get("partner_id") == partner_id]
+def list_agreements(partner_id: str | None = None,
+                    expiring_within_days: int | None = Query(default=None, ge=0, le=3650)) -> list[dict]:
+    """`expiring_within_days`: active agreements whose expiry falls between today (IST) and today + N days, inclusive."""
+    records = [r for r in list_records("agreements") if not partner_id or r.get("partner_id") == partner_id]
+    if expiring_within_days is not None:
+        today = business_today()
+        horizon = today + timedelta(days=expiring_within_days)
+        records = [r for r in records if r.get("status") == "active" and r.get("expiry_date")
+                   and today.isoformat() <= str(r["expiry_date"])[:10] <= horizon.isoformat()]
+    return records
+
+def _check_agreement_links(data: dict) -> None:
+    """A linked project or opportunity must exist and must not belong to a different partner."""
+    for collection, field, label in (("projects", "project_id", "Project"), ("opportunities", "opportunity_id", "Opportunity")):
+        if not data.get(field):
+            continue
+        linked = get_record(collection, data[field])
+        if not linked:
+            raise HTTPException(status_code=404, detail=f"{label} not found")
+        if linked.get("partner_id") and linked["partner_id"] != data["partner_id"]:
+            raise HTTPException(status_code=422, detail=f"{label} belongs to a different partner")
 
 @router.post("/agreements", response_model=Agreement, status_code=201, tags=["agreements"])
 def create_agreement(payload: AgreementCreate) -> dict:
     if not get_record("partners", payload.partner_id):
         raise HTTPException(status_code=404, detail="Partner not found")
-    return put_record("agreements", {**payload.model_dump(mode="json"), "source_label": "user"})
+    data = payload.model_dump(mode="json")
+    _check_agreement_links(data)
+    return put_record("agreements", {**data, "source_label": "user"})
 
 async def _read_json_object(request: Request) -> dict:
     try:
@@ -162,7 +183,8 @@ async def _read_json_object(request: Request) -> dict:
         raise HTTPException(status_code=422, detail="Request body must be a JSON object")
     return body
 
-async def _update_typed_record(collection: str, record_id: str, request: Request, schema, label: str, extra: dict | None = None) -> dict:
+async def _update_typed_record(collection: str, record_id: str, request: Request, schema, label: str,
+                               extra: dict | None = None, check: Callable[[dict], None] | None = None) -> dict:
     changes = await _read_json_object(request)
     if not isinstance(changes, dict):
         raise HTTPException(status_code=422, detail="Request body must be a JSON object")
@@ -178,6 +200,8 @@ async def _update_typed_record(collection: str, record_id: str, request: Request
     data = validated.model_dump(mode="json")
     if data.get("partner_id") and not get_record("partners", data["partner_id"]):
         raise HTTPException(status_code=404, detail="Partner not found")
+    if check:
+        check(data)
     data["source_label"] = current.get("source_label", "user")
     data.update(extra or {})
     return put_record(collection, data, record_id)
@@ -191,7 +215,7 @@ def get_agreement(agreement_id: str) -> dict:
 
 @router.patch("/agreements/{agreement_id}", response_model=Agreement, tags=["agreements"])
 async def update_agreement(agreement_id: str, request: Request) -> dict:
-    return await _update_typed_record("agreements", agreement_id, request, AgreementCreate, "Agreement")
+    return await _update_typed_record("agreements", agreement_id, request, AgreementCreate, "Agreement", check=_check_agreement_links)
 
 @router.delete("/agreements/{agreement_id}", status_code=204, tags=["agreements"])
 def delete_agreement(agreement_id: str):

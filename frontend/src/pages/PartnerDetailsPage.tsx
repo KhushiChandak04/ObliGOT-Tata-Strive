@@ -1,18 +1,19 @@
 import {useRef,useState,type KeyboardEvent,type ReactNode} from "react";
-import {Pencil,Trash2} from "lucide-react";
+import {Pencil,Plus,Trash2} from "lucide-react";
 import {Link,useNavigate,useParams} from "react-router-dom";
 import Dialog from "../components/ui/Dialog";
 import PageHeader from "../components/ui/PageHeader";
 import StateMessage from "../components/ui/StateMessage";
 import StatusBadge from "../components/ui/StatusBadge";
 import FindingList from "../features/intelligence/FindingList";
+import AgreementForm from "../features/agreements/AgreementForm";
 import PartnerForm from "../features/partners/PartnerForm";
 import OpportunityTable from "../features/pipeline/OpportunityTable";
 import {ActionTable,AgreementTable,FinanceTable,ProjectTable,ReportTable} from "../features/partners/LinkedRecordTables";
 import {ApiError,api} from "../services/functions.service";
 import {useResource} from "../lib/useResource";
 import {formatDate} from "../lib/utils";
-import type {DeadlineFinding,Partner} from "../types";
+import type {Agreement,DeadlineFinding,Partner} from "../types";
 
 type TabId="overview"|"pipeline"|"agreements"|"projects"|"finance"|"reports"|"actions";
 
@@ -32,6 +33,7 @@ export default function PartnerDetailsPage(){
  const [tab,setTab]=useState<TabId>("overview");
  const [editing,setEditing]=useState(false);
  const [deleting,setDeleting]=useState(false);
+ const [agreementDialog,setAgreementDialog]=useState<{mode:"create"}|{mode:"edit";agreement:Agreement}|null>(null);
  const notFound=partner.error instanceof ApiError&&partner.error.status===404;
  const p=partner.data;
 
@@ -46,7 +48,7 @@ export default function PartnerDetailsPage(){
   {linked.data&&<Tabs tab={tab} onChange={setTab} counts={{overview:linked.data.findings.length,pipeline:linked.data.opportunities.length,agreements:linked.data.agreements.length,projects:linked.data.projects.length,finance:linked.data.finance.length,reports:linked.data.reports.length,actions:linked.data.actions.length}}>
    {tab==="overview"&&<OverviewTab findings={linked.data.findings} asOf={linked.data.asOf}/>}
    {tab==="pipeline"&&(linked.data.opportunities.length?<><div className="table-panel inner-table"><OpportunityTable rows={linked.data.opportunities}/></div><p className="muted panel-footnote">Create, edit, or move opportunities on the <Link className="text-link" to="/pipeline">Pipeline page</Link>.</p></>:<StateMessage title="No opportunities" detail="Nothing is recorded in the pipeline for this partner yet." action={<Link className="button button-secondary" to="/pipeline">Open pipeline</Link>}/>)}
-   {tab==="agreements"&&<AgreementTable rows={linked.data.agreements}/>}
+   {tab==="agreements"&&<><div className="tab-toolbar"><button className="button button-secondary button-small" onClick={()=>setAgreementDialog({mode:"create"})}><Plus size={13} aria-hidden/> Add agreement</button></div><AgreementTable rows={linked.data.agreements} onEdit={a=>setAgreementDialog({mode:"edit",agreement:a})}/></>}
    {tab==="projects"&&<ProjectTable rows={linked.data.projects}/>}
    {tab==="finance"&&<FinanceTable rows={linked.data.finance}/>}
    {tab==="reports"&&<ReportTable rows={linked.data.reports}/>}
@@ -56,6 +58,12 @@ export default function PartnerDetailsPage(){
    <PartnerForm partner={p} onCancel={()=>setEditing(false)} onSaved={()=>{setEditing(false);partner.reload();}}/>
   </Dialog>
   <DeletePartnerDialog open={deleting} partner={p} onClose={()=>setDeleting(false)}/>
+  <Dialog open={agreementDialog!==null} title={agreementDialog?.mode==="edit"?"Edit agreement":"Add agreement"} onClose={()=>setAgreementDialog(null)}>
+   {agreementDialog&&linked.data&&<AgreementForm agreement={agreementDialog.mode==="edit"?agreementDialog.agreement:undefined} partners={[p]} defaultPartnerId={p.id}
+     projects={linked.data.projects} opportunities={linked.data.opportunities}
+     onCancel={()=>setAgreementDialog(null)} onSaved={()=>{setAgreementDialog(null);linked.reload();}}
+     onDeleted={agreementDialog.mode==="edit"?()=>{setAgreementDialog(null);linked.reload();}:undefined}/>}
+  </Dialog>
  </>}
  </>;
 }

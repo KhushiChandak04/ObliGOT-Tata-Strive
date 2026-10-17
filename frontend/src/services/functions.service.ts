@@ -52,7 +52,7 @@ const id = (value: string) => encodeURIComponent(value);
 /** Standard list/get/create/update/remove for a partner-linked collection. */
 function partnerLinked<T>(path: string) {
   return {
-    list: (partnerId?: string) => request<T[]>(`${path}${query({ partner_id: partnerId })}`),
+    list: (partnerId?: string, params: Record<string, string | undefined> = {}) => request<T[]>(`${path}${query({ partner_id: partnerId, ...params })}`),
     get: (recordId: string) => request<T>(`${path}/${id(recordId)}`),
     create: (payload: Partial<T>) => request<T>(path, send("POST", payload)),
     update: (recordId: string, payload: Partial<T>) => request<T>(`${path}/${id(recordId)}`, send("PATCH", payload)),

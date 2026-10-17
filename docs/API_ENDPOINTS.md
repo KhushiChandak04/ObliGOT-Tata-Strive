@@ -38,7 +38,8 @@ Each collection has the same shape:
 | GET / PATCH / DELETE | `/api/{collection}/{id}` | Detail / merged-and-validated update / delete (204); 404 if missing |
 
 `{collection}` is `agreements`, `projects`, `finance`, or `reports`. Validation:
-- Agreements: `expiry_date` ≥ `start_date` (422).
+- Agreements: `expiry_date` ≥ `start_date` (422). Optional `signed_copy` (`received`, `pending`, `unknown`; default `unknown`), `renewal_status` (`none`, `in_progress`, `renewed`, `not_renewing`; default `none`), `project_id`, `opportunity_id` (must exist → 404, and must belong to the same partner → 422). `document_url` must start with `https://` or `http://` (422); blank becomes `null`.
+- `GET /api/agreements?expiring_within_days=N` (0–3650): active agreements whose `expiry_date` is between today (IST) and today + N days, inclusive.
 - Projects: `end_date` ≥ `start_date` (422); PATCH rejects unknown fields.
 - Finance: `status` must be allowed for the `record_type` (`FINANCE_STATUSES` in `models.py`); default is the first allowed value.
 

@@ -26,9 +26,9 @@ ACTIONS = {
 }
 FOLLOWUPS = {}
 AGREEMENTS = {
-    "demo-agreement-001": Agreement(id="demo-agreement-001", partner_id="demo-001", title="Skills training MOU (demo)", reference_number="DEMO-MOU-001", status="active", start_date=days(-340), expiry_date=days(21), owner="Partnerships Team", source_label="demo"),
-    "demo-agreement-002": Agreement(id="demo-agreement-002", partner_id="demo-001", title="Data-sharing addendum (demo)", reference_number="DEMO-ADD-002", status="active", start_date=days(-120), owner="Partnerships Team", source_label="demo"),
-    "demo-agreement-003": Agreement(id="demo-agreement-003", partner_id="demo-002", title="Draft collaboration MOU (demo)", status="draft", owner="Regional Partnerships", source_label="demo"),
+    "demo-agreement-001": Agreement(id="demo-agreement-001", partner_id="demo-001", title="Skills training MOU (demo)", reference_number="DEMO-MOU-001", status="active", start_date=days(-340), expiry_date=days(21), owner="Partnerships Team", signed_copy="received", renewal_status="in_progress", project_id="demo-project-001", document_url="https://example.org/demo/mou-001.pdf", source_label="demo"),
+    "demo-agreement-002": Agreement(id="demo-agreement-002", partner_id="demo-001", title="Data-sharing addendum (demo)", reference_number="DEMO-ADD-002", status="active", start_date=days(-120), owner="Partnerships Team", signed_copy="pending", source_label="demo"),
+    "demo-agreement-003": Agreement(id="demo-agreement-003", partner_id="demo-002", title="Draft collaboration MOU (demo)", status="draft", owner="Regional Partnerships", opportunity_id="demo-opportunity-002", source_label="demo"),
 }
 PROJECTS = {
     "demo-project-001": Project(id="demo-project-001", partner_id="demo-001", name="Retail skilling cohort (demo)", status="active", owner="Program Team", start_date=days(-200), end_date=days(160), milestone_summary="Cohort 2 enrolment in progress (illustrative).", source_label="demo"),

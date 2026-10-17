@@ -4,6 +4,8 @@ export type Priority = "high" | "medium" | "low";
 export type ActionStatus = "open" | "in_review" | "done" | "deferred";
 export type RecordStatus = "planned" | "active" | "on_hold" | "completed" | "closed";
 export type AgreementStatus = "draft" | "under_review" | "active" | "expired" | "closed";
+export type SignedCopyStatus = "received" | "pending" | "unknown";
+export type RenewalStatus = "none" | "in_progress" | "renewed" | "not_renewing";
 export type FinanceType = "budget" | "fund_received" | "invoice" | "utilization_certificate";
 export type ReportType = "monthly" | "quarterly" | "impact" | "other";
 export type ReportStatus = "planned" | "due" | "submitted" | "overdue" | "accepted";
@@ -23,6 +25,7 @@ export interface ActionItem {
 export interface Agreement {
   id: string; partner_id: string; title: string; reference_number?: string | null; status: AgreementStatus;
   start_date?: string | null; expiry_date?: string | null; owner: string; document_url?: string | null;
+  signed_copy: SignedCopyStatus; renewal_status: RenewalStatus; project_id?: string | null; opportunity_id?: string | null;
   source_label?: SourceLabel;
 }
 export interface Project {

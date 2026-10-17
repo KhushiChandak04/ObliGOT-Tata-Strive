@@ -81,31 +81,53 @@ class ActionUpdate(BaseModel):
     due_date: date | None = None
     recommended_action: str | None = None
 
+AgreementStatus = Literal["draft", "under_review", "active", "expired", "closed"]
+# Whether the signed copy is on file; "unknown" means nobody has confirmed it either way.
+SignedCopyStatus = Literal["received", "pending", "unknown"]
+RenewalStatus = Literal["none", "in_progress", "renewed", "not_renewing"]
+
 class Agreement(BaseModel):
     id: str
     partner_id: str
     title: str
     reference_number: str | None = None
-    status: Literal["draft", "under_review", "active", "expired", "closed"] = "draft"
+    status: AgreementStatus = "draft"
     start_date: date | None = None
     expiry_date: date | None = None
     owner: str = "Unassigned"
     document_url: str | None = None
+    signed_copy: SignedCopyStatus = "unknown"
+    renewal_status: RenewalStatus = "none"
+    project_id: str | None = None
+    opportunity_id: str | None = None
     source_label: str = "demo"
 
 class AgreementCreate(BaseModel):
     partner_id: str
     title: str = Field(min_length=2, max_length=200)
-    reference_number: str | None = None
-    status: Literal["draft", "under_review", "active", "expired", "closed"] = "draft"
+    reference_number: str | None = Field(default=None, max_length=100)
+    status: AgreementStatus = "draft"
     start_date: date | None = None
     expiry_date: date | None = None
-    owner: str = "Unassigned"
-    document_url: str | None = None
+    owner: str = Field(default="Unassigned", max_length=120)
+    document_url: str | None = Field(default=None, max_length=2000)
+    signed_copy: SignedCopyStatus = "unknown"
+    renewal_status: RenewalStatus = "none"
+    project_id: str | None = None
+    opportunity_id: str | None = None
 
     @model_validator(mode="after")
     def expiry_after_start(self):
         _check_date_order(self.start_date, self.expiry_date, "expiry_date")
+        return self
+
+    @model_validator(mode="after")
+    def document_url_is_web_link(self):
+        # Rendered as a link in the UI, so only http(s) is allowed (blocks javascript: and data: URLs).
+        if self.document_url is not None:
+            self.document_url = self.document_url.strip() or None
+        if self.document_url and not self.document_url.lower().startswith(("https://", "http://")):
+            raise ValueError("document_url must start with https:// or http://")
         return self
 
 class Project(BaseModel):
