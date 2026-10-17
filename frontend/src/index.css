@@ -1565,6 +1565,95 @@ th {
   flex-wrap: wrap;
   font-size: 14px;
 }
+.nav-divider {
+  display: block;
+  margin: 18px 12px 5px;
+  color: var(--muted);
+  font: 600 10px "JetBrains Mono";
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.document-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 16px 0;
+}
+.document-strip span {
+  padding: 12px 14px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+}
+.document-strip b {
+  display: block;
+  color: var(--green);
+  font: 800 24px "Bricolage Grotesque";
+}
+.dropzone.compact {
+  padding: 10px 14px;
+  margin: 0;
+  font-size: 12px;
+}
+.dropzone.compact input {
+  margin: 6px 0 0;
+  max-width: 170px;
+}
+.review-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr);
+  gap: 16px;
+}
+.review-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 86px;
+  gap: 12px;
+  align-items: center;
+  padding: 13px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.review-field b,
+.review-field small,
+.review-field .mono {
+  display: block;
+}
+.review-field small {
+  color: var(--muted);
+  margin-top: 4px;
+}
+.review-field .mono {
+  margin-top: 6px;
+  font-size: 10px;
+}
+.evidence-panel {
+  align-self: start;
+}
+.review-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px 0;
+  border-top: 1.5px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+@media (max-width: 860px) {
+  .document-strip,
+  .review-workspace {
+    grid-template-columns: 1fr;
+  }
+  .review-field {
+    grid-template-columns: 1fr;
+  }
+  .review-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 .api-state.error {
   border-color: var(--bordo);
   color: var(--bordo);
@@ -1572,6 +1661,10 @@ th {
 .api-state.success {
   border-color: var(--green);
   color: var(--green);
+}
+.demo-notice {
+  border-style: dashed;
+  color: var(--muted);
 }
 .drawer-form {
   display: grid;

@@ -2,7 +2,7 @@ import { firebaseAuth } from "../lib/firebase";
 import type {
   ActionItem, Activity, Agreement, Alert, AlertReview, AlertsResponse, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup,
   HealthResponse, ImportPreview, Milestone,
-  Opportunity, Partner, Project, ReportRecord,
+  Opportunity, Partner, Project, ReportRecord, SourceDocument, DocumentReview, AmendmentChange,
 } from "../types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -35,12 +35,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new ApiError(`Cannot reach the ObliGOT API at ${API_BASE}.`, 0);
   }
+
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(errorMessage(body.detail, response.status), response.status);
   }
+
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+async function requestBlob(path: string): Promise<Blob> {
+  const headers = await authHeaders();
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (!response.ok) throw new ApiError(`Request failed (${response.status})`, response.status);
+  return response.blob();
 }
 
 function query(params: Record<string, string | undefined>): string {
@@ -121,4 +130,23 @@ export const api = {
     return request<ImportPreview>("/api/import/preview", { method: "POST", body: form });
   },
   analyze: (payload: { partner_id?: string; context?: string }) => request<AnalyzeResponse>("/api/intelligence/analyze", send("POST", payload)),
+  documents: {
+    list: (filters: { partnerId?: string; agreementId?: string; status?: string; kind?: string } = {}) =>
+      request<SourceDocument[]>(`/api/documents${query({ partner_id: filters.partnerId, agreement_id: filters.agreementId, status: filters.status, kind: filters.kind })}`),
+    get: (documentId: string) => request<SourceDocument>(`/api/documents/${id(documentId)}`),
+    upload: (file: File, kind: "mou" | "addendum", partnerId?: string, agreementId?: string) => {
+      const form = new FormData(); form.append("file", file); form.append("kind", kind);
+      if (partnerId) form.append("partner_id", partnerId); if (agreementId) form.append("agreement_id", agreementId);
+      return request<SourceDocument>("/api/documents", { method: "POST", body: form });
+    },
+    review: (documentId: string) => request<DocumentReview>(`/api/documents/${id(documentId)}/review`),
+    reviewField: (documentId: string, fieldId: string, payload: { review_state: string; approved_value?: string | number | boolean | null; review_note?: string }) =>
+      request<Record<string, unknown>>(`/api/documents/${id(documentId)}/fields/${id(fieldId)}`, send("PATCH", payload)),
+    approve: (documentId: string) => request<SourceDocument>(`/api/documents/${id(documentId)}/approve`, send("POST", {})),
+    pdf: (documentId: string) => requestBlob(`/api/documents/${id(documentId)}/pdf`),
+    amendments: (agreementId: string) => request<AmendmentChange[]>(`/api/agreements/${id(agreementId)}/amendments`),
+    decideAmendment: (changeId: string, status: "approved" | "rejected" | "unresolved") =>
+      request<AmendmentChange>(`/api/agreement-changes/${id(changeId)}`, send("PATCH", { status })),
+    exportWorkbook: () => requestBlob("/api/export/workbook"),
+  },
 };
