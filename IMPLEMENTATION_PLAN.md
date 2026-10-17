@@ -22,8 +22,8 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | P0 | Scope and repository audit | Done — approved |
 | P1 | Canonical schema and workbook contract (P1a models + contract) | P1a done — approved |
 | P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | P2a (backend) done — approved |
-| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | P3a (extraction backend) done — approved; P3b review/approve, P3c export not started |
-| F1 | Firebase connection: Firestore, demo seed, sign-in required (replaces 5b; roles 5c still open) | Done — awaiting review |
+| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | P3a done — approved; P3b (review/approval backend) done — awaiting review; P3c export not started |
+| F1 | Firebase connection: Firestore, demo seed, sign-in required (replaces 5b; roles 5c still open) | Done — approved |
 | P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
 | P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
@@ -127,6 +127,16 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 **Reused unchanged:** record models and CRUD, link checks, rules engine and priority score, alert review loop and activity log, import preview (re-import path for exported workbooks), the new UI and its forms.
 
 **Known limitations (current):** no real MOU samples (synthetic fixtures only); scanned pages are detected as low-text and need OCR or manual review — no OCR engine is installed; Gemini has not been called successfully (no key); Firestore and Google sign-in are not verified on this machine.
+
+## Step P3b notes — review and approval gate (backend)
+- New `app/document_review.py`: per-proposal decisions (approve with optional correction, reject, defer, reset), issue resolution, `approval-check`, and `approve`. Every decision records reviewer and time and is logged in `activities`.
+- Safeguards: approving needs a value (nothing is approved empty); dates must be real ISO dates; approving a value whose quote was not verified requires a note; deferring requires a reason; only listed fields can be corrected; decisions are locked once the document is approved.
+- Approval gate (MOU only; addenda wait for P4): every value decided, every issue resolved or deferred with a note, one approved value per field, expiry not before start, a partner chosen (or created from the approved partner name on request). All payloads are validated before any write.
+- Effects: agreement created (`status` active, or expired when the approved expiry has passed — computed, not guessed; `start_date` = approved effective date, else start date; `signed_copy` stays `unknown`; `source_document_id` set) or, for a linked agreement, empty fields filled and differing values returned as `conflicts` (409, nothing written) unless `overwrite_existing`. A project is created when milestones, scope, or a programme name are approved. Approved obligations become milestones (milestone/deliverable), reports (progress/impact; type from frequency), or UC finance records; fund releases and others stay in the obligations register (no money record invented). Rejected and deferred values never reach operational records. Alerts follow automatically because they are computed from records.
+- Model additions: `Agreement.source_document_id`, `Obligation.operational_ref`, reviewer fields on `ProgrammeScope`.
+- Tests now ignore a developer's local `.env` (auth, Firebase credentials, Gemini key) — found when the local `REQUIRE_FIREBASE_AUTH=true` broke them.
+- Verification: `pytest` → 229 passed (12 new in `tests/test_document_review.py`). On real Firestore (in-process, Gemini faked): upload → extract → review → approve with partner creation → agreement, project, milestone, report, UC in Firestore → alerts `MOU_EXPIRING`, `MOU_SIGNED_COPY_MISSING`, `REPORT_OVERDUE` on the approved records; all 29 created records deleted afterwards and Firestore matched its previous state.
+- Known limits: recurring reports ("within 15 days of each quarter end") become one report without a due date (a data-quality alert), not a generated schedule; approval writes are validated first but not transactional; no UI yet (P6).
 
 ## Step F1 notes — Firebase connection and sign-in
 - Backend: new setting `FIREBASE_CREDENTIALS_FILE` (service-account JSON, relative paths resolve inside `backend/`) passed to the Admin SDK — a `GOOGLE_APPLICATION_CREDENTIALS` value written only in `.env` was never seen by the SDK. Locally: `backend/firebase-admin.json` (git-ignored), `FIREBASE_CREDENTIALS_FILE=firebase-admin.json`, `REQUIRE_FIREBASE_AUTH=true` in the ignored `backend/.env`. `firebase-admin` 7.7.0 installed from `requirements.txt`.

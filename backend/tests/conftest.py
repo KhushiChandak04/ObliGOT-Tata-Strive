@@ -1,6 +1,15 @@
 import pytest
 
 from app import repository
+from app.config import settings
+
+
+@pytest.fixture(autouse=True)
+def local_settings_do_not_apply(monkeypatch):
+    """Tests must not depend on a developer's backend/.env (auth, Firebase credentials, Gemini key)."""
+    monkeypatch.setattr(settings, "require_firebase_auth", False)
+    monkeypatch.setattr(settings, "firebase_credentials_file", "")
+    monkeypatch.setattr(settings, "gemini_api_key", "")
 
 
 @pytest.fixture(autouse=True)

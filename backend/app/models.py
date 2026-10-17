@@ -101,6 +101,7 @@ class Agreement(BaseModel):
     renewal_status: RenewalStatus = "none"
     project_id: str | None = None
     opportunity_id: str | None = None
+    source_document_id: str | None = None  # set by the server when created from an approved document
     source_label: str = "demo"
 
 class AgreementCreate(BaseModel):

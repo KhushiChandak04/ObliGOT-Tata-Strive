@@ -196,6 +196,8 @@ class Obligation(BaseModel):
     owner: str | None = None
     evidence: Evidence | None = None
     warnings: list[str] = Field(default_factory=list)
+    # Where the approved obligation became an operational record ({"collection": ..., "id": ...}); None if it did not.
+    operational_ref: dict[str, str] | None = None
     review_state: ReviewState = "proposed"
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
@@ -220,6 +222,13 @@ class ProgrammeScope(BaseModel):
     evidence: Evidence | None = None
     warnings: list[str] = Field(default_factory=list)
     review_state: ReviewState = "proposed"
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def review_is_recorded(self):
+        _require_reviewer(self.review_state, self.reviewed_by, self.reviewed_at)
+        return self
 
 
 class AgreementChange(BaseModel):
