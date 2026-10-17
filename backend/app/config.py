@@ -24,9 +24,13 @@ class Settings(BaseSettings):
     # Scanned pages: rendered to images and read by Gemini in small batches (AI transcription, reviewed by a person).
     vision_batch_pages: int = 4
     page_render_dpi: int = 150
-    # Waits (seconds) before retrying a Gemini call that hit a rate limit; one retry per entry.
-    gemini_retry_delays: list[float] = [20.0, 40.0]
-    # Tried in order when the main model answers "overloaded" (503) or its quota is used up (429).
+    # Gemini resilience. Retryable errors (rate limit, overload, timeout) are retried with exponential backoff;
+    # Google's suggested retry delay is used when given. Permanent errors are never retried.
+    gemini_max_retries: int = 3
+    gemini_backoff_base_seconds: float = 4.0
+    gemini_max_retry_wait_seconds: float = 60.0
+    gemini_max_concurrency: int = 2
+    # Tried in order when the main model is overloaded, rate-limited, out of daily quota, or not available to the key.
     gemini_fallback_models: list[str] = ["gemini-flash-latest"]
 
     model_config = SettingsConfigDict(

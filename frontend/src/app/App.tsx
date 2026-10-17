@@ -2032,6 +2032,7 @@ function documentStatus(document: SourceDocument): string {
     return document.kind === "addendum" && !document.agreement_id
       ? "Unlinked addendum"
       : "Needs OCR";
+  if (document.status === "retry_required") return "Retry required";
   return document.status === "needs_review"
     ? "Needs Review"
     : document.status[0].toUpperCase() + document.status.slice(1);
@@ -2365,7 +2366,7 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
     </span>
   );
   const extraction = doc.extraction;
-  const canExtract = ["uploaded", "failed", "blocked", "needs_review"].includes(doc.status);
+  const canExtract = ["uploaded", "failed", "blocked", "needs_review", "retry_required"].includes(doc.status);
   const pending = [...review.fields, ...DECIDABLE.flatMap(({ key }) => review[key] as { review_state: string }[])].filter((i) =>
     PENDING_STATES.includes(i.review_state),
   ).length;
@@ -2388,6 +2389,17 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
         {doc.error && (
           <p className="api-state error" role="alert">
             {doc.error}
+          </p>
+        )}
+        {doc.status !== "extracting" && extraction?.finished_at && (
+          <p className={`api-state ${extraction.mode === "gemini" ? "" : "error"}`} role="status">
+            {extraction.mode === "gemini"
+              ? "Extracted by Gemini; every value still needs your review."
+              : extraction.mode === "partial"
+                ? "Partly extracted: Gemini finished some parts; the rest was pattern-matched only (dates, references, amounts)."
+                : "Not extracted by AI: only pattern matching (dates, references, amounts with a currency) was possible."}{" "}
+            {extraction.note}
+            {extraction.retryable ? " Re-run extraction later to complete it." : ""}
           </p>
         )}
         {doc.status === "extracting" && extraction && (

@@ -109,18 +109,40 @@ def test_scanned_pages_are_read_in_batches_and_extraction_continues_past_the_sig
     assert evidence["verified"] and evidence["basis"] == "ai_transcript"
 
 
-def test_wrong_pages_from_the_model_fail_and_save_nothing(monkeypatch):
+def test_unreadable_scan_without_any_text_asks_for_a_retry_and_saves_nothing_wrong(monkeypatch):
     async def reader(images):
-        return json.dumps({"pages": [reading(9, "text")]})
+        return json.dumps({"pages": [reading(9, "text")]})  # wrong pages: rejected
     install(monkeypatch, {})
     monkeypatch.setattr(document_routes, "gemini_read_pages", reader)
     doc = upload(scanned_pdf(SCANNED))
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "failed" and final["extraction"]["ai_error"] == "malformed_response"
-    assert "was sent pages [1, 2, 3]" in final["error"]
+    assert final["status"] == "retry_required" and final["extraction"]["ai_error"] == "malformed_response"
+    assert "was sent pages [1, 2, 3]" in final["error"] and final["extraction"]["retryable"]
     assert client.get(f"/api/documents/{doc['id']}/pages").json() == []
     assert not [r for r in list_records("review_issues") if r["document_id"] == doc["id"]]
+    assert client.post(f"/api/documents/{doc['id']}/extract").status_code == 202  # retry allowed
+
+
+def test_reading_stops_part_way_keeps_finished_pages_and_flags_the_rest(monkeypatch):
+    monkeypatch.setattr(settings, "vision_batch_pages", 2)
+    calls = {"n": 0}
+
+    async def reader(images):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ExtractionFailed("quota_exhausted", "Today's Gemini quota is used up")
+        return json.dumps({"pages": [reading(n, SCANNED[n - 1]) for n, _ in images]})
+    install(monkeypatch, {})
+    monkeypatch.setattr(document_routes, "gemini_read_pages", reader)
+    doc = upload(scanned_pdf(SCANNED))
+    client.post(f"/api/documents/{doc['id']}/extract")
+    final = client.get(f"/api/documents/{doc['id']}").json()
+    assert final["status"] == "needs_review" and final["extraction"]["ai_error"] == "quota_exhausted"
+    assert [p["page_number"] for p in client.get(f"/api/documents/{doc['id']}/pages").json()] == [1, 2]  # kept
+    issues = {i["code"]: i for i in client.get(f"/api/documents/{doc['id']}/extraction").json()["review_issues"]}
+    assert issues["PAGES_NOT_READ"]["severity"] == "error" and "Pages 3 have no text" in issues["PAGES_NOT_READ"]["message"]
+    assert "Pages 1–2 were processed by pattern matching only" in issues["SEMANTIC_EXTRACTION_PENDING"]["message"]
 
 
 def test_unreadable_spots_templates_and_poor_pages_become_review_issues(monkeypatch):
@@ -198,12 +220,45 @@ def test_rate_limit_is_retried_then_reported(monkeypatch):
         def __init__(self, api_key):
             self.aio = SimpleNamespace(models=FakeModels())
     monkeypatch.setattr(genai, "Client", FakeClient)
-    monkeypatch.setattr(settings, "gemini_retry_delays", [0, 0])
+    monkeypatch.setattr(settings, "gemini_max_retries", 3)
     assert asyncio.run(gemini_structured("prompt", ChunkExtraction)) == "{}" and attempts["n"] == 3
     attempts["n"] = -5
     with pytest.raises(ExtractionFailed) as err:
         asyncio.run(gemini_structured("prompt", ChunkExtraction))
-    assert err.value.code == "rate_limited"
+    assert err.value.code == "rate_limited" and err.value.retryable and attempts["n"] == -1  # 1 try + 3 retries
+
+
+def test_error_classification_respects_daily_quota_and_retry_hints():
+    from app.extraction import classify_error
+
+    def err(code, details):
+        return type("ApiError", (Exception,), {"code": code, "details": details})()
+    daily = {"error": {"details": [{"violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}
+    minute = {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "17s"}]}}
+    assert classify_error(err(429, daily)) == ("quota_exhausted", False, None)  # never retried today
+    assert classify_error(err(429, minute)) == ("rate_limited", True, 17.0)  # Google's suggested wait is used
+    assert classify_error(err(400, {"error": {"message": "API key not valid"}}))[0] == "auth_error"
+    assert classify_error(err(502, {}))[:2] == ("unavailable", True)
+
+
+def test_permanent_errors_are_not_retried(monkeypatch):
+    attempts = {"n": 0}
+
+    class Denied(Exception):
+        code = 403
+
+    class FakeModels:
+        async def generate_content(self, model, contents, config):
+            attempts["n"] += 1
+            raise Denied()
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.aio = SimpleNamespace(models=FakeModels())
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    with pytest.raises(ExtractionFailed) as err:
+        asyncio.run(gemini_structured("prompt", ChunkExtraction))
+    assert err.value.code == "auth_error" and not err.value.retryable and attempts["n"] == 1
 
 
 # ---- real sample MOUs: local structure only (nothing is sent to Gemini) ----

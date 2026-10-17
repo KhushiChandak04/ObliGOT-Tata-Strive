@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import shutil
 from datetime import date, timedelta
 from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -28,7 +29,10 @@ IMPORT_ENTITY_TYPES = {"agreements", "projects", "finance", "finance-records", "
 def health() -> dict:
     return {"status": "ok", "app": "ObliGOT API", "environment": settings.environment,
             "database": "firestore" if firestore_enabled() else "demo-memory-fallback",
-            "ai_configured": bool(settings.gemini_api_key), "auth_required": settings.require_firebase_auth}
+            "ai_configured": bool(settings.gemini_api_key), "auth_required": settings.require_firebase_auth,
+            # OCR needs the Tesseract program itself, not just a Python package; none is installed or used yet.
+            "ocr_available": shutil.which("tesseract") is not None,
+            "extraction_without_gemini": "pattern matching on text-layer pages and stored page readings only"}
 
 @router.get("/dashboard", tags=["dashboard"])
 def dashboard() -> dict:

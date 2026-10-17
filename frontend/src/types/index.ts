@@ -73,12 +73,14 @@ export interface DashboardResponse {
   demo_data_notice: string;
 }
 export type DocumentKind = "mou" | "addendum";
-export type DocumentStatus = "uploaded" | "extracting" | "needs_review" | "approved" | "failed" | "blocked";
+export type DocumentStatus = "uploaded" | "extracting" | "needs_review" | "approved" | "failed" | "blocked" | "retry_required";
 // Documents, extraction proposals, and review (backend/app/documents.py, document_routes.py, document_review.py).
 export interface ExtractionRun {
   started_at: string; finished_at?: string | null; model: string; pages_to_read: number; pages_read: number;
   chunks_total: number; chunks_done: number; pages_sent: number[]; pages_skipped_low_text: number[];
   ai_used: boolean; ai_error?: string | null; counts: Record<string, number>;
+  /** gemini: fully AI-extracted; partial: Gemini for some parts, pattern matching for the rest; deterministic: no Gemini. */
+  mode: "gemini" | "partial" | "deterministic"; retryable: boolean; note?: string | null;
 }
 export interface SourceDocument {
   id: string; filename: string; kind: DocumentKind; partner_id?: string | null; agreement_id?: string | null;

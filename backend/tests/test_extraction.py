@@ -229,7 +229,8 @@ def test_gemini_wrapper_requests_structured_json(monkeypatch):
 
 
 @pytest.mark.parametrize("behaviour, code", [
-    ("timeout", "timeout"), (429, "rate_limited"), (500, "api_error:500"), ("boom", "error:RuntimeError"),
+    ("timeout", "timeout"), (429, "rate_limited"), (500, "unavailable"), (503, "unavailable"), (400, "invalid_request"),
+    (401, "auth_error"), (403, "auth_error"), (404, "model_not_found"), ("boom", "error:RuntimeError"),
 ])
 def test_gemini_wrapper_reports_errors(monkeypatch, behaviour, code):
     async def fail():
@@ -294,33 +295,43 @@ def test_long_document_is_sent_in_chunks_covering_every_page(monkeypatch):
     assert sum((pages_of(p) for p in prompts), []) == list(range(1, 61))
 
 
-def test_failure_in_a_later_chunk_saves_nothing_and_can_be_retried(monkeypatch):
+def test_failure_in_a_later_part_keeps_finished_work_and_resumes(monkeypatch):
     monkeypatch.setattr(settings, "extraction_chunk_chars", 150)
-    calls = {"n": 0}
+    calls = {"n": 0, "fail": True}
 
     def respond(prompt):
         calls["n"] += 1
-        if calls["n"] == 2:
-            raise ExtractionFailed("rate_limited", "Gemini rate limit reached; try again in a minute")
+        if calls["n"] == 2 and calls["fail"]:
+            raise ExtractionFailed("rate_limited", "Gemini rate limit reached; try again in a minute", retryable=True)
         return json.dumps(good_output(pages_of(prompt)))
     fake_gemini(monkeypatch, respond)
     doc = upload(PAGES)
     client.post(f"/api/documents/{doc['id']}/extract")
-    failed = client.get(f"/api/documents/{doc['id']}").json()
-    assert failed["status"] == "failed" and "rate limit" in failed["error"]
-    assert failed["extraction"]["ai_error"] == "rate_limited" and failed["extraction"]["chunks_done"] == 1
-    assert all(v == [] for k, v in client.get(f"/api/documents/{doc['id']}/extraction").json().items() if k != "document")
+    partial = client.get(f"/api/documents/{doc['id']}").json()
+    run = partial["extraction"]
+    assert partial["status"] == "needs_review" and run["mode"] == "partial" and run["retryable"]
+    assert run["ai_error"] == "rate_limited" and run["chunks_done"] == 1 and "then stopped (rate_limited" in run["note"]
+    data = client.get(f"/api/documents/{doc['id']}/extraction").json()
+    pending = next(i for i in data["review_issues"] if i["code"] == "SEMANTIC_EXTRACTION_PENDING")
+    assert "pattern matching only" in pending["message"]
+    assert any(f["field"] == "partner_name" for f in data["extracted_fields"])  # part 1 (Gemini) kept
+    calls["n"], calls["fail"] = 0, False
     assert client.post(f"/api/documents/{doc['id']}/extract").status_code == 202
-    assert client.get(f"/api/documents/{doc['id']}").json()["status"] == "needs_review"
+    final = client.get(f"/api/documents/{doc['id']}").json()
+    assert final["status"] == "needs_review" and final["extraction"]["mode"] == "gemini"
+    assert calls["n"] == final["extraction"]["chunks_total"] - 1  # the finished part came from the cache
+    assert not any(i["code"] == "SEMANTIC_EXTRACTION_PENDING" for i in client.get(f"/api/documents/{doc['id']}/extraction").json()["review_issues"])
 
 
-def test_malformed_model_output_fails_visibly(monkeypatch):
+def test_malformed_model_output_falls_back_to_pattern_matching(monkeypatch):
     fake_gemini(monkeypatch, lambda p: '{"fields": "not a list"}')
     doc = upload(PAGES)
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "failed" and final["extraction"]["ai_error"] == "malformed_response"
-    assert "does not match the extraction schema" in final["error"]
+    assert final["status"] == "needs_review" and final["extraction"]["ai_error"] == "malformed_response"
+    assert final["extraction"]["mode"] == "deterministic" and "does not match the extraction schema" in final["extraction"]["note"]
+    fields = {f["field"]: f for f in client.get(f"/api/documents/{doc['id']}/extraction").json()["extracted_fields"]}
+    assert fields["expiry_date"]["proposed_value"] == "2027-03-31" and fields["expiry_date"]["evidence"]["verified"]
 
 
 def test_rerun_replaces_proposals_without_duplicates(monkeypatch):
@@ -343,9 +354,10 @@ def test_extract_preconditions(monkeypatch):
     assert client.post(f"/api/documents/{damaged['id']}/extract").status_code == 409
     doc = upload(PAGES)
     monkeypatch.setattr(settings, "gemini_api_key", "")
-    response = client.post(f"/api/documents/{doc['id']}/extract")
-    assert response.status_code == 503 and "entered manually" in response.json()["detail"]
-    assert client.get(f"/api/documents/{doc['id']}").json()["status"] == "uploaded"
+    response = client.post(f"/api/documents/{doc['id']}/extract")  # without Gemini: pattern matching, clearly marked
+    assert response.status_code == 202 and response.json()["extraction"]["mode"] == "deterministic"
+    final = client.get(f"/api/documents/{doc['id']}").json()
+    assert final["status"] == "needs_review" and final["extraction"]["ai_used"] is False and final["extraction"]["retryable"]
 
 
 def test_running_extraction_blocks_a_second_start(monkeypatch):

@@ -37,6 +37,7 @@ _COLLECTIONS = {
     "agreement_changes": {},
     "document_pages": {},
     "tables": {},
+    "extraction_chunks": {},  # cached Gemini output per extraction part (resume after failures)
 }
 _firestore_client = None
 _firestore_attempted = False

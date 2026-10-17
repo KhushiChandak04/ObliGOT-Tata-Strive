@@ -28,7 +28,10 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | S1 | Scan-aware page reading (Gemini vision for scanned pages, document map, page images) | Done — approved |
 | S2 | Tables, relative deadlines, section-aware extraction (sample-driven) | Done — approved (synthetic fixtures; real samples not sent to Gemini) |
 | A1 | Align the teammate's document screens (merged 9da70ea) with the backend API | Done — approved |
-| A2 | Finance and Reports & UCs on live data (old 8d); faster Gemini (fallback model, saved page readings) | Done — awaiting review |
+| A2 | Finance and Reports & UCs on live data (old 8d); faster Gemini (fallback model, saved page readings) | Done |
+| R1 | Gemini resilience, resumable extraction, deterministic fallback | Done |
+| R2 | Deterministic validators (arithmetic, duplicates) and new alert rules | In progress |
+| R3 | Backend-computed dashboard and options; remove remaining hardcoded frontend data | Not started |
 | S3 | Arithmetic consistency checks and workbook sheets for budgets/tranches/targets | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
 | P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
@@ -137,6 +140,15 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Three real MOUs are kept locally in `samples/` (git-ignored with `*.pdf`; never committed). Local inspection with PyMuPDF only (no content printed, nothing sent to Gemini): `MoU 1.pdf` 9 pages, `MoU 2.pdf` 27, `mou_3.pdf` 28 — every page is a single scanned image with no text layer. Before S1 the app would have blocked all three.
 - Sending real sample pages to Gemini awaits team confirmation of the API project's data terms (the key behaves like a free-tier key: Pro models return quota errors).
 - Gemini model: `gemini-2.5-flash` returns 404 for this key (no longer offered to new projects); default changed to `gemini-3.5-flash` (verified to answer).
+
+## Step R1 notes — Gemini resilience and deterministic fallback
+- Error handling (`extraction.gemini_structured`, `classify_error`): invalid request (400) and bad key (400 "API key"/401/403) are never retried; model not available (404), overload (5xx), per-minute rate limit, and exhausted daily quota (429 with a per-day quota id) switch to the next model in `GEMINI_FALLBACK_MODELS`; retryable errors (rate limit, overload, timeout) are retried up to `GEMINI_MAX_RETRIES` with exponential backoff (`GEMINI_BACKOFF_BASE_SECONDS`), using Google's `retryDelay` when given, capped by `GEMINI_MAX_RETRY_WAIT_SECONDS`; at most `GEMINI_MAX_CONCURRENCY` calls at once. No token or quota values are hard-coded. Logs carry the error class only.
+- Resumable: page readings are saved per batch and versioned; each finished extraction part is cached in `extraction_chunks` keyed by document, prompt, and `EXTRACTION_SCHEMA_VERSION`, so a retry resumes after the last finished part (duplicate files are already rejected at upload by SHA-256).
+- Fallback (`app/deterministic.py`): when Gemini is not configured or stops part-way, pages it did not finish are processed by pattern matching only — dates after explicit labels (effective from, valid until, executed on, …), references after "Ref./Reference/MOU/Agreement No.", and amounts with a currency marker (Indian or international digit grouping; "lakh/crore" amounts are never converted). Ambiguous numeric dates (e.g. 04/05/2026) are not guessed. Each value's quote is the exact matched text. Clauses, obligations, deadlines, and tables are never produced by the fallback.
+- Statuses and messages: `extraction.mode` = gemini / partial / deterministic, `retryable`, and a `note` stating which stages completed. Issues: `SEMANTIC_EXTRACTION_PENDING` (which pages were pattern-matched only), `PAGES_NOT_READ` (error; scanned pages with no text). A scan with no readable text at all ends as `retry_required` (finished page readings kept); unexpected errors still end as `failed`. Without Gemini, extraction now runs in deterministic mode instead of returning 503; a fully scanned PDF without Gemini or stored readings still returns 409 (OCR is not available).
+- `/api/health` reports `ocr_available` (Tesseract on PATH — false here; no OCR is used).
+- Frontend: status "Retry required"; the review screen states the extraction mode, the stage note, and whether a re-run can complete it.
+- Verification: `pytest` 281 passed (new: error classes incl. daily quota and retry hints, permanent errors not retried, retries bounded, model fallback, part-way failure keeps finished work and resumes from the cache, reading failure keeps finished pages and flags the rest, malformed output falls back, no-key deterministic mode, deterministic date/amount/reference parsing with no inference). `npm run build` passes.
 
 ## Step A2 notes — Finance and Reports live; faster Gemini
 - Finance page: budgets, funds received, invoices, and utilization certificates from `/api/finance`; each record shows its own amount and currency (no totals across records, types, or currencies — the synthetic page summed them); dates as recorded; ageing/due-soon wording from the rules engine's alerts; status changed through a selector limited to the record type's allowed statuses.

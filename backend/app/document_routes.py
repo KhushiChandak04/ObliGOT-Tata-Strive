@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
-from app import document_storage
+from app import deterministic, document_storage
 from app.config import settings
 from app.documents import DocumentStatus, ExtractionRun, PageReading, SourceDocument
 from app.extraction import ExtractionFailed, Generate, build_prompt, build_proposals, chunk_pages, gemini_generate, parse_chunk
@@ -148,6 +148,9 @@ def get_document(document_id: str) -> dict:
 # ---- extraction ----
 
 PROPOSAL_COLLECTIONS = ("extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope", "tables", "review_issues")
+# Bump when the extraction prompt/schema changes, so cached parts and page readings are not reused across versions.
+EXTRACTION_SCHEMA_VERSION = "s2.1"
+PAGE_READING_VERSION = "1"
 # An extraction still "running" after this long is assumed to have died with the process and may be restarted.
 STALE_EXTRACTION = timedelta(minutes=15)
 
@@ -167,8 +170,8 @@ def _check_can_extract(document: dict) -> None:
         raise HTTPException(status_code=409, detail="The document is approved; its values can no longer be re-extracted")
     if not document.get("storage_ref"):
         raise HTTPException(status_code=409, detail="The file could not be read when uploaded; upload a readable copy")
-    if all(p["text_status"] == "low_text" for p in document.get("pages", [])) and not settings.gemini_api_key:
-        raise HTTPException(status_code=409, detail="No page has embedded text and Gemini is not configured to read page images; enter the values manually")
+    if all(p["text_status"] == "low_text" for p in document.get("pages", [])) and not settings.gemini_api_key and not _pages_for(document["id"]):
+        raise HTTPException(status_code=409, detail="No page has embedded text and Gemini is not configured to read page images (OCR is not available); enter the values manually or configure Gemini")
     proposals = _proposals_for(document["id"])
     if any(r.get("review_state") in ("approved", "rejected") for c, rows in proposals.items() if c != "review_issues" for r in rows):
         raise HTTPException(status_code=409, detail="Some extracted values were already reviewed; re-extracting would discard that review")
@@ -179,12 +182,15 @@ def _page_id(document_id: str, number: int) -> str:
 
 
 def _pages_for(document_id: str) -> dict[int, dict]:
-    return {p["page_number"]: p for p in list_records("document_pages") if p.get("document_id") == document_id}
+    """Stored page readings of the current version (older versions are read again)."""
+    return {p["page_number"]: p for p in list_records("document_pages")
+            if p.get("document_id") == document_id and p.get("version", PAGE_READING_VERSION) == PAGE_READING_VERSION}
 
 
-async def _read_pages(document: dict, raw: bytes, inspection, run: dict) -> dict[int, dict]:
-    """Make sure every page has a PageReading: text-layer pages from the PDF, scanned pages from Gemini vision.
-    Readings already stored are reused, so re-running extraction does not re-read (or re-send) pages."""
+async def _read_pages(document: dict, raw: bytes, inspection, run: dict, use_vision: bool) -> tuple[dict[int, dict], ExtractionFailed | None]:
+    """Every page gets a PageReading: text-layer pages from the PDF; scanned pages from Gemini vision when
+    available. Readings are saved per batch and reused, so a retry never re-reads (or re-sends) finished pages.
+    Returns the readings and, if Gemini failed part-way, that failure (completed batches are kept)."""
     readings = _pages_for(document["id"])
     for page in inspection.pages:
         n = page.page_number
@@ -192,20 +198,25 @@ async def _read_pages(document: dict, raw: bytes, inspection, run: dict) -> dict
             readings[n] = put_record("document_pages", PageReading(
                 id=_page_id(document["id"], n), document_id=document["id"], page_number=n, method="text_layer",
                 transcript=inspection.page_texts[n - 1], legibility="good", read_at=now_iso()).model_dump(mode="json"), _page_id(document["id"], n))
+    if not use_vision:
+        return readings, None
     to_read = [p.page_number for p in inspection.pages if p.text_status == "low_text" and p.page_number not in readings]
     for batch in batches(to_read, max(1, settings.vision_batch_pages)):
-        images = [(n, await run_in_threadpool(render_page, raw, n)) for n in batch]
-        for item in parse_batch(await gemini_read_pages(images), batch):
+        try:
+            images = [(n, await run_in_threadpool(render_page, raw, n)) for n in batch]
+            items = parse_batch(await gemini_read_pages(images), batch)
+        except ExtractionFailed as exc:
+            return readings, exc
+        for item in items:
             record = PageReading(
                 id=_page_id(document["id"], item.page), document_id=document["id"], page_number=item.page,
                 method="gemini_vision", model=settings.gemini_model, read_at=now_iso(),
                 **item.model_dump(exclude={"page"})).model_dump(mode="json")
-            # Saved per batch: if extraction fails later, a retry reuses these readings instead of re-reading the pages.
             readings[item.page] = put_record("document_pages", record, record["id"])
         run["pages_read"] += len(batch)
         run["ai_used"] = True
         patch_record("documents", document["id"], {"extraction": run})
-    return readings
+    return readings, None
 
 
 def _page_notes(readings: dict[int, dict]) -> list[tuple[str, str, str]]:
@@ -222,35 +233,90 @@ def _page_notes(readings: dict[int, dict]) -> list[tuple[str, str, str]]:
     return notes
 
 
+def _chunk_key(document_id: str, prompt: str) -> str:
+    digest = hashlib.sha256(f"{EXTRACTION_SCHEMA_VERSION}\n{prompt}".encode("utf-8")).hexdigest()[:20]
+    return f"{document_id}-x{digest}"
+
+
+def _ranges(pages: list[int]) -> str:
+    out, start = [], None
+    for i, n in enumerate(pages):
+        if start is None:
+            start = n
+        if i + 1 == len(pages) or pages[i + 1] != n + 1:
+            out.append(str(start) if start == n else f"{start}–{n}")
+            start = None
+    return ", ".join(out)
+
+
 async def run_extraction(document_id: str, who: str, generate: Generate | None = None) -> None:
-    """Background job: read scanned pages, extract every page with text in chunks, then save page readings and
-    all proposals at once (or nothing on failure)."""
+    """Background job. Stages: read pages (text layer; Gemini vision for scanned pages) → extract with Gemini in
+    page-aware parts (each finished part cached) → deterministic fallback for whatever Gemini could not do →
+    validate → save proposals for review. Nothing is approved here."""
     generate = generate or gemini_generate
     document = get_record("documents", document_id)
     run = dict(document["extraction"])
+    use_gemini = run.get("mode") == "gemini"
     try:
         raw = await run_in_threadpool(document_storage.load_pdf, document["storage_ref"])
         inspection = await run_in_threadpool(inspect_pdf, raw, settings.max_document_pages)
-        readings = await _read_pages(document, raw, inspection, run)
-        texts = [readings[n]["transcript"] if n in readings else "" for n in range(1, inspection.page_count + 1)]
-        bases = ["ai_transcript" if readings.get(n, {}).get("method") == "gemini_vision" else "text_layer"
-                 for n in range(1, inspection.page_count + 1)]
-        labels = {n: r for n, r in readings.items()}
-        lengths = {n: len(texts[n - 1]) for n in range(1, inspection.page_count + 1) if texts[n - 1].strip()}
-        # A table that continues across a page break is sent to the model in one piece.
-        continuing = {n for n, r in readings.items() if r.get("table_continues_from_previous")} | \
-                     {n + 1 for n, r in readings.items() if r.get("table_continues_to_next")}
-        plan = chunk_pages(lengths, settings.extraction_chunk_chars, continuing)
-        run.update(chunks_total=len(plan), pages_sent=sorted(lengths),
-                   pages_skipped_low_text=[n for n in range(1, inspection.page_count + 1) if n not in lengths])
-        results = []
-        for pages in plan:
-            results.append(parse_chunk(await generate(build_prompt(document["kind"], texts, pages, inspection.page_count, labels))))
-            run["chunks_done"] += 1
-            run["ai_used"] = True
-            patch_record("documents", document_id, {"extraction": run})
-        proposals = build_proposals(document, results, texts, bases, _page_notes(readings), readings)
-    except Exception as exc:  # any failure must end in a visible failed state, never a silent "extracting"
+        readings, failure = await _read_pages(document, raw, inspection, run, use_vision=use_gemini)
+        total = inspection.page_count
+        texts = [readings[n]["transcript"] if n in readings else "" for n in range(1, total + 1)]
+        bases = ["ai_transcript" if readings.get(n, {}).get("method") == "gemini_vision" else "text_layer" for n in range(1, total + 1)]
+        lengths = {n: len(texts[n - 1]) for n in range(1, total + 1) if texts[n - 1].strip()}
+        no_text = [n for n in range(1, total + 1) if n not in lengths]
+        run.update(pages_sent=sorted(lengths), pages_skipped_low_text=no_text)
+        results, covered = [], set()
+        if use_gemini and failure is None:
+            continuing = {n for n, r in readings.items() if r.get("table_continues_from_previous")} | \
+                         {n + 1 for n, r in readings.items() if r.get("table_continues_to_next")}
+            plan = chunk_pages(lengths, settings.extraction_chunk_chars, continuing)
+            run["chunks_total"] = len(plan)
+            for pages in plan:
+                prompt = build_prompt(document["kind"], texts, pages, total, readings)
+                key = _chunk_key(document_id, prompt)
+                cached = get_record("extraction_chunks", key)
+                try:
+                    output = cached["output"] if cached else await generate(prompt)
+                    results.append(parse_chunk(output))
+                except ExtractionFailed as exc:
+                    failure = exc
+                    break
+                if not cached:  # finished parts are cached, so a retry resumes after them
+                    put_record("extraction_chunks", {"document_id": document_id, "pages": pages, "output": output,
+                                                     "schema_version": EXTRACTION_SCHEMA_VERSION, "created_at": now_iso()}, key)
+                covered.update(pages)
+                run["chunks_done"] += 1
+                run["ai_used"] = True
+                patch_record("documents", document_id, {"extraction": run})
+        remaining = [n for n in sorted(lengths) if n not in covered]
+        notes = _page_notes(readings)
+        if remaining:
+            # Deterministic fallback: explicit dates, references, and amounts from the text that exists.
+            fallback_texts = [texts[n - 1] if n in remaining else "" for n in range(1, total + 1)]
+            results.append(deterministic.extract(fallback_texts))
+            notes.append(("warning", "SEMANTIC_EXTRACTION_PENDING",
+                          f"Pages {_ranges(remaining)} were processed by pattern matching only (dates, references, amounts with a "
+                          "currency). Clauses, obligations, deadlines, and tables on them were not extracted — re-run extraction "
+                          "when Gemini is available, or enter them manually."))
+        if no_text:
+            why = "Gemini could not read them" if use_gemini else "Gemini is not configured and OCR is not available"
+            notes.append(("error", "PAGES_NOT_READ",
+                          f"Pages {_ranges(no_text)} have no text available ({why}); nothing on them was extracted. "
+                          "Re-run extraction later or review them manually from the page images."))
+        if not lengths:
+            # Nothing usable at all: keep what finished (page readings) and ask for a retry.
+            code = failure.code if failure else "no_text"
+            run.update(finished_at=now_iso(), ai_error=code, retryable=True, mode="gemini" if use_gemini else "deterministic",
+                       note=f"No page has text yet ({len(readings)} of {total} pages read). Re-run extraction later.")
+            patch_record("documents", document_id, {"status": "retry_required", "error": f"Extraction incomplete: {failure or 'no readable text'}",
+                                                    "extraction": run})
+            log_activity(actor_name=who, event="extraction_retry_required", summary=f"Extraction of “{document['filename']}” needs a retry ({code})",
+                         entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"), details={"error": code})
+            return
+        proposals = build_proposals(document, results, texts, bases, notes, readings)
+    except Exception as exc:  # unexpected or permanent failure: a visible failed state, never a silent "extracting"
         code = exc.code if isinstance(exc, (ExtractionFailed, PdfInspectionError)) else f"error:{type(exc).__name__}"
         if not isinstance(exc, ExtractionFailed):
             logger.warning("Extraction of %s failed: %s", document_id, code)
@@ -261,45 +327,54 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
         log_activity(actor_name=who, event="extraction_failed", summary=f"Extraction of “{document['filename']}” failed ({code})",
                      entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"), details={"error": code})
         return
-    stored = _pages_for(document_id)
-    for number, reading in readings.items():
-        if number not in stored:
-            put_record("document_pages", reading, reading["id"])
     for collection in PROPOSAL_COLLECTIONS:
         for old in _proposals_for(document_id)[collection]:
             delete_record(collection, old["id"])
         for record in proposals[collection]:
             put_record(collection, record, record["id"])
-    run.update(finished_at=now_iso(), counts={c: len(rows) for c, rows in proposals.items()})
+    gemini_part = f"Gemini read {run['pages_read']} scanned pages and extracted {run['chunks_done']} of {run['chunks_total']} parts" if use_gemini else "Gemini not used"
+    if failure is not None:
+        stage = f"{gemini_part}; then stopped ({failure.code}: {failure}). Pattern matching covered the rest."
+    elif remaining:
+        stage = f"{gemini_part}. Pattern matching only (no Gemini)."
+    else:
+        stage = f"{gemini_part}."
+    run.update(finished_at=now_iso(), counts={c: len(rows) for c, rows in proposals.items()},
+               mode="gemini" if use_gemini and not remaining else ("partial" if covered else "deterministic"),
+               ai_error=failure.code if failure else None,
+               retryable=bool(remaining or no_text) and (failure is None or failure.retryable or failure.code == "quota_exhausted" or not use_gemini),
+               note=stage)
     patch_record("documents", document_id, {"status": "needs_review", "error": None, "extraction": run})
     found = sum(n for c, n in run["counts"].items() if c != "review_issues")
     log_activity(actor_name=who, event="extraction_completed",
-                 summary=f"Extracted {found} proposed values from “{document['filename']}” — {run['counts']['review_issues']} issues to review",
+                 summary=f"Extracted {found} proposed values from “{document['filename']}” — {run['counts']['review_issues']} issues to review"
+                         + ("" if run["mode"] == "gemini" else f" ({run['mode']} extraction)"),
                  entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"), details=run["counts"])
 
 
 @router.post("/documents/{document_id}/extract", response_model=SourceDocument, status_code=202,
-             responses={409: {"description": "Extraction not possible in the document's current state"},
-                        503: {"description": "Gemini is not configured"}})
+             responses={409: {"description": "Extraction not possible in the document's current state"}})
 async def start_extraction(document_id: str, request: Request, background: BackgroundTasks) -> dict:
-    """Start extraction in the background; poll GET /documents/{id} for `status` and `extraction.chunks_done`."""
+    """Start extraction in the background; poll GET /documents/{id} for `status` and `extraction` progress.
+    With Gemini configured: Gemini first, pattern matching for anything it cannot finish. Without Gemini:
+    pattern matching on available text only, clearly marked as such."""
     document = get_record("documents", document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     _check_can_extract(document)
-    if not settings.gemini_api_key:
-        raise HTTPException(status_code=503, detail="Gemini is not configured on the server, so automatic extraction is unavailable. Values can still be entered manually.")
-    text_pages = [p["page_number"] for p in document["pages"] if p["text_status"] == "text"]
     already_read = _pages_for(document_id)
+    use_gemini = bool(settings.gemini_api_key)
     run = ExtractionRun(
-        started_at=now_iso(), model=settings.gemini_model,
-        pages_to_read=sum(1 for p in document["pages"] if p["text_status"] == "low_text" and p["page_number"] not in already_read),
+        started_at=now_iso(), model=settings.gemini_model if use_gemini else "none",
+        mode="gemini" if use_gemini else "deterministic",
+        pages_to_read=sum(1 for p in document["pages"] if p["text_status"] == "low_text" and p["page_number"] not in already_read) if use_gemini else 0,
     ).model_dump(mode="json")
     who = actor(request)
     updated = patch_record("documents", document_id, {"status": "extracting", "error": None, "extraction": run})
-    log_activity(actor_name=who, event="extraction_started", summary=f"Started extraction of “{document['filename']}”",
+    log_activity(actor_name=who, event="extraction_started",
+                 summary=f"Started extraction of “{document['filename']}”" + ("" if use_gemini else " (pattern matching only; Gemini not configured)"),
                  entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"),
-                 details={"pages": len(text_pages)})
+                 details={"mode": run["mode"]})
     background.add_task(run_extraction, document_id, who)
     return updated
 

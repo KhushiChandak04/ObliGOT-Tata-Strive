@@ -16,7 +16,7 @@ from app.models import _check_date_order
 DocumentKind = Literal["mou", "addendum"]
 # uploaded → extracting → needs_review → approved. failed: processing error; blocked: needs OCR/manual input or
 # an addendum whose target agreement is not yet chosen. A document is never approved because extraction finished.
-DocumentStatus = Literal["uploaded", "extracting", "needs_review", "approved", "failed", "blocked"]
+DocumentStatus = Literal["uploaded", "extracting", "needs_review", "approved", "failed", "blocked", "retry_required"]
 PageTextStatus = Literal["text", "low_text"]
 ReviewState = Literal["proposed", "needs_review", "approved", "rejected", "deferred"]
 ExtractionTarget = Literal["partner", "agreement", "programme", "scope", "financial_term", "obligation", "clause"]
@@ -78,6 +78,7 @@ class PageReading(BaseModel):
     has_stamp_or_handwriting: bool = False
     legibility: Literal["good", "partial", "poor", "unknown"] = "unknown"
     read_at: datetime
+    version: str = "1"  # reading format version; older readings are read again
 
 
 class ExtractionRun(BaseModel):
@@ -92,6 +93,9 @@ class ExtractionRun(BaseModel):
     pages_sent: list[int] = Field(default_factory=list)
     pages_skipped_low_text: list[int] = Field(default_factory=list)
     ai_used: bool = False
+    mode: Literal["gemini", "partial", "deterministic"] = "gemini"  # partial: Gemini for some parts, pattern matching for the rest
+    retryable: bool = False  # re-running later can complete what is missing
+    note: str | None = None  # which stages completed and which need a retry or review
     ai_error: str | None = None  # not_configured, timeout, rate_limited, empty_response, malformed_response, api_error:<code>, error:<type>
     counts: dict[str, int] = Field(default_factory=dict)
 

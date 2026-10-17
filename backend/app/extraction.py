@@ -7,7 +7,10 @@ Document text is untrusted data; the prompt tells the model to ignore instructio
 model returns is trusted without the checks below.
 """
 import asyncio
+import json
 import logging
+import random
+import re
 from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Literal
@@ -208,54 +211,105 @@ def build_prompt(kind: str, page_texts: list[str], pages: list[int], total_pages
 # ---- Gemini call ----
 
 class ExtractionFailed(Exception):
-    def __init__(self, code: str, message: str):
+    """`retryable`: trying again later can succeed (rate limit, overload, timeout); otherwise the request itself,
+    the key, or today's quota must change first."""
+
+    def __init__(self, code: str, message: str, retryable: bool = False):
         super().__init__(message)
         self.code = code
+        self.retryable = retryable
 
 
 Generate = Callable[[str], Awaitable[str]]
 
+_semaphores: dict[int, asyncio.Semaphore] = {}
+
+
+def _limit() -> asyncio.Semaphore:
+    """At most GEMINI_MAX_CONCURRENCY calls at once (per event loop), to avoid burning quota in bursts."""
+    loop = id(asyncio.get_running_loop())
+    if loop not in _semaphores:
+        _semaphores[loop] = asyncio.Semaphore(max(1, settings.gemini_max_concurrency))
+    return _semaphores[loop]
+
+
+def _error_details(exc: Exception) -> str:
+    details = getattr(exc, "details", None) or getattr(exc, "response_json", None) or ""
+    return details if isinstance(details, str) else json.dumps(details, default=str)
+
+
+def classify_error(exc: Exception) -> tuple[str, bool, float | None]:
+    """(code, retryable, suggested wait in seconds) for a Gemini API error. Codes:
+    invalid_request (400), auth_error (401/403), model_not_found (404), quota_exhausted (daily quota),
+    rate_limited (per-minute limit), unavailable (5xx), error:<type> (anything else)."""
+    code = getattr(exc, "code", None)
+    details = _error_details(exc)
+    if code == 400:
+        return ("auth_error" if "API key" in details or "API_KEY" in details else "invalid_request"), False, None
+    if code in (401, 403):
+        return "auth_error", False, None
+    if code == 404:
+        return "model_not_found", False, None
+    if code == 429:
+        if "PerDay" in details or "per day" in details.lower():
+            return "quota_exhausted", False, None
+        match = re.search(r'"?retryDelay"?\s*:\s*"(\d+(?:\.\d+)?)s"', details)
+        return "rate_limited", True, float(match.group(1)) if match else None
+    if isinstance(code, int) and 500 <= code < 600:
+        return "unavailable", True, None
+    return f"error:{type(exc).__name__}", False, None
+
+
+MESSAGES = {
+    "invalid_request": "Gemini rejected the request as invalid",
+    "auth_error": "Gemini rejected the API key (check GEMINI_API_KEY)",
+    "model_not_found": "The configured Gemini model is not available to this key",
+    "quota_exhausted": "Today's Gemini quota is used up; try again tomorrow or use a key with more quota",
+    "rate_limited": "Gemini rate limit reached; try again in a minute",
+    "unavailable": "Gemini is temporarily overloaded; try again in a few minutes",
+    "timeout": "Gemini did not respond in time",
+}
+
 
 async def gemini_structured(contents, schema: type[BaseModel]) -> str:
-    """One structured-JSON Gemini call (text or text + images) with a timeout and rate-limit retries.
-    Returns the raw JSON text; callers validate it. Errors become ExtractionFailed with a machine-readable code."""
+    """One structured-JSON Gemini call (text or text + images). Returns raw JSON text; callers validate it.
+
+    - A model that is overloaded, rate-limited, out of daily quota, or unavailable to the key is replaced by the
+      next model in GEMINI_FALLBACK_MODELS (free-tier quotas are per model).
+    - Retryable errors (rate limit, overload, timeout) are retried up to GEMINI_MAX_RETRIES times with exponential
+      backoff, waiting Google's suggested delay when given (capped by GEMINI_MAX_RETRY_WAIT_SECONDS).
+    - Permanent errors (invalid request, bad key, exhausted daily quota on every model) are never retried.
+    """
     if not settings.gemini_api_key:
         raise ExtractionFailed("not_configured", "Gemini is not configured on the server")
     from google import genai
     from google.genai import types
     client = genai.Client(api_key=settings.gemini_api_key)
     config = types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema, temperature=0)
-    delays = list(settings.gemini_retry_delays)
-    # On "overloaded" (503), try the fallback models immediately before waiting and retrying.
     models = [settings.gemini_model, *[m for m in settings.gemini_fallback_models if m != settings.gemini_model]]
-    current = 0
+    current, attempt = 0, 0
     while True:
         try:
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(model=models[current], contents=contents, config=config),
-                timeout=settings.gemini_extraction_timeout_seconds,
-            )
+            async with _limit():
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(model=models[current], contents=contents, config=config),
+                    timeout=settings.gemini_extraction_timeout_seconds,
+                )
             return response.text or ""
-        except asyncio.TimeoutError as exc:
-            raise ExtractionFailed("timeout", f"Gemini did not respond within {settings.gemini_extraction_timeout_seconds:g} seconds") from exc
+        except asyncio.TimeoutError:
+            code, retryable, wait = "timeout", True, None
         except Exception as exc:
-            code = getattr(exc, "code", None)
-            if code in (429, 503) and current + 1 < len(models):
-                # Overloaded, or this model's quota is used up (free-tier quotas are per model): try the next model.
-                current += 1
-                logger.warning("Gemini returned %s; switching to %s", code, models[current])
-                continue
-            if code in (429, 503) and delays:  # rate limit or temporarily overloaded: wait and retry
-                logger.warning("Gemini returned %s; retrying in %ss", code, delays[0])
-                await asyncio.sleep(delays.pop(0))
-                continue
-            if code == 429:
-                raise ExtractionFailed("rate_limited", "Gemini rate limit reached; try again in a minute") from exc
-            if code == 503:
-                raise ExtractionFailed("unavailable", "Gemini is temporarily overloaded; try again in a few minutes") from exc
-            ai_error = f"api_error:{code}" if isinstance(code, int) else f"error:{type(exc).__name__}"
-            logger.warning("Gemini request failed: %s", ai_error)  # type/code only; messages may echo document text
-            raise ExtractionFailed(ai_error, f"The Gemini request failed ({ai_error})") from exc
+            code, retryable, wait = classify_error(exc)
+        logger.warning("Gemini %s on %s (attempt %s)", code, models[current], attempt + 1)  # never the request content
+        if code in ("unavailable", "rate_limited", "quota_exhausted", "model_not_found") and current + 1 < len(models):
+            current += 1
+            continue
+        if retryable and attempt < settings.gemini_max_retries:
+            delay = wait if wait is not None else settings.gemini_backoff_base_seconds * (2 ** attempt)
+            await asyncio.sleep(min(delay, settings.gemini_max_retry_wait_seconds) + random.uniform(0, 0.25 * min(delay, 1)))
+            attempt += 1
+            continue
+        raise ExtractionFailed(code, MESSAGES.get(code, f"The Gemini request failed ({code})"), retryable)
 
 
 async def gemini_generate(prompt: str) -> str:

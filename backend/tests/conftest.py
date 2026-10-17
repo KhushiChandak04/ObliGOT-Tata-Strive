@@ -10,7 +10,9 @@ def local_settings_do_not_apply(monkeypatch):
     monkeypatch.setattr(settings, "require_firebase_auth", False)
     monkeypatch.setattr(settings, "firebase_credentials_file", "")
     monkeypatch.setattr(settings, "gemini_api_key", "")
-    monkeypatch.setattr(settings, "gemini_retry_delays", [])  # no real waiting on rate-limit retries in tests
+    monkeypatch.setattr(settings, "gemini_backoff_base_seconds", 0.0)  # no real waiting on retries in tests
+    monkeypatch.setattr(settings, "gemini_max_retry_wait_seconds", 0.0)
+    monkeypatch.setattr(settings, "gemini_fallback_models", [])
 
 
 @pytest.fixture(autouse=True)
