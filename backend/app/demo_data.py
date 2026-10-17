@@ -1,7 +1,8 @@
-from datetime import date, timedelta
+from datetime import timedelta
 from app.models import Partner, ActionItem
+from app.rules import business_today
 
-today = date.today()
+today = business_today()
 # Clearly labelled illustrative records; no real partner commitments are implied.
 PARTNERS = {
     "demo-001": Partner(id="demo-001", name="Illustrative Skills Partner", category="Training & curriculum", contribution_types=["curriculum", "training"], status="active", owner="Partnerships Team", updated_at=today, summary="Illustrative record only. Not a verified organization or commitment.", source_label="demo"),

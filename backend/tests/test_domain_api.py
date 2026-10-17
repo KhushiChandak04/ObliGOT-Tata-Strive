@@ -103,3 +103,25 @@ def test_csv_import_preview_is_non_destructive():
     assert data["committed"] is False
     assert data["valid_count"] == 1
     assert data["invalid_count"] == 1
+
+
+def test_dashboard_findings_clear_when_report_is_submitted():
+    from datetime import timedelta
+    from app.rules import business_today
+    for name in ("agreements", "finance", "reports"):
+        repository._COLLECTIONS[name].clear()
+    repository._firestore_client = None
+    repository._firestore_attempted = True
+    client = TestClient(app)
+    past = (business_today() - timedelta(days=5)).isoformat()
+    report_id = client.post("/api/reports", json={"partner_id": "demo-001", "title": "Overdue sample report", "due_date": past, "status": "due"}).json()["id"]
+    client.post("/api/finance", json={"partner_id": "demo-001", "record_type": "fund_received", "title": "Sample receipt"})
+
+    dashboard = client.get("/api/dashboard").json()
+    assert dashboard["as_of"] == business_today().isoformat()
+    finding_ids = {f["record_id"]: f for f in dashboard["findings"]}
+    assert set(finding_ids) == {report_id}
+    assert finding_ids[report_id]["issue"] == "Overdue: Overdue sample report"
+
+    assert client.patch(f"/api/reports/{report_id}", json={"status": "submitted"}).status_code == 200
+    assert client.get("/api/dashboard").json()["findings"] == []

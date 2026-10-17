@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
     firebase_project_id: str = ""
     require_firebase_auth: bool = False
+    # Business timezone offset used for "today" in deadline rules (IST = +330 minutes).
+    business_utc_offset_minutes: int = 330
 
     model_config = SettingsConfigDict(
         env_file=".env",

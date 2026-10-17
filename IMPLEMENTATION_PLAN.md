@@ -7,8 +7,8 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 |---|---|---|
 | 1 | Repository and API audit | Done — approved |
 | 2 | Architecture proposal | Done — approved |
-| 3 | Project instructions and custom skills | Done — awaiting review |
-| 4 | Existing API route repairs (groups 4a–4f) | Not started |
+| 3 | Project instructions and custom skills | Done — approved |
+| 4 | Existing API route repairs (groups 4a–4f) | 4a done — awaiting review |
 | 5 | Application foundation | Not started |
 | 6 | Core partnership workflows | Not started |
 | 7 | Deadline engine and action center | Not started |
@@ -69,6 +69,15 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 4a notes — status-aware deadline findings
+- `scan_deadlines` now skips resolved records: reports `submitted`/`accepted`; finance `paid`/`received`/`submitted`/`accepted`/`completed`/`closed`/`cancelled` (case-insensitive, finance status is still free text until 4d); agreements `closed`.
+- Agreements are evaluated only when `active` or `expired`, with "Expired"/"Expiring soon"/"Missing expiry date" wording. Drafts and under-review agreements are skipped.
+- Finance: only `invoice` and `utilization_certificate` are evaluated; budgets and fund receipts no longer produce "Missing due date" noise.
+- Each finding now includes `Recorded status: …` evidence when a status exists.
+- "Today" comes from `business_today()` (UTC offset setting `BUSINESS_UTC_OFFSET_MINUTES`, default 330 = IST, no DST). Used by rules, dashboard, partner `updated_at`, and demo data.
+- API contract: unchanged except the additive `as_of` field on `GET /api/dashboard`. Finding shape unchanged.
+- Verification: `python -m pytest -q` → 14 passed (5 new tests). Probe: defects 1 and 2 fixed; defect 3 (projects/milestones) deferred to Step 7 as planned.
 
 ## Step 3 notes
 - Created `CLAUDE.md` and seven project skills in `.claude/skills/` (`build-feature`, `firebase-workflow`, `review`, `ui-polish`, `motion`, `data-import`, `demo-check`).

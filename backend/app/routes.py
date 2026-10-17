@@ -14,7 +14,7 @@ from app.models import (
 from app.repository import (
     firestore_enabled, get_record, list_records, patch_record, put_record, delete_record,
 )
-from app.rules import build_deadline_finding, scan_deadlines
+from app.rules import build_deadline_finding, business_today, scan_deadlines
 
 router = APIRouter()
 
@@ -43,6 +43,7 @@ def dashboard() -> dict:
             "finance_records": len(finance),
         },
         "findings": scan_deadlines({"agreements": agreements, "projects": projects, "finance": finance, "reports": reports}),
+        "as_of": business_today().isoformat(),
         "storage_mode": "firestore" if firestore_enabled() else "demo-memory-fallback",
         "demo_data_notice": "Any record marked source_label=demo is illustrative, not verified.",
     }
@@ -58,7 +59,7 @@ def list_partners(q: str | None = Query(default=None, max_length=160)) -> list[P
 @router.post("/partners", response_model=Partner, status_code=201, tags=["partners"])
 def create_partner(payload: PartnerCreate) -> dict:
     data = payload.model_dump(mode="json")
-    data.update({"updated_at": date.today().isoformat(), "source_label": "user"})
+    data.update({"updated_at": business_today().isoformat(), "source_label": "user"})
     return put_record("partners", data)
 
 @router.get("/partners/{partner_id}", response_model=Partner, tags=["partners"])
@@ -71,7 +72,7 @@ def get_partner(partner_id: str) -> dict:
 @router.patch("/partners/{partner_id}", response_model=Partner, tags=["partners"])
 def update_partner(partner_id: str, payload: PartnerUpdate) -> dict:
     changes = payload.model_dump(exclude_unset=True, mode="json")
-    changes["updated_at"] = date.today().isoformat()
+    changes["updated_at"] = business_today().isoformat()
     record = patch_record("partners", partner_id, changes)
     if not record:
         raise HTTPException(status_code=404, detail="Partner not found")
