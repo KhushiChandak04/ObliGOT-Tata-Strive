@@ -38,7 +38,10 @@ Existing collection names and fields are preserved; new fields are optional for 
 | `activities` | current (Step 7b) | entity_type, entity_id, partner_id, event, actor, timestamp, details (audit trail) |
 | `users` | planned | uid, email, name, role |
 | `config/rules` | current (Step 7a) | rule thresholds |
-| `submission_requests` | planned (Steps 8e–8f, P1) | partner_id, project_id, obligation {type, id}, request_type (`progress_update` / `report_submission`), period, requested_info, due_date, status, token_hash, token_expires_at, revoked_at, submissions[], review, created_by |
+| `documents` | planned (P2) | `SourceDocument`: filename, kind (mou / addendum), partner_id, agreement_id, uploaded_at/by, page_count, pages[] (text status), status, storage_ref (private; file bytes never in Firestore), warnings, error, approval |
+| `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope` | planned (P3) | models in `app/documents.py`; each with evidence and review state |
+| `agreement_changes` | planned (P4) | addendum changes: prior / proposed value, amendment and effective dates, evidence, status, reviewer |
+| `review_issues` | planned (P3) | validation and review issues per document |
 
 Every record carries `source_label` (`demo` or `user`). Demo records are fictional.
 
@@ -77,16 +80,31 @@ Viewer: read. Manager: create/update, review recommendations, tasks. Admin: plus
 ## Frontend [planned]
 Typed API client per resource, `useResource` hook, shared `StatusBadge`, `DataTable`, `Dialog`, `EvidencePanel`, `AlertRow`, `PriorityBreakdown`. Pages: Dashboard (management overview + Today's 5), Action center (team workspace), Partners, Partner 360 (tabbed), Pipeline, Agreements, Projects, Finance, Reports, Import, Sign-in. Recharts and `motion` only when approved (Step 11).
 
-## External partner submissions [planned — Steps 8e–8f, P1]
+## Document-to-data pipeline [contract current — P1a; pipeline planned — P2–P4]
 ```
-Manager (internal UI) → POST /api/submission-requests → token shown once, link /submit/<token>
-Partner (separate browser) → /submit/<token> → GET /api/public/submissions/<token> (scoped context only)
-                                             → POST /api/public/submissions/<token> (validated; status → received)
-Manager → review (accept / request changes / reject) → obligation updated only on accept → alerts recomputed → activity logged
+Upload PDF (staff) → FastAPI validates type/size → private storage (Firebase Storage or local folder outside git)
+  → PyMuPDF: page count, text per page, low-text pages flagged (OCR/manual review; never silently skipped)
+  → Gemini (structured output, page-aware chunks): proposed fields, clauses, obligations, financial terms, addendum changes
+  → Pydantic + deterministic checks: types, dates, amounts, page in range, quote found on the cited page (`verify_evidence`)
+  → human review: confirm / correct / defer / reject; addendum target chosen by a human when unsure
+  → approved values → operational records (agreements, projects, milestones, reports, finance) + workbook export
+  → rules engine (approved records only) → alerts → Gemini explanation from verified facts
 ```
-- Only `/api/public/submissions/*` is unauthenticated, and it authorizes solely by an unpredictable token whose SHA-256 hash is stored; scope (partner, obligation) comes from the stored request, never from the request body. Expiry, revocation, allowed status, field validation, single submission per round, and a per-token rate limit are enforced server-side.
-- Partner input is stored on the submission record and never written into canonical records until a manager accepts it. Firestore rules remain deny-all.
-- File uploads are out of scope until a secured Storage bucket is configured; document links (http(s)) are accepted instead.
+| Stage | Owner |
+|---|---|
+| Upload, status, review, export, alerts UI | React |
+| Orchestration, upload validation, lifecycle, errors | FastAPI |
+| Page text and low-text detection | PyMuPDF |
+| Interpreting contract language; proposing values | Gemini (advisory) |
+| Types, page bounds, quotes, dates, amounts, IDs, state transitions | Pydantic + Python |
+| Confirming values and amendments | Human reviewer |
+| Multi-sheet XLSX | openpyxl, contract in `app/workbook.py` (`docs/WORKBOOK_SCHEMA.md`) |
+| Deadlines, comparisons, alert triggers and scores | Rules engine |
+
+- **Evidence:** every significant value keeps verbatim text, the normalized value, warnings, and the approved value separately, plus document, page, and quote. Evidence is shown as verified only when `verify_evidence` finds the quote on the cited page.
+- **Amendments:** originals are never overwritten. Each addendum change stores prior and proposed values with evidence; it is applied to the effective view only after approval, in effective-date order. Conflicting or unclear changes stay `unresolved` and do not affect alerts.
+- **Keep distinct:** budget vs invoice, estimated vs confirmed commitment, ceiling vs spent, funds received vs owed, signing vs effective vs programme start date.
+- Without a Gemini key, upload, page inspection, manual review, export from approved data, and deterministic alerts still work; the UI states that AI was not used.
 
 ## Routing
 `backend/app/main.py` mounts `app.routes.router` at `/api`. `app.openapi()` is exercised in tests to detect missing or malformed route registration. Detail routes return 404 for missing IDs. The full route inventory is in `docs/API_ENDPOINTS.md`. Legacy SQLite modules were removed in Step 4f.

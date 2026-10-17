@@ -12,6 +12,6 @@ All records are fictional demo data (`source_label = "demo"`). Without Firebase 
 7. **Import:** preview a CSV/XLSX through the backend; show validation issues and that nothing is written (confirmation arrives in Step 10).
 
 ## Planned (do not demo until built and verified)
-- **Finance and Reports on live records** (Step 8d).
-- **External partner submission** (Steps 8e–8f): manager requests a report from Partner 360 → copies the link → a separate browser session submits as the partner → the obligation shows "Received — awaiting review" → the manager accepts → the obligation and dashboard update and the decision appears in the activity history.
-- **Grounded Gemini recommendations** (Step 9) and **confirmed import** (Step 10).
+- **Core story (P2–P6), synthetic MOU only:** upload a labelled synthetic MOU PDF → page-by-page extraction status → review fields and clauses with page and quote → correct one value, approve → export the multi-sheet workbook → the approved MOU's expiry/reporting dates raise a deterministic alert on the dashboard.
+- **Addendum (P4):** upload a synthetic addendum → choose the MOU it amends → old vs proposed values with evidence → approve → effective view updates while the original and history stay visible.
+- **Finance and Reports on live records** (P6) and **grounded Gemini explanations** (P7).

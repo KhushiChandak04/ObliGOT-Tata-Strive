@@ -13,12 +13,21 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 5    | Application foundation (5a, 5b, 5c)           | 5a done (API-connected UI, now unrouted); 5b/5c pending auth implementation and backend credentials |
 | 6    | Core partnership workflows (6a–6d)            | Done — approved (backend APIs in use; original pages now unrouted) |
 | 7    | Deadline engine and action center (7a–7c)     | 7a, 7b approved; 7c done (UI now unrouted) |
-| 8    | Funding and compliance + new-UI integration (8a finance backend, 8b core UI wiring, 8c partner/pipeline/agreements/projects, 8d finance/reports, 8e–8f external partner submissions — P1) | 8a, 8b approved; 8c done — awaiting review; 8d–8f planned |
-| 9    | Gemini AI integration                         | Not started                               |
-| 10   | Spreadsheet import                            | Not started                               |
-| 11   | Management dashboard and UI polish (+ motion) | Not started                               |
-| 12   | Testing and review                            | Not started                               |
-| 13   | Deployment and demo preparation               | Not started                               |
+| 8    | Funding and compliance + new-UI integration (8a finance backend, 8b core UI wiring, 8c partner/pipeline/agreements/projects) | 8a–8c done. 8d (Finance/Reports UI) moved into P6. 8e–8f (external partner submissions) **cancelled** — never implemented |
+
+Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below (product pivot after stakeholder discovery).
+
+| Phase | Name | Status |
+| ----- | ---- | ------ |
+| P0 | Scope and repository audit | Done — approved |
+| P1 | Canonical schema and workbook contract (P1a models + contract) | P1a done — awaiting review |
+| P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | Not started |
+| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | Not started |
+| P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | Not started |
+| P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
+| P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
+| P7 | Grounded AI summaries and alert explanations | Scaffolded (no key; free-text output) |
+| P8 | Integration testing and demo readiness | Not started |
 
 > **Note on the two sets of Step 5–6 notes.** The "React application foundation" and "Core workflow screens" notes directly
 > below were written by a teammate for the new reference-based frontend (`reference/obligot.html` → `frontend/src/app/App.tsx`),
@@ -56,12 +65,14 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 - 17 Oct 2026: use the teammate's new frontend (`App.tsx`, `reference/obligot.html` design) and wire it to the FastAPI backend screen by screen, replacing the synthetic `src/data/repository.ts` data and client-side alerts.
 - 17 Oct 2026: Step 8a — commit the backend part; drop the 8a edits to the old, now-unrouted pages.
 - 17 Oct 2026: spreadsheet parsing for Import uses the existing backend `POST /api/import/preview` instead of the browser `xlsx` package.
-- 17 Oct 2026: scope addition — secure external partner submission workflow (P1 supporting differentiator) added as Steps 8e (backend) and 8f (UI), after the obligation screens are live (8d) and before Gemini (9) and import (10).
+- 17 Oct 2026: the external partner submission workflow (planned as 8e–8f) is **cancelled**. It existed only in the docs; no code was written. Its plan, architecture, and demo references were removed. Internal staff forms stay.
+- 17 Oct 2026: product pivot — MOU/addendum PDF → page-aware extraction → evidence-linked structured data → deterministic validation → human approval → Excel-compatible records and export → deterministic alerts → grounded AI explanation → dashboard. Phases P0–P8 replace Steps 9–13.
+- 17 Oct 2026 (defaults accepted with the P1a approval): PDFs are stored privately — Firebase Storage in `obligot-95487` through the Admin SDK when a bucket is configured, otherwise a local folder outside git; never in Firestore. `pymupdf` is added to `requirements.txt` in P2. Records entered through the existing staff forms count as approved; only PDF-derived values need review. Only synthetic, labelled fixtures until real MOU samples are shared.
 
 ## Open questions (awaiting team input)
 
-1. Firebase project ID, web-app config, service account, and Gemini key availability (needed by Step 5).
-2. Location of the sample partnership workbook and the official problem statement.
+1. Gemini key for the backend; confirm Firestore works with the service account on a teammate's machine; a Firebase Storage bucket for private PDFs.
+2. Real (or redacted) MOU and addendum samples to replace the synthetic fixtures; the sample partnership workbook.
 3. Backend hosting: Cloud Run (recommended) or Render (`render.yaml` exists).
 4. Freeze `followups` and use `actions` as the only task model?
 
@@ -107,32 +118,22 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
 
-## Scope addition — secure external partner submission workflow (P1, Steps 8e–8f)
-**Why here:** acceptance must update a live obligation (report or milestone) through its API, recalculate alerts, and log activity. Reports go live in 8d; milestones, alerts, reviews, and the activity log already exist. Placing it after 8d and before Gemini (9) and import (10) follows the brief: early enough not to be left to the final hours, below the P0 requirements and the intelligence engine.
+## Product pivot — document-to-Excel partnership intelligence (17 Oct 2026)
+**Thesis:** turn MOUs and their addenda into verified, Excel-ready records, then use those records to power explainable alerts and the management dashboard.
 
-**Scope:** two request types only — `progress_update` (linked to a milestone) and `report_submission` (linked to a reporting obligation). No form builder, partner accounts, partner portal, or messaging integrations. The manager copies the link and shares it through existing email/WhatsApp.
+**Approval gate:** PDF → page text (PyMuPDF) → Gemini proposes fields, clauses, obligations, and changes with page and quote → deterministic checks (types, page range, quote found on the page, dates, amounts) → human review → only approved values reach the operational records, the workbook, and the rules engine. A schema-valid model response is not treated as correct.
 
-**Data model (new `submission_requests` collection; partner input never written directly into canonical records):**
-- `partner_id`, optional `project_id`, `obligation` (`{type: "report" | "milestone", id}`), `request_type`, `period_start`/`period_end`, `requested_info`, `due_date`.
-- `status`: `requested` → `received` (Received — awaiting review) → `accepted` | `changes_requested` (→ `received` again) | `rejected`; `expired` (computed from `token_expires_at`) and `revoked` block submission.
-- `token_hash` (SHA-256 of a random 256-bit `secrets.token_urlsafe(32)` token; the token itself is shown once and never stored), `token_expires_at`, `revoked_at`.
-- `submissions[]` (each round kept: submitted fields, submitter name/role, optional contact email, document links, `submitted_at`), `review` (`decision`, `comment`, `reviewer`, `reviewed_at`), `created_by`, `created_at`.
+**Reused unchanged:** record models and CRUD, link checks, rules engine and priority score, alert review loop and activity log, import preview (re-import path for exported workbooks), the new UI and its forms.
 
-**Security model:**
-- Public routes under `/api/public/submissions/{token}` (GET scoped context, POST submit) are the only unauthenticated routes; they look the request up by token hash, check expiry, revocation, and that the status allows submission, validate every field with Pydantic, and never accept partner/obligation IDs from the body — scope comes only from the stored request. Internal IDs alone never authorize anything.
-- GET returns only the partner name, request type, obligation title, period, requested information, and due date — no other internal records.
-- One submission per open round (replay → 409); a simple per-token rate limit; payload size limits.
-- Firestore rules stay deny-all; all writes go through FastAPI with the Admin SDK. No secrets in the browser.
-- **File uploads:** no Firebase Storage bucket is configured, so uploads are a documented limitation for now; partners can provide http(s) links to documents (validated, rendered safely). Uploads are added only if a secured Storage bucket is configured.
+**Known limitations (current):** no real MOU samples (synthetic fixtures only); scanned pages are detected as low-text and need OCR or manual review — no OCR engine is installed; Gemini has not been called successfully (no key); Firestore and Google sign-in are not verified on this machine.
 
-**Lifecycle effects:** submission → status `received`, activity "Submission received (external partner via link)"; the overdue/due alert stays open (a partner's claim never closes an obligation). Accept → report: `submitted_date` from the submission and status `accepted`; milestone: reported status/completion date applied (completion requires a date) — then alerts recalculate on the next request and the dashboard updates. Changes requested / rejected → reason stored, submission retained, link reopened (changes requested) or closed (rejected). Every transition is logged in `activities`.
-
-**8e (backend):** model, token creation/regeneration/revocation, public GET/POST, internal list/detail/review routes, effects on reports/milestones, activity entries, an "awaiting review" signal for the Action Center, tests for all ten acceptance scenarios that are API-testable.
-**8f (UI):** "Request update" from Partner 360 and from a report/milestone (create request, copy link, status), public `/submit/:token` page outside the app shell (responsive, validated, clear confirmation/errors, "link expired/invalid" states), review screen (compare submission with the current record; accept / request changes / reject with reason), "Received — awaiting review" shown distinctly from accepted records, browser test of the full demo flow in a separate session.
-
-**Acceptance tests (from the brief):** request created for an existing partner and obligation; partner submits from a separate browser session; appears as awaiting review; invalid/expired/revoked links cannot submit; one link cannot touch another partner's records; accept or request changes persists; acceptance updates the obligation and dashboard; request and decision in activity history; refresh keeps state; failures show meaningful errors.
-
-**Decisions needed before 8e:** link lifetime default (proposed 14 days, adjustable per request); whether accepting a report sets `accepted` (proposed) or `submitted`.
+## Step P1a notes — data contract
+- New `backend/app/documents.py` (models only, no routes yet): `SourceDocument` (kind mou/addendum, status uploaded → extracting → needs_review → approved, failed, blocked; private `storage_ref`; per-page text status), `Evidence` (document, page, quote, verified), `ExtractedField` (verbatim, proposed value, warnings, review state, approved value, reviewer), `Clause`, `FinancialTerm` (contractual terms, separate from finance records; basis confirmed/estimated/ceiling/unspecified), `Obligation`, `ProgrammeScope`, `AgreementChange` (prior and proposed value, amendment/effective dates, evidence, status), `ReviewIssue`.
+- Validation rules: approved/rejected states need reviewer and time; an unapproved field cannot carry an approved value; a document is approved only with an approval record; an amount needs a currency; financial year as `2026-27`; an addendum change can be approved only with verified evidence; effective date not before amendment date; resolved/deferred issues need a note. Missing values stay `null`.
+- `verify_evidence`: deterministic — page must exist and the quote must appear on that page after documented normalization (NFKC, straight quotes/dashes, whitespace, case, line-break hyphens). A `verified` flag from model output is ignored and recomputed. `page_text_status` marks pages under 40 characters as low-text.
+- New `backend/app/workbook.py`: nine-sheet contract (Partners, Agreements, Programmes_Projects, Programme_Scope, Financial_Terms, Obligations_Milestones, Clauses, Addenda_Change_History, Validation_Review_Issues) with column types, required flags, enum values taken from the models, and references between sheets. `Programme_Scope` is added to the proposed eight sheets so one MOU covering several states/courses stays one row per item. Documented in `docs/WORKBOOK_SCHEMA.md` (generated from the contract).
+- No routes, collections, or existing contracts changed.
+- Verification: `python -m pytest -q` → 180 passed (21 new in `tests/test_documents.py`); `npm run build` passes (frontend unchanged).
 
 ## Step 8c notes — Partner 360, Pipeline, Agreements, Projects on the API
 - Partner 360: partner picker (`/partner-360?id=`), title from the selected partner; profile with Edit (reuses `PartnerForm`); MOU timeline from the partner's agreement dates (active agreement with the nearest expiry; elapsed share computed against the backend's `as_of` date); open alerts for the partner (open the shared drawer); linked-record counts linking to each register; recent activity.
