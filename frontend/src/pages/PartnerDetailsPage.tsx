@@ -5,7 +5,7 @@ import Dialog from "../components/ui/Dialog";
 import PageHeader from "../components/ui/PageHeader";
 import StateMessage from "../components/ui/StateMessage";
 import StatusBadge from "../components/ui/StatusBadge";
-import FindingList from "../features/intelligence/FindingList";
+import AlertList from "../features/alerts/AlertList";
 import AgreementForm from "../features/agreements/AgreementForm";
 import PartnerForm from "../features/partners/PartnerForm";
 import ProjectForm from "../features/projects/ProjectForm";
@@ -13,23 +13,20 @@ import OpportunityTable from "../features/pipeline/OpportunityTable";
 import {ActionTable,AgreementTable,FinanceTable,ProjectTable,ReportTable} from "../features/partners/LinkedRecordTables";
 import {ApiError,api} from "../services/functions.service";
 import {useResource} from "../lib/useResource";
-import {formatDate} from "../lib/utils";
-import type {Agreement,DeadlineFinding,Partner,Project} from "../types";
+import {formatDate,formatDateTime} from "../lib/utils";
+import type {Activity,Agreement,Alert,Partner,Project} from "../types";
 
-type TabId="overview"|"pipeline"|"agreements"|"projects"|"finance"|"reports"|"actions";
+type TabId="overview"|"pipeline"|"agreements"|"projects"|"finance"|"reports"|"actions"|"activity";
 
 export default function PartnerDetailsPage(){
  const {partnerId=""}=useParams();
  const partner=useResource(()=>api.partners.get(partnerId),[partnerId]);
  const linked=useResource(async()=>{
-  const [opportunities,agreements,projects,finance,reports,actions,dashboard]=await Promise.all([
+  const [opportunities,agreements,projects,finance,reports,actions,alerts,activities]=await Promise.all([
    api.opportunities.list(partnerId),api.agreements.list(partnerId),api.projects.list(partnerId),api.finance.list(partnerId),
-   api.reports.list(partnerId),api.actions.list({relatedPartnerId:partnerId}),api.dashboard(),
+   api.reports.list(partnerId),api.actions.list({relatedPartnerId:partnerId}),api.alerts.list({partnerId}),api.activities.list({partnerId,limit:100}),
   ]);
-  const rank={high:0,medium:1,low:2};
-  const findings=dashboard.findings.filter(f=>f.partner_id===partnerId)
-   .sort((a,b)=>rank[a.priority]-rank[b.priority]||(a.days_remaining??Infinity)-(b.days_remaining??Infinity));
-  return {opportunities,agreements,projects,finance,reports,actions,findings,asOf:dashboard.as_of};
+  return {opportunities,agreements,projects,finance,reports,actions,alerts:alerts.alerts,hiddenAlerts:alerts.counts.hidden_by_review,activities,asOf:alerts.as_of};
  },[partnerId]);
  const [tab,setTab]=useState<TabId>("overview");
  const [editing,setEditing]=useState(false);
@@ -47,8 +44,9 @@ export default function PartnerDetailsPage(){
   <ProfilePanel partner={p}/>
   {linked.error&&<StateMessage kind="error" title="Could not load linked records" detail={linked.error.message} action={<button className="button button-secondary" onClick={linked.reload}>Retry</button>}/>}
   {linked.loading&&<StateMessage kind="loading" title="Loading pipeline, agreements, projects, finance, reports, and actions…"/>}
-  {linked.data&&<Tabs tab={tab} onChange={setTab} counts={{overview:linked.data.findings.length,pipeline:linked.data.opportunities.length,agreements:linked.data.agreements.length,projects:linked.data.projects.length,finance:linked.data.finance.length,reports:linked.data.reports.length,actions:linked.data.actions.length}}>
-   {tab==="overview"&&<OverviewTab findings={linked.data.findings} asOf={linked.data.asOf}/>}
+  {linked.data&&<Tabs tab={tab} onChange={setTab} counts={{overview:linked.data.alerts.length,activity:linked.data.activities.length,pipeline:linked.data.opportunities.length,agreements:linked.data.agreements.length,projects:linked.data.projects.length,finance:linked.data.finance.length,reports:linked.data.reports.length,actions:linked.data.actions.length}}>
+   {tab==="overview"&&<AlertsTab alerts={linked.data.alerts} hidden={linked.data.hiddenAlerts} asOf={linked.data.asOf}/>}
+   {tab==="activity"&&<ActivityTab activities={linked.data.activities}/>}
    {tab==="pipeline"&&(linked.data.opportunities.length?<><div className="table-panel inner-table"><OpportunityTable rows={linked.data.opportunities}/></div><p className="muted panel-footnote">Create, edit, or move opportunities on the <Link className="text-link" to="/pipeline">Pipeline page</Link>.</p></>:<StateMessage title="No opportunities" detail="Nothing is recorded in the pipeline for this partner yet." action={<Link className="button button-secondary" to="/pipeline">Open pipeline</Link>}/>)}
    {tab==="agreements"&&<><div className="tab-toolbar"><button className="button button-secondary button-small" onClick={()=>setAgreementDialog({mode:"create"})}><Plus size={13} aria-hidden/> Add agreement</button></div><AgreementTable rows={linked.data.agreements} onEdit={a=>setAgreementDialog({mode:"edit",agreement:a})}/></>}
    {tab==="projects"&&<><div className="tab-toolbar"><Link className="text-link" to="/projects">Manage milestones on the Projects page</Link><button className="button button-secondary button-small" onClick={()=>setProjectDialog({})}><Plus size={13} aria-hidden/> Add project</button></div><ProjectTable rows={linked.data.projects} onEdit={project=>setProjectDialog({project})}/></>}
@@ -87,7 +85,7 @@ function ProfilePanel({partner}:{partner:Partner}){
  </div>;
 }
 
-const TABS:{id:TabId;label:string}[]=[{id:"overview",label:"Open findings"},{id:"pipeline",label:"Pipeline"},{id:"agreements",label:"Agreements"},{id:"projects",label:"Projects"},{id:"finance",label:"Finance"},{id:"reports",label:"Reports"},{id:"actions",label:"Actions"}];
+const TABS:{id:TabId;label:string}[]=[{id:"overview",label:"Open alerts"},{id:"pipeline",label:"Pipeline"},{id:"agreements",label:"Agreements"},{id:"projects",label:"Projects"},{id:"finance",label:"Finance"},{id:"reports",label:"Reports"},{id:"actions",label:"Actions"},{id:"activity",label:"Activity"}];
 
 function Tabs({tab,onChange,counts,children}:{tab:TabId;onChange:(t:TabId)=>void;counts:Record<TabId,number>;children:ReactNode}){
  const refs=useRef<Record<string,HTMLButtonElement|null>>({});
@@ -105,9 +103,15 @@ function Tabs({tab,onChange,counts,children}:{tab:TabId;onChange:(t:TabId)=>void
  </section>;
 }
 
-function OverviewTab({findings,asOf}:{findings:DeadlineFinding[];asOf:string}){
- return <><p className="muted tab-intro">Rule-generated from this partner's agreements, reports, invoices, and UCs as of {formatDate(asOf)} (IST). Resolved records are excluded.</p>
-  {findings.length?<FindingList findings={findings}/>:<StateMessage title="No open findings" detail="Nothing linked to this partner is overdue, due within 30 days, or missing a required date."/>}</>;
+function AlertsTab({alerts,hidden,asOf}:{alerts:Alert[];hidden:number;asOf:string}){
+ const navigate=useNavigate();
+ return <><p className="muted tab-intro">Rule-generated from this partner's records as of {formatDate(asOf)} (IST), highest priority first. Related issues are shown together so they can be handled in one follow-up.{hidden>0&&` ${hidden} deferred or dismissed alert${hidden===1?" is":"s are"} not shown.`}</p>
+  {alerts.length?<AlertList alerts={alerts} onOpen={a=>navigate(`/actions?alert=${encodeURIComponent(a.id)}`)}/>:<StateMessage title="No open alerts" detail="No record linked to this partner currently triggers a rule."/>}</>;
+}
+
+function ActivityTab({activities}:{activities:Activity[]}){
+ if(!activities.length)return <StateMessage title="No activity yet" detail="Reviews, tasks, and status changes for this partner will be recorded here."/>;
+ return <ol className="activity-list">{activities.map(a=><li key={a.id}><time dateTime={a.at}>{formatDateTime(a.at)}</time><div><strong>{a.summary}</strong><small>{a.actor} · {a.event.replaceAll("_"," ")}</small></div></li>)}</ol>;
 }
 
 function DeletePartnerDialog({open,partner,onClose}:{open:boolean;partner:Partner;onClose:()=>void}){

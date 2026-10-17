@@ -89,7 +89,9 @@ def test_clear_review_reopens_alert():
     assert client.delete(f"/api/alerts/{REPORT_ALERT}/review").status_code == 204
     assert REPORT_ALERT in ids()
     assert client.delete(f"/api/alerts/{REPORT_ALERT}/review").status_code == 404
-    assert activities()[0]["event"] == "alert_review_cleared"
+    latest = activities()[0]
+    assert latest["event"] == "alert_review_cleared"
+    assert latest["summary"] == "Reopened “Report overdue” for Monthly progress report (demo) (previously dismissed)"
 
 
 def test_review_unknown_or_resolved_alert_is_404():

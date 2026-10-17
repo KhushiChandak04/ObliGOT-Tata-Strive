@@ -1,6 +1,7 @@
 import { firebaseAuth } from "../lib/firebase";
 import type {
-  ActionItem, Agreement, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup, HealthResponse, Milestone,
+  ActionItem, Activity, Agreement, Alert, AlertReview, AlertsResponse, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup,
+  HealthResponse, Milestone,
   Opportunity, Partner, Project, ReportRecord,
 } from "../types";
 
@@ -90,6 +91,19 @@ export const api = {
     create: (payload: Partial<Milestone>) => request<Milestone>("/api/milestones", send("POST", payload)),
     update: (milestoneId: string, payload: Partial<Milestone>) => request<Milestone>(`/api/milestones/${id(milestoneId)}`, send("PATCH", payload)),
     remove: (milestoneId: string) => request<void>(`/api/milestones/${id(milestoneId)}`, { method: "DELETE" }),
+  },
+  alerts: {
+    list: (filters: { partnerId?: string; level?: string; category?: string; includeReviewed?: boolean } = {}) =>
+      request<AlertsResponse>(`/api/alerts${query({ partner_id: filters.partnerId, level: filters.level, category: filters.category, include_reviewed: filters.includeReviewed ? "true" : undefined })}`),
+    review: (alertId: string, payload: { decision: "acknowledged" | "deferred" | "dismissed"; deferred_until?: string; reason?: string; note?: string }) =>
+      request<Alert & { review: AlertReview }>(`/api/alerts/${id(alertId)}/review`, send("POST", payload)),
+    clearReview: (alertId: string) => request<void>(`/api/alerts/${id(alertId)}/review`, { method: "DELETE" }),
+    createTask: (alertId: string, payload: { title?: string; owner?: string; due_date?: string | null; priority?: string }) =>
+      request<{ task: ActionItem; alert: Alert }>(`/api/alerts/${id(alertId)}/task`, send("POST", payload)),
+  },
+  activities: {
+    list: (filters: { partnerId?: string; entityId?: string; limit?: number } = {}) =>
+      request<Activity[]>(`/api/activities${query({ partner_id: filters.partnerId, entity_id: filters.entityId, limit: filters.limit ? String(filters.limit) : undefined })}`),
   },
   followups: {
     list: (filters: { status?: string; relatedPartnerId?: string } = {}) =>

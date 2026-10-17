@@ -24,3 +24,10 @@ export function formatAmount(amount?:number|null, currency="INR"):string {
   catch { return `${amount.toLocaleString("en-IN")} ${currency}`; }
 }
 export const FINANCE_TYPE_LABELS:Record<string,string> = {budget:"Budget",fund_received:"Fund received",invoice:"Invoice",utilization_certificate:"Utilization certificate"};
+/** Timestamp in the business timezone (IST), e.g. "17 Oct 2026, 3:42 pm". */
+export function formatDateTime(value?:string|null):string {
+  if (!value) return "Not set";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Invalid date";
+  return new Intl.DateTimeFormat("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"numeric",minute:"2-digit",timeZone:"Asia/Kolkata"}).format(date);
+}

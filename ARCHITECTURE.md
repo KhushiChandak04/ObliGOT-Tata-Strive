@@ -68,6 +68,11 @@ Gemini never computes dates, scores, or amounts.
 ## Roles [planned]
 Viewer: read. Manager: create/update, review recommendations, tasks. Admin: plus config, import, delete, roles. `REQUIRE_FIREBASE_AUTH=false` is local-only with a visible demo banner.
 
+## Action center [current — Step 7c]
+- `/actions`: summary counts, **Today's 5** (top five active alerts without a task — `todaysAlerts` in `lib/alerts.ts`, shared with the dashboard), all alerts with priority/category/partner filters and an "include deferred and dismissed" toggle, and the task list (mark done, reassign).
+- Alert detail (`features/alerts/AlertDetail.tsx`): issue → evidence (record vs computed values) → why it matters → priority breakdown → recommended action → owner → due date, related alerts for the same partner, and review actions (create task, acknowledge, defer, dismiss with reason, reopen). Deep links: `/actions?alert=<id>` and `/actions?task=<id>`.
+- The dashboard and Partner 360 read `/api/alerts`; Partner 360 has an Activity tab from `/api/activities`. The browser does no deadline date arithmetic; timing text comes from the backend's `days_remaining`.
+
 ## Frontend [planned]
 Typed API client per resource, `useResource` hook, shared `StatusBadge`, `DataTable`, `Dialog`, `EvidencePanel`, `AlertRow`, `PriorityBreakdown`. Pages: Dashboard (management overview + Today's 5), Action center (team workspace), Partners, Partner 360 (tabbed), Pipeline, Agreements, Projects, Finance, Reports, Import, Sign-in. Recharts and `motion` only when approved (Step 11).
 
