@@ -10,3 +10,4 @@ __pycache__/
 .firebase/
 .DS_Store
 *.tsbuildinfo
+backend/firebase-admin.json

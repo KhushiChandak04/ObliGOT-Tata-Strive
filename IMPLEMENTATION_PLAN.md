@@ -10,7 +10,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 2    | Architecture proposal                         | Done — approved                           |
 | 3    | Project instructions and custom skills        | Done — approved                           |
 | 4    | Existing API route repairs (groups 4a–4f)     | Done — approved                           |
-| 5    | Application foundation (5a, 5b, 5c)           | 5a done (API-connected UI, now unrouted); 5b/5c blocked on Firebase credentials |
+| 5    | Application foundation (5a, 5b, 5c)           | 5a done (API-connected UI, now unrouted); 5b/5c pending auth implementation and backend credentials |
 | 6    | Core partnership workflows (6a–6d)            | Done — approved (backend APIs in use; original pages now unrouted) |
 | 7    | Deadline engine and action center (7a–7c)     | 7a, 7b approved; 7c done (UI now unrouted) |
 | 8    | Funding and compliance + new-UI integration (8a finance backend, 8b core UI wiring, 8c partner/pipeline/agreements/projects, 8d finance/reports, 8e–8f external partner submissions — P1) | 8a, 8b approved; 8c done — awaiting review; 8d–8f planned |
@@ -48,6 +48,11 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 - Keep FastAPI as the single backend (Step 2 approval).
 - Step 2 architecture approved: computed-on-read alerts with persisted review decisions, data model and rule set in `ARCHITECTURE.md`.
 - Commit and push to GitHub at the end of each approved step; no AI attribution in commits.
+
+## Firebase Hosting setup (17 Oct 2026)
+
+- Selected existing Firebase project `obligot-95487`; updated the default Firebase CLI alias and configured the registered web app in ignored `frontend/.env`.
+- Hosting serves `frontend/dist`. The frontend still requires a publicly reachable FastAPI URL for API-backed screens; `VITE_API_BASE_URL` currently targets local development only. Do not deploy as a working application until a production API endpoint and auth configuration are ready.
 - 17 Oct 2026: use the teammate's new frontend (`App.tsx`, `reference/obligot.html` design) and wire it to the FastAPI backend screen by screen, replacing the synthetic `src/data/repository.ts` data and client-side alerts.
 - 17 Oct 2026: Step 8a — commit the backend part; drop the 8a edits to the old, now-unrouted pages.
 - 17 Oct 2026: spreadsheet parsing for Import uses the existing backend `POST /api/import/preview` instead of the browser `xlsx` package.

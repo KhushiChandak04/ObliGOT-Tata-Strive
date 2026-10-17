@@ -26,6 +26,10 @@ cp .env.example .env
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 On Windows, copy `.env.example` to `.env` manually if `cp` is unavailable.
+If you start Uvicorn from the repository root instead of `backend/` on Windows, use the backend virtual environment explicitly:
+```powershell
+.\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload --host 127.0.0.1 --port 8000
+```
 - API root: http://127.0.0.1:8000
 - Swagger docs: http://127.0.0.1:8000/docs
 - Health: http://127.0.0.1:8000/api/health
@@ -41,10 +45,10 @@ npm run dev
 Open http://127.0.0.1:5173.
 
 ### 3. Configure Firebase
-1. Create/select your Firebase project.
+1. Select the existing Firebase project `obligot-95487` (the web app configuration is in the ignored local `frontend/.env`; do not commit it).
 2. Enable Cloud Firestore in Native mode.
 3. Enable Authentication providers you want to use (Email/Password and/or Google).
-4. Add a Firebase Web App and copy its public web config into `frontend/.env`.
+4. The Firebase Web App is already registered and linked to the Hosting site.
 5. Set `FIREBASE_PROJECT_ID` in `backend/.env`.
 6. For local backend Firestore access, create a service account and store its JSON **outside the repository**. Set `GOOGLE_APPLICATION_CREDENTIALS` to its absolute path. Never commit the file.
 7. To require verified Firebase ID tokens on API calls, set `REQUIRE_FIREBASE_AUTH=true` in `backend/.env`. The frontend API client attaches the current user's ID token when signed in. Do not enable this until you have tested sign-in and backend credentials.
