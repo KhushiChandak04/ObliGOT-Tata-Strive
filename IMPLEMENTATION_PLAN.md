@@ -9,18 +9,23 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 1    | Repository and API audit                      | Done — approved                           |
 | 2    | Architecture proposal                         | Done — approved                           |
 | 3    | Project instructions and custom skills        | Done — approved                           |
-| 4    | Existing API route repairs (groups 4a–4f)     | 4a–4c approved; 4d done — awaiting review |
-| 5    | Application foundation                        | Not started                               |
-| 6    | Core partnership workflows                    | Not started                               |
-| 7    | Deadline engine and action center             | Not started                               |
-| 8    | Funding and compliance                        | Not started                               |
+| 4    | Existing API route repairs (groups 4a–4f)     | Done — approved                           |
+| 5    | Application foundation (5a, 5b, 5c)           | 5a done (API-connected UI, now unrouted); 5b/5c blocked on Firebase credentials |
+| 6    | Core partnership workflows (6a–6d)            | Done — approved (backend APIs in use; original pages now unrouted) |
+| 7    | Deadline engine and action center (7a–7c)     | 7a, 7b approved; 7c done (UI now unrouted) |
+| 8    | Funding and compliance (8a finance)           | 8a backend done — awaiting review; frontend moves to the new UI |
 | 9    | Gemini AI integration                         | Not started                               |
 | 10   | Spreadsheet import                            | Not started                               |
 | 11   | Management dashboard and UI polish (+ motion) | Not started                               |
 | 12   | Testing and review                            | Not started                               |
 | 13   | Deployment and demo preparation               | Not started                               |
 
-## Step 5 notes — React application foundation
+> **Note on the two sets of Step 5–6 notes.** The "React application foundation" and "Core workflow screens" notes directly
+> below were written by a teammate for the new reference-based frontend (`reference/obligot.html` → `frontend/src/app/App.tsx`),
+> pushed on 17 Oct 2026. The later "Step 5a"–"Step 7c" notes describe the API-connected backend and pages built and approved
+> in this plan. Team decision (17 Oct 2026): keep the new frontend's design and wire it to the backend API screen by screen.
+
+## Step 5 notes — React application foundation (teammate, new reference UI)
 
 - Rebuilt the frontend shell from `reference/obligot.html`: landing page, animated agent trace, auth tabs, responsive app sidebar, dashboard, Action Center, Partner 360, alert drawer, and placeholder routes.
 - Preserved the FastAPI API contracts; this step uses the fictional reference alert set for the approved UI foundation and does not persist demo decisions.
@@ -28,7 +33,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 - Verification: `cd frontend && npm install` completed successfully (npm reported 9 existing audit vulnerabilities); `cd frontend && npm run build` completed successfully with Vite production output.
 - Review note: Firebase sign-in remains the existing integration boundary; the reference auth form navigates to the dashboard until the auth workflow is wired to the backend in a later approved step.
 
-## Step 6 notes — Core workflow screens
+## Step 6 notes — Core workflow screens (teammate, new reference UI)
 
 - Replaced the placeholder route surfaces with typed synthetic repository-backed Pipeline, Agreements, Projects, Finance, Reports & UCs, and SheetJS Import screens.
 - Added deterministic counts, renewal radar buckets, project milestone progress, separated finance totals, missing invoice due-date wording, report tabs, pipeline stage movement, and import preview/confirmation state.
@@ -43,6 +48,9 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 - Keep FastAPI as the single backend (Step 2 approval).
 - Step 2 architecture approved: computed-on-read alerts with persisted review decisions, data model and rule set in `ARCHITECTURE.md`.
 - Commit and push to GitHub at the end of each approved step; no AI attribution in commits.
+- 17 Oct 2026: use the teammate's new frontend (`App.tsx`, `reference/obligot.html` design) and wire it to the FastAPI backend screen by screen, replacing the synthetic `src/data/repository.ts` data and client-side alerts.
+- 17 Oct 2026: Step 8a — commit the backend part; drop the 8a edits to the old, now-unrouted pages.
+- 17 Oct 2026: spreadsheet parsing for Import uses the existing backend `POST /api/import/preview` instead of the browser `xlsx` package.
 
 ## Open questions (awaiting team input)
 
@@ -92,6 +100,14 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API              | Each existing route tested for success, 404, 422, 401/403                                                    |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 8a notes — finance (backend)
+- Finance records gain optional `issue_date` and `received_date`; `currency` must be a 3-letter uppercase code; due date ≥ issue date and received date ≥ issue date (422). `GET /api/finance` gains a `record_type` filter. Linked `project_id` must exist (404) and belong to the same partner (422) on create and PATCH (shared `_check_links`, also used by agreements).
+- New rule `INVOICE_AGING` (risk): a raised/sent invoice with no due date and an issue date older than `invoice_aging_days` (config, default 30, range 7–365) is described by its age ("Days since issue"), never as overdue. `INVOICE_DUE_DATE_MISSING` now applies only when there is neither a due date nor an issue date.
+- Demo: the demo invoice has an issue date 50 days ago (now `INVOICE_AGING`); the demo fund receipt has a received date.
+- Verification: `pytest` → 159 passed (15 new in `tests/test_finance.py`).
+- Frontend: the 8a edits to the old Finance/Partner 360 pages were discarded per the team decision; the finance screen will be wired in the new UI. `FinanceRecord` type in `frontend/src/types/index.ts` updated to mirror the API.
+- Known issue on `main` (teammate commit 3ab0689): `App.tsx` imports `xlsx`, which is not in `package.json`, so `npm run build` fails on a clean install. Fix planned as the next step (use `POST /api/import/preview`).
 
 ## Step 7c notes — action center UI
 

@@ -36,8 +36,8 @@ PROJECTS = {
 }
 FINANCE = {
     "demo-finance-001": FinanceRecord(id="demo-finance-001", partner_id="demo-001", project_id="demo-project-001", record_type="budget", title="Programme budget FY (demo)", amount=1500000, currency="INR", status="approved", source_label="demo"),
-    "demo-finance-002": FinanceRecord(id="demo-finance-002", partner_id="demo-001", project_id="demo-project-001", record_type="fund_received", title="Tranche 1 received (demo)", amount=600000, currency="INR", status="received", reference_number="DEMO-RCPT-01", source_label="demo"),
-    "demo-finance-003": FinanceRecord(id="demo-finance-003", partner_id="demo-001", project_id="demo-project-001", record_type="invoice", title="Invoice for tranche 2 (demo)", amount=450000, currency="INR", status="raised", reference_number="DEMO-INV-07", source_label="demo"),
+    "demo-finance-002": FinanceRecord(id="demo-finance-002", partner_id="demo-001", project_id="demo-project-001", record_type="fund_received", title="Tranche 1 received (demo)", amount=600000, currency="INR", received_date=days(-150), status="received", reference_number="DEMO-RCPT-01", source_label="demo"),
+    "demo-finance-003": FinanceRecord(id="demo-finance-003", partner_id="demo-001", project_id="demo-project-001", record_type="invoice", title="Invoice for tranche 2 (demo)", amount=450000, currency="INR", issue_date=days(-50), status="raised", reference_number="DEMO-INV-07", source_label="demo"),
     "demo-finance-004": FinanceRecord(id="demo-finance-004", partner_id="demo-001", project_id="demo-project-001", record_type="utilization_certificate", title="Utilization certificate for tranche 1 (demo)", due_date=days(10), status="pending", source_label="demo"),
 }
 REPORTS = {

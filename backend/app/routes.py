@@ -168,9 +168,12 @@ def list_agreements(partner_id: str | None = None,
                    and today.isoformat() <= str(r["expiry_date"])[:10] <= horizon.isoformat()]
     return records
 
-def _check_agreement_links(data: dict) -> None:
-    """A linked project or opportunity must exist and must not belong to a different partner."""
-    for collection, field, label in (("projects", "project_id", "Project"), ("opportunities", "opportunity_id", "Opportunity")):
+LINKS = {"project_id": ("projects", "Project"), "opportunity_id": ("opportunities", "Opportunity")}
+
+def _check_links(data: dict, fields: tuple[str, ...]) -> None:
+    """Each linked record must exist and must not belong to a different partner."""
+    for field in fields:
+        collection, label = LINKS[field]
         if not data.get(field):
             continue
         linked = get_record(collection, data[field])
@@ -186,6 +189,12 @@ def create_agreement(payload: AgreementCreate) -> dict:
     data = payload.model_dump(mode="json")
     _check_agreement_links(data)
     return put_record("agreements", {**data, "source_label": "user"})
+
+def _check_agreement_links(data: dict) -> None:
+    _check_links(data, ("project_id", "opportunity_id"))
+
+def _check_finance_links(data: dict) -> None:
+    _check_links(data, ("project_id",))
 
 async def _read_json_object(request: Request) -> dict:
     try:
@@ -355,7 +364,7 @@ def get_finance_record(finance_id: str) -> dict:
 
 @router.patch("/finance/{finance_id}", response_model=FinanceRecord, tags=["finance"])
 async def update_finance_record(finance_id: str, request: Request) -> dict:
-    return await _update_typed_record("finance", finance_id, request, FinanceCreate, "Finance record")
+    return await _update_typed_record("finance", finance_id, request, FinanceCreate, "Finance record", check=_check_finance_links)
 
 @router.delete("/finance/{finance_id}", status_code=204, tags=["finance"])
 def delete_finance_record(finance_id: str):
@@ -364,15 +373,18 @@ def delete_finance_record(finance_id: str):
     return None
 
 @router.get("/finance", response_model=list[FinanceRecord], tags=["finance"])
-def list_finance(partner_id: str | None = None) -> list[dict]:
+def list_finance(partner_id: str | None = None, record_type: str | None = None) -> list[dict]:
     records = list_records("finance")
-    return [r for r in records if not partner_id or r.get("partner_id") == partner_id]
+    return [r for r in records if (not partner_id or r.get("partner_id") == partner_id)
+            and (not record_type or r.get("record_type") == record_type)]
 
 @router.post("/finance", response_model=FinanceRecord, status_code=201, tags=["finance"])
 def create_finance(payload: FinanceCreate) -> dict:
     if not get_record("partners", payload.partner_id):
         raise HTTPException(status_code=404, detail="Partner not found")
-    return put_record("finance", {**payload.model_dump(mode="json"), "source_label": "user"})
+    data = payload.model_dump(mode="json")
+    _check_finance_links(data)
+    return put_record("finance", {**data, "source_label": "user"})
 
 @router.get("/reports/{report_id}", response_model=ReportRecord, tags=["reports"])
 def get_report(report_id: str) -> dict:

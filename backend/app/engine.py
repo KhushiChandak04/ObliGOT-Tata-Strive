@@ -20,6 +20,7 @@ class RuleConfig(BaseModel):
     mou_expiry_warning_days: int = Field(default=60, ge=1, le=365)
     deadline_warning_days: int = Field(default=30, ge=1, le=180)
     stale_opportunity_days: int = Field(default=30, ge=7, le=365)
+    invoice_aging_days: int = Field(default=30, ge=7, le=365)
 
 
 # Base points per severity. Overdue items outrank upcoming ones; data gaps rank lowest.
@@ -95,8 +96,12 @@ RULES: dict[str, dict[str, str]] = {
         "description": "An invoice that is raised or sent is due within the deadline warning window.",
         "why": "A reminder before the due date reduces late payments.",
         "action": "Confirm the partner has received the invoice."},
+    "INVOICE_AGING": {"title": "Unpaid invoice ageing", "category": "finance", "severity": "risk",
+        "description": "An invoice that is raised or sent has no due date and was issued more than the invoice-ageing window ago. It is described by its age and is not called overdue.",
+        "why": "Without agreed payment terms, an old unpaid invoice can be missed entirely.",
+        "action": "Confirm payment status with the partner and record the payment terms or receipt."},
     "INVOICE_DUE_DATE_MISSING": {"title": "Invoice has no due date", "category": "data_quality", "severity": "missing_data",
-        "description": "An invoice that is raised or sent has no due date, so it cannot be called overdue and its age cannot be determined.",
+        "description": "An invoice that is raised or sent has neither a due date nor an issue date, so it cannot be called overdue and its age cannot be determined.",
         "why": "Payment follow-up cannot be scheduled without a due date.",
         "action": "Enter the due date from the invoice terms."},
     "TASK_OVERDUE": {"title": "Action overdue", "category": "tasks", "severity": "overdue",
@@ -219,7 +224,7 @@ def _finance_rules(b: _Builder, finance: list[dict]) -> None:
     for f in finance:
         kind, status, due, title = f.get("record_type"), f.get("status"), _parse_date(f.get("due_date")), f.get("title", f["id"])
         has_amount = f.get("amount") is not None
-        evidence = [_ev("Type", kind), _ev("Status", status), _ev("Due date", due),
+        evidence = [_ev("Type", kind), _ev("Status", status), _ev("Issue date", _parse_date(f.get("issue_date"))), _ev("Due date", due),
                     _ev("Amount", f"{f['amount']:,.2f} {f.get('currency', '')}".strip() if has_amount else None), _ev("Reference", f.get("reference_number"))]
         common = {"partner_id": f.get("partner_id"), "owner": None, "amount_recorded": has_amount}
         if kind == "utilization_certificate" and status in {"pending", "rejected"}:
@@ -228,8 +233,14 @@ def _finance_rules(b: _Builder, finance: list[dict]) -> None:
             else:
                 b.add("UC_DUE_DATE_MISSING", "finance", f, title, evidence=evidence, partner_id=f.get("partner_id"), owner=None)
         elif kind == "invoice" and status in {"raised", "sent"}:
+            issued = _parse_date(f.get("issue_date"))
             if due:
                 b.deadline("INVOICE_OVERDUE", "INVOICE_DUE_SOON", "finance", f, title, due, window=b.config.deadline_warning_days, evidence=evidence, **common)
+            elif issued:
+                age = _days(b.today, issued)
+                if age > b.config.invoice_aging_days:
+                    b.add("INVOICE_AGING", "finance", f, title, evidence=evidence + [_ev("Days since issue", age, "computed"),
+                          _ev("Ageing window (days)", b.config.invoice_aging_days, "computed")], **common)
             else:
                 b.add("INVOICE_DUE_DATE_MISSING", "finance", f, title, evidence=evidence, partner_id=f.get("partner_id"), owner=None)
 

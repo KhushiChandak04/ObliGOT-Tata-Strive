@@ -2,9 +2,9 @@ from datetime import date
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
-def _check_date_order(start: date | None, end: date | None, end_label: str) -> None:
+def _check_date_order(start: date | None, end: date | None, end_label: str, start_label: str = "start_date") -> None:
     if start and end and end < start:
-        raise ValueError(f"{end_label} must be on or after start_date")
+        raise ValueError(f"{end_label} must be on or after {start_label}")
 
 PartnerStatus = Literal["prospect", "qualification", "active", "on_hold", "closed"]
 Priority = Literal["high", "medium", "low"]
@@ -164,7 +164,9 @@ class FinanceRecord(BaseModel):
     title: str
     amount: float | None = Field(default=None, ge=0)
     currency: str = "INR"
+    issue_date: date | None = None
     due_date: date | None = None
+    received_date: date | None = None
     status: str = "pending"
     reference_number: str | None = None
     source_label: str = "demo"
@@ -175,10 +177,19 @@ class FinanceCreate(BaseModel):
     record_type: FinanceType
     title: str = Field(min_length=2, max_length=200)
     amount: float | None = Field(default=None, ge=0)
-    currency: str = "INR"
+    currency: str = Field(default="INR", pattern=r"^[A-Z]{3}$")  # ISO 4217 code; amounts are never converted or summed
+    issue_date: date | None = None
     due_date: date | None = None
+    received_date: date | None = None
     status: str | None = None
-    reference_number: str | None = None
+    reference_number: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def dates_in_order(self):
+        _check_date_order(self.issue_date, self.due_date, "due_date", "issue_date")
+        if self.issue_date and self.received_date and self.received_date < self.issue_date:
+            raise ValueError("received_date must be on or after issue_date")
+        return self
 
     @model_validator(mode="after")
     def status_matches_record_type(self):
