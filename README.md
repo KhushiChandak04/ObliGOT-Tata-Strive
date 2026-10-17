@@ -62,15 +62,14 @@ Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager
 - `GET /api/partners/{partner_id}`
 - `PATCH /api/partners/{partner_id}`
 - `DELETE /api/partners/{partner_id}`
-- `GET /api/actions`
-- `POST /api/actions`
-- `PATCH /api/actions/{action_id}`
-- `GET /api/agreements?partner_id=...` / `POST /api/agreements`
-- `GET /api/projects?partner_id=...` / `POST /api/projects`
-- `GET /api/finance?partner_id=...` / `POST /api/finance`
-- `GET /api/reports?partner_id=...` / `POST /api/reports`
+- `GET /api/actions` / `POST /api/actions`
+- `GET /api/actions/{action_id}` / `PATCH /api/actions/{action_id}` / `DELETE /api/actions/{action_id}`
+- `GET /api/agreements?partner_id=...` / `POST /api/agreements` / `GET|PATCH|DELETE /api/agreements/{agreement_id}`
+- `GET /api/projects?partner_id=...` / `POST /api/projects` / `GET|PATCH|DELETE /api/projects/{project_id}`
+- `GET /api/finance?partner_id=...` / `POST /api/finance` / `GET|PATCH|DELETE /api/finance/{finance_id}`
+- `GET /api/reports?partner_id=...` / `POST /api/reports` / `GET|PATCH|DELETE /api/reports/{report_id}`
 - `POST /api/intelligence/analyze`
-- `POST /api/followups` / `PATCH /api/followups/{followup_id}`
+- `POST /api/followups` / `GET|PATCH|DELETE /api/followups/{followup_id}`
 - `GET /api/rules/deadline-preview`
 - `POST /api/import/preview` (CSV/XLSX preview only; does not write records)
 

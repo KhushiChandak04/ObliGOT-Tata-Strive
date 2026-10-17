@@ -1,6 +1,6 @@
 from datetime import date
 from uuid import uuid4
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.config import settings
 from app.demo_data import PARTNERS, ACTIONS
@@ -96,12 +96,25 @@ def create_action(payload: ActionCreate) -> dict:
     data.update({"status": "open", "source_label": "user"})
     return put_record("actions", data)
 
+@router.get("/actions/{action_id}", response_model=ActionItem, tags=["actions"])
+def get_action(action_id: str) -> dict:
+    record = get_record("actions", action_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Action not found")
+    return record
+
 @router.patch("/actions/{action_id}", response_model=ActionItem, tags=["actions"])
 def update_action(action_id: str, payload: ActionUpdate) -> dict:
     record = patch_record("actions", action_id, payload.model_dump(exclude_unset=True, mode="json"))
     if not record:
         raise HTTPException(status_code=404, detail="Action not found")
     return record
+
+@router.delete("/actions/{action_id}", status_code=204, tags=["actions"])
+def delete_action(action_id: str):
+    if not delete_record("actions", action_id):
+        raise HTTPException(status_code=404, detail="Action not found")
+    return None
 
 @router.get("/agreements", response_model=list[Agreement], tags=["agreements"])
 def list_agreements(partner_id: str | None = None) -> list[dict]:
@@ -114,24 +127,106 @@ def create_agreement(payload: AgreementCreate) -> dict:
         raise HTTPException(status_code=404, detail="Partner not found")
     return put_record("agreements", {**payload.model_dump(mode="json"), "source_label": "user"})
 
+async def _update_typed_record(collection: str, record_id: str, request: Request, schema, label: str) -> dict:
+    changes = await request.json()
+    if not isinstance(changes, dict):
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+    current = get_record(collection, record_id)
+    if not current:
+        raise HTTPException(status_code=404, detail=f"{label} not found")
+    merged = {k: v for k, v in current.items() if k not in {"id", "source_label"}}
+    merged.update(changes)
+    try:
+        validated = schema.model_validate(merged)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    data = validated.model_dump(mode="json")
+    if data.get("partner_id") and not get_record("partners", data["partner_id"]):
+        raise HTTPException(status_code=404, detail="Partner not found")
+    data["source_label"] = current.get("source_label", "user")
+    return put_record(collection, data, record_id)
+
+@router.get("/agreements/{agreement_id}", response_model=Agreement, tags=["agreements"])
+def get_agreement(agreement_id: str) -> dict:
+    record = get_record("agreements", agreement_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    return record
+
+@router.patch("/agreements/{agreement_id}", response_model=Agreement, tags=["agreements"])
+async def update_agreement(agreement_id: str, request: Request) -> dict:
+    return await _update_typed_record("agreements", agreement_id, request, AgreementCreate, "Agreement")
+
+@router.delete("/agreements/{agreement_id}", status_code=204, tags=["agreements"])
+def delete_agreement(agreement_id: str):
+    if not delete_record("agreements", agreement_id):
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    return None
+
 @router.get("/projects", response_model=list[Project], tags=["projects"])
 def list_projects(partner_id: str | None = None) -> list[dict]:
     records = list_records("projects")
     return [r for r in records if not partner_id or r.get("partner_id") == partner_id]
 
-@router.get("/projects/{project_id}", response_model=Project, tags=["projects"])
-def get_project(project_id: str) -> dict:
-    for record in list_records("projects"):
-        if record.get("id") == project_id:
-            return record
-    raise HTTPException(status_code=404, detail="Project not found")
-
-
 @router.post("/projects", response_model=Project, status_code=201, tags=["projects"])
 def create_project(payload: ProjectCreate) -> dict:
     if payload.partner_id and not get_record("partners", payload.partner_id):
         raise HTTPException(status_code=404, detail="Partner not found")
-    return put_record("projects", {**payload.model_dump(mode="json"), "source_label": "user"})
+    data = payload.model_dump(mode="json")
+    data["source_label"] = "user"
+    return put_record("projects", data)
+
+@router.get("/projects/{project_id}", response_model=Project, tags=["projects"])
+def get_project(project_id: str) -> dict:
+    record = get_record("projects", project_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return record
+
+@router.patch("/projects/{project_id}", response_model=Project, tags=["projects"])
+async def update_project(project_id: str, request: Request) -> dict:
+    changes = await request.json()
+    if not isinstance(changes, dict):
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+    allowed = {"partner_id", "name", "status", "owner", "start_date", "end_date", "milestone_summary"}
+    unknown = set(changes) - allowed
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unsupported project fields: {', '.join(sorted(unknown))}")
+    if "partner_id" in changes and changes["partner_id"] and not get_record("partners", changes["partner_id"]):
+        raise HTTPException(status_code=404, detail="Partner not found")
+    current = get_record("projects", project_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="Project not found")
+    merged = {k: v for k, v in current.items() if k in allowed}
+    merged.update(changes)
+    try:
+        validated = ProjectCreate.model_validate(merged)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return put_record("projects", {**validated.model_dump(mode="json"), "source_label": current.get("source_label", "user")}, project_id)
+
+@router.delete("/projects/{project_id}", status_code=204, tags=["projects"])
+def delete_project(project_id: str):
+    if not delete_record("projects", project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return None
+
+@router.get("/finance/{finance_id}", response_model=FinanceRecord, tags=["finance"])
+def get_finance_record(finance_id: str) -> dict:
+    record = get_record("finance", finance_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Finance record not found")
+    return record
+
+@router.patch("/finance/{finance_id}", response_model=FinanceRecord, tags=["finance"])
+async def update_finance_record(finance_id: str, request: Request) -> dict:
+    return await _update_typed_record("finance", finance_id, request, FinanceCreate, "Finance record")
+
+@router.delete("/finance/{finance_id}", status_code=204, tags=["finance"])
+def delete_finance_record(finance_id: str):
+    if not delete_record("finance", finance_id):
+        raise HTTPException(status_code=404, detail="Finance record not found")
+    return None
 
 @router.get("/finance", response_model=list[FinanceRecord], tags=["finance"])
 def list_finance(partner_id: str | None = None) -> list[dict]:
@@ -144,6 +239,23 @@ def create_finance(payload: FinanceCreate) -> dict:
         raise HTTPException(status_code=404, detail="Partner not found")
     return put_record("finance", {**payload.model_dump(mode="json"), "source_label": "user"})
 
+@router.get("/reports/{report_id}", response_model=ReportRecord, tags=["reports"])
+def get_report(report_id: str) -> dict:
+    record = get_record("reports", report_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return record
+
+@router.patch("/reports/{report_id}", response_model=ReportRecord, tags=["reports"])
+async def update_report(report_id: str, request: Request) -> dict:
+    return await _update_typed_record("reports", report_id, request, ReportCreate, "Report")
+
+@router.delete("/reports/{report_id}", status_code=204, tags=["reports"])
+def delete_report(report_id: str):
+    if not delete_record("reports", report_id):
+        raise HTTPException(status_code=404, detail="Report not found")
+    return None
+
 @router.get("/reports", response_model=list[ReportRecord], tags=["reports"])
 def list_reports(partner_id: str | None = None) -> list[dict]:
     records = list_records("reports")
@@ -154,6 +266,19 @@ def create_report(payload: ReportCreate) -> dict:
     if not get_record("partners", payload.partner_id):
         raise HTTPException(status_code=404, detail="Partner not found")
     return put_record("reports", {**payload.model_dump(mode="json"), "source_label": "user"})
+
+@router.get("/followups/{followup_id}", tags=["follow-ups"])
+def get_followup(followup_id: str) -> dict:
+    record = get_record("followups", followup_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    return record
+
+@router.delete("/followups/{followup_id}", status_code=204, tags=["follow-ups"])
+def delete_followup(followup_id: str):
+    if not delete_record("followups", followup_id):
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    return None
 
 @router.post("/intelligence/analyze", response_model=AnalyzeResponse, tags=["intelligence"])
 async def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
@@ -187,78 +312,75 @@ def deadline_preview(record_id: str = "demo-record", record_type: str = "report"
             "note": "Preview only; use verified record dates for operational use."}
 
 @router.post("/import/preview", tags=["import"])
-async def import_preview(request: Request, file: UploadFile | None = File(default=None)) -> dict:
-    """Validate JSON rows or CSV/XLSX uploads without writing imported data."""
+async def import_preview(request: Request) -> dict:
+    """Validate JSON row batches or preview CSV/XLSX uploads without writing records."""
+    import csv
+    import io
     content_type = request.headers.get("content-type", "").lower()
-    entity_type = "finance-records"
-    rows = []
-
+    filename = None
+    headers: list[str] = []
     if "application/json" in content_type:
-        try:
-            payload = await request.json()
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        payload = await request.json()
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=422, detail="Expected a JSON object")
-        entity_type = str(payload.get("entity_type", "finance-records"))
+            raise HTTPException(status_code=422, detail="JSON body must be an object")
+        entity_type = payload.get("entity_type")
+        allowed_types = {"agreements", "projects", "finance", "finance-records", "reports", "partners"}
+        if entity_type not in allowed_types:
+            raise HTTPException(status_code=422, detail="Unsupported entity_type")
         rows = payload.get("rows")
-        if not isinstance(rows, list) or not rows:
-            raise HTTPException(status_code=422, detail="rows must be a non-empty list")
-        if len(rows) > 500:
-            raise HTTPException(status_code=413, detail="Maximum 500 rows per preview")
-    else:
-        if file is None:
-            raise HTTPException(status_code=422, detail="Upload a CSV/XLSX file or send JSON rows")
-        filename = (file.filename or "").lower()
-        raw = await file.read()
+        if not isinstance(rows, list) or not rows or len(rows) > 500:
+            raise HTTPException(status_code=422, detail="rows must contain between 1 and 500 records")
+    elif "multipart/form-data" in content_type:
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(status_code=422, detail="A file field is required")
+        filename = getattr(upload, "filename", None)
+        raw = await upload.read()
         if len(raw) > 5_000_000:
             raise HTTPException(status_code=413, detail="File is larger than the 5 MB preview limit")
         try:
-            if filename.endswith(".csv"):
-                import csv
-                import io
-                rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
-            elif filename.endswith((".xlsx", ".xlsm")):
+            if (filename or "").lower().endswith(".csv"):
+                decoded = raw.decode("utf-8-sig")
+                reader = csv.DictReader(io.StringIO(decoded))
+                headers = list(reader.fieldnames or [])
+                rows = list(reader)[:500]
+            elif (filename or "").lower().endswith((".xlsx", ".xlsm")):
                 from openpyxl import load_workbook
-                import io
                 workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
                 sheet = workbook.active
-                values = sheet.iter_rows(values_only=True)
-                headers = [str(v).strip() if v is not None else "" for v in next(values, ())]
-                rows = [
-                    {headers[i]: value for i, value in enumerate(row) if i < len(headers) and headers[i]}
-                    for row in values
-                ]
+                iterator = sheet.iter_rows(values_only=True)
+                first = next(iterator, None)
+                headers = [str(v).strip() if v is not None else "" for v in (first or [])]
+                rows = [dict(zip(headers, [str(v) if v is not None else "" for v in row])) for row in iterator]
+                rows = rows[:500]
                 workbook.close()
             else:
-                raise HTTPException(status_code=415, detail="Only CSV and XLSX files are supported")
+                raise HTTPException(status_code=415, detail="Upload a .csv or .xlsx file")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from exc
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Could not read import file: {exc}") from exc
-        if not rows:
-            raise HTTPException(status_code=422, detail="The uploaded file contains no data rows")
-        if len(rows) > 500:
-            raise HTTPException(status_code=413, detail="Maximum 500 rows per preview")
+            raise HTTPException(status_code=400, detail="Could not read this file; check its format") from exc
+        entity_type = form.get("entity_type", "projects")
+    else:
+        raise HTTPException(status_code=415, detail="Send JSON rows or upload a CSV/XLSX file")
 
-    seen = set()
-    valid_rows = []
-    issues = []
-
-    for index, row in enumerate(rows, start=1):
+    seen: set[str] = set()
+    valid_rows: list[dict] = []
+    issues: list[dict] = []
+    for idx, row in enumerate(rows, 1):
         if not isinstance(row, dict):
-            issues.append({"row": index, "issues": ["Row must be an object"]})
-            continue
-
-        errors = []
+            row = {}
         name = str(row.get("name", "") or "").strip()
+        errors: list[str] = []
         if not name:
             errors.append("Missing required field: name")
         elif name.casefold() in seen:
             errors.append("Duplicate name in this batch")
         if name:
             seen.add(name.casefold())
-
         amount = row.get("amount")
         if amount not in (None, ""):
             try:
@@ -266,19 +388,21 @@ async def import_preview(request: Request, file: UploadFile | None = File(defaul
                     errors.append("Amount cannot be negative")
             except (TypeError, ValueError):
                 errors.append("Amount must be numeric")
-
-        item = {"row": index, "name": name or None, "valid": not errors, "issues": errors}
-        if errors:
-            issues.append(item)
-        else:
-            valid_rows.append(item)
+        item = {"row": idx, "name": name or None, "valid": not errors, "issues": errors}
+        (valid_rows if not errors else issues).append(item)
 
     return {
         "entity_type": entity_type,
+        "filename": filename,
+        "headers": headers,
+        "preview_rows": rows[:100],
+        "rows_previewed": min(len(rows), 100),
+        "total_rows_detected": len(rows),
         "total_rows": len(rows),
         "valid_count": len(valid_rows),
         "invalid_count": len(issues),
         "valid_rows": valid_rows,
         "issues": issues,
         "committed": False,
+        "warning": "Preview only. Review mappings and validation issues before importing; no records were written.",
     }
