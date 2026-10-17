@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from datetime import date, timedelta
 from uuid import uuid4
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import ValidationError
 
 from app.config import settings
@@ -620,6 +620,21 @@ async def update_rule_config(request: Request) -> RuleConfig:
 def deadline_preview(record_id: str = "demo-record", record_type: str = "report", label: str = "Quarterly report", due_date: date | None = None) -> dict:
     return {"finding": build_deadline_finding(record_id=record_id, record_type=record_type, label=label, due_date=due_date),
             "note": "Preview only; use verified record dates for operational use."}
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+@router.get("/export/workbook", tags=["export"], response_class=Response,
+            responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Multi-sheet workbook of approved records"}})
+async def export_workbook(request: Request) -> Response:
+    """Standard workbook (docs/WORKBOOK_SCHEMA.md) built from approved, persisted records only."""
+    from fastapi.concurrency import run_in_threadpool
+    from app.workbook_export import build_workbook
+    today = business_today()
+    content = await run_in_threadpool(build_workbook, today)
+    log_activity(actor_name=actor(request), event="workbook_exported", summary="Exported the partnership workbook",
+                 entity_type="export", entity_id=f"workbook-{today.isoformat()}", partner_id=None)
+    return Response(content=content, media_type=XLSX_MEDIA_TYPE,
+                    headers={"Content-Disposition": f'attachment; filename="obligot-workbook-{today.isoformat()}.xlsx"'})
 
 @router.post("/import/preview", tags=["import"])
 async def import_preview(request: Request) -> dict:

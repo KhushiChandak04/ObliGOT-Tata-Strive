@@ -98,6 +98,11 @@ Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previo
 | POST | `/api/documents/{id}/approve` | Approve a reviewed MOU. Body: `partner_id`, `create_partner`, `owner`, `overwrite_existing` | 409 with `blockers`, or with `conflicts` when approved values differ from an already linked agreement (nothing written). Creates/fills the agreement (`source_document_id`), a project when milestones/scope/programme are approved, and milestones, reports, and UC finance records from approved obligations; fund releases and other obligations stay register-only. The document becomes `approved` and locked. |
 | GET | `/api/documents/{id}/extraction` | Proposals for review: `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope`, `review_issues`, plus `document` | None of these are approved or operational. |
 
+## Export (Step P3c)
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| GET | `/api/export/workbook` | Download the standard workbook (`docs/WORKBOOK_SCHEMA.md`) | XLSX attachment `obligot-workbook-<date>.xlsx`; operational records and approved document values only; logged as `workbook_exported`. Requires sign-in when `REQUIRE_FIREBASE_AUTH=true`. |
+
 ## Common error responses
 - `401` missing or invalid Firebase ID token (only when `REQUIRE_FIREBASE_AUTH=true`).
 - `404` record not found. `409` delete blocked by linked records. `422` validation failure.

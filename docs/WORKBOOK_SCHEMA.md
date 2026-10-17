@@ -1,11 +1,14 @@
 # Workbook schema
 
-Standard Excel representation of **approved, normalized** partnership data. Generated from `backend/app/workbook.py` (the source of truth; tests check it against the models). Export is planned for P3 — this file describes the contract, not a working export.
+Standard Excel representation of **approved, normalized** partnership data. Generated from `backend/app/workbook.py` (the source of truth; tests check it against the models). Download it from `GET /api/export/workbook` (Step P3c).
 
 - Each sheet's first column is its stable ID. `→ Sheet` marks a reference to that sheet's ID column.
 - Operational columns hold the latest approved effective values. Original values and every addendum change are in `Addenda_Change_History`.
 - Missing values are left empty, never filled with guesses. Amounts are never summed across currencies or record types.
 - `source_document_id`, `source_page`, `source_quote` point to the evidence for PDF-derived rows.
+- Content: operational records (staff-entered, or created by approving a document) plus approved document values; pending, rejected, and deferred proposals are never exported. `Obligations_Milestones` lists approved document obligations (with the status of the record each created) and the other milestones, reports, and utilization certificates; invoices, budgets, and receipts are financial records, not obligations, and are not in this workbook. `Validation_Review_Issues` lists every review issue with its status.
+- Until addenda are handled (P4), `amended` is FALSE, `unresolved_changes` is 0, and `Addenda_Change_History` is empty.
+- Formatting: frozen header row, filters, `yyyy-mm-dd` dates, `#,##0.00` numbers, sized columns, an `About` sheet. `Partners` is the first (active) sheet, so it re-imports through `POST /api/import/preview`.
 
 ## Partners
 

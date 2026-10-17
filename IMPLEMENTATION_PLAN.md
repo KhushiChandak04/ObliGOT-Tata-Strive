@@ -22,7 +22,7 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | P0 | Scope and repository audit | Done — approved |
 | P1 | Canonical schema and workbook contract (P1a models + contract) | P1a done — approved |
 | P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | P2a (backend) done — approved |
-| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | P3a done — approved; P3b (review/approval backend) done — awaiting review; P3c export not started |
+| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | P3a, P3b done — approved; P3c (export) done — awaiting review |
 | F1 | Firebase connection: Firestore, demo seed, sign-in required (replaces 5b; roles 5c still open) | Done — approved |
 | P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
@@ -127,6 +127,13 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 **Reused unchanged:** record models and CRUD, link checks, rules engine and priority score, alert review loop and activity log, import preview (re-import path for exported workbooks), the new UI and its forms.
 
 **Known limitations (current):** no real MOU samples (synthetic fixtures only); scanned pages are detected as low-text and need OCR or manual review — no OCR engine is installed; Gemini has not been called successfully (no key); Firestore and Google sign-in are not verified on this machine.
+
+## Step P3c notes — workbook export
+- `GET /api/export/workbook` (`app/workbook_export.py`, openpyxl, off the event loop): nine contract sheets plus `About`, built from the persisted records only — operational records and approved document values; pending/rejected/deferred proposals excluded. Values are written as stored with contract types (real dates, numbers, booleans); missing values stay empty; no storage paths or hashes.
+- Agreements carry the approved execution/effective dates and renewal terms from their source document; approved obligations show the status of the record they created and are not listed twice.
+- Verification: `pytest` → 236 passed (7 new in `tests/test_workbook_export.py`: download headers and sheet order; every sheet's headers, required cells, types, formats, enum values; references resolve; rows match the store and missing values stay empty; unapproved and rejected values excluded and approved ones included with page and quote; no private metadata; the `Partners` sheet re-imports through the existing preview with all rows valid). Real export from Firestore: Partners 3, Agreements 3, Programmes_Projects 1, Obligations_Milestones 6; opened with openpyxl.
+- Found while testing: a third-party `tests` package in this machine's site-packages shadows `tests.*` imports; test helpers are imported as sibling modules instead.
+- Not verified: opening the file in Microsoft Excel itself (no Excel here; checked with openpyxl).
 
 ## Step P3b notes — review and approval gate (backend)
 - New `app/document_review.py`: per-proposal decisions (approve with optional correction, reject, defer, reset), issue resolution, `approval-check`, and `approve`. Every decision records reviewer and time and is logged in `activities`.
