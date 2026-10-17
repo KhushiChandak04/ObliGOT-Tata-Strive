@@ -25,7 +25,7 @@ Existing collection names and fields are preserved; new fields are optional for 
 | Collection | Status | Key fields |
 |---|---|---|
 | `partners` | current | name, category, contribution_types, status, owner, contacts, summary, source_label; **[planned]** relationship_types |
-| `opportunities` | planned | partner_id, title, stage (identified → qualification → proposal → approval → agreement → active → renewal → closed), owner, next_step, next_step_date, updated_at |
+| `opportunities` | current (Step 6b) | partner_id, title, stage (identified → qualification → proposal → approval → agreement → active → renewal → closed), owner, next_step, next_step_date, updated_at |
 | `agreements` | current | partner_id, title, reference_number, status, start_date, expiry_date, owner, document_url; **[planned]** project_id, opportunity_id, signed_copy, renewal_status |
 | `projects` | current | partner_id, name, status, owner, start_date, end_date, milestone_summary |
 | `milestones` | planned | project_id, partner_id, title, due_date, completed_date, status, owner |

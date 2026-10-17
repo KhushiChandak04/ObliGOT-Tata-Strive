@@ -2,13 +2,14 @@ from fastapi.testclient import TestClient
 
 from app import demo_data
 from app.main import app
-from app.models import FINANCE_STATUSES, AgreementCreate, FinanceCreate, ProjectCreate
+from app.models import FINANCE_STATUSES, AgreementCreate, FinanceCreate, OpportunityCreate, ProjectCreate
 from app.rules import scan_deadlines
 from app.repository import _serialize
 
 DEMO_COLLECTIONS = {
     "agreements": demo_data.AGREEMENTS, "projects": demo_data.PROJECTS,
     "finance": demo_data.FINANCE, "reports": demo_data.REPORTS, "actions": demo_data.ACTIONS,
+    "opportunities": demo_data.OPPORTUNITIES,
 }
 
 
@@ -31,6 +32,8 @@ def test_demo_records_pass_create_validation():
         AgreementCreate.model_validate(record)
     for record in records(demo_data.PROJECTS):
         ProjectCreate.model_validate(record)
+    for record in records(demo_data.OPPORTUNITIES):
+        OpportunityCreate.model_validate(record)
     for record in records(demo_data.FINANCE):
         FinanceCreate.model_validate(record)
         assert record["status"] in FINANCE_STATUSES[record["record_type"]]

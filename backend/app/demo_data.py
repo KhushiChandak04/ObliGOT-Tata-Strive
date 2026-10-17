@@ -5,10 +5,11 @@ the business date so each demo scenario stays live:
 - demo-001: MOU expiring soon, active addendum missing its expiry date, overdue monthly
   report, invoice without a due date, UC due soon, plus resolved records that must not alert.
 - demo-002: draft MOU only (drafts are not evaluated).
-- demo-003: no linked records (empty states).
+- demo-003: early-stage opportunity only.
+Opportunities: demo-001 renewal (MOU expiring), demo-002 proposal, demo-003 identified.
 """
 from datetime import timedelta
-from app.models import ActionItem, Agreement, FinanceRecord, Partner, Project, ReportRecord
+from app.models import ActionItem, Agreement, FinanceRecord, Opportunity, Partner, Project, ReportRecord
 from app.rules import business_today
 
 today = business_today()
@@ -41,4 +42,9 @@ FINANCE = {
 REPORTS = {
     "demo-report-001": ReportRecord(id="demo-report-001", partner_id="demo-001", project_id="demo-project-001", title="Monthly progress report (demo)", report_type="monthly", due_date=days(-6), status="due", owner="Program Team", source_label="demo"),
     "demo-report-002": ReportRecord(id="demo-report-002", partner_id="demo-001", project_id="demo-project-001", title="Quarterly progress report (demo)", report_type="quarterly", due_date=days(-40), submitted_date=days(-42), status="submitted", owner="Program Team", source_label="demo"),
+}
+OPPORTUNITIES = {
+    "demo-opportunity-001": Opportunity(id="demo-opportunity-001", partner_id="demo-001", title="Renew skills training MOU (demo)", stage="renewal", owner="Partnerships Team", next_step="Share renewal draft with partner (illustrative).", next_step_date=days(7), updated_at=days(-3), source_label="demo"),
+    "demo-opportunity-002": Opportunity(id="demo-opportunity-002", partner_id="demo-002", title="Industry mentoring collaboration (demo)", stage="proposal", owner="Regional Partnerships", next_step="Send proposal for internal review (illustrative).", next_step_date=days(4), updated_at=days(-12), source_label="demo"),
+    "demo-opportunity-003": Opportunity(id="demo-opportunity-003", partner_id="demo-003", title="Community outreach pilot (demo)", stage="identified", owner="Program Team", next_step="Schedule introductory call (illustrative).", updated_at=days(-30), source_label="demo"),
 }

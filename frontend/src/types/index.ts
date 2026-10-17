@@ -8,6 +8,7 @@ export type FinanceType = "budget" | "fund_received" | "invoice" | "utilization_
 export type ReportType = "monthly" | "quarterly" | "impact" | "other";
 export type ReportStatus = "planned" | "due" | "submitted" | "overdue" | "accepted";
 export type SourceLabel = "demo" | "user" | string;
+export type OpportunityStage = "identified" | "qualification" | "proposal" | "approval" | "agreement" | "active" | "renewal" | "closed";
 
 export interface Partner {
   id: string; name: string; category: string; contribution_types?: string[]; status: PartnerStatus;
@@ -37,6 +38,10 @@ export interface ReportRecord {
   id: string; partner_id: string; project_id?: string | null; title: string; report_type: ReportType;
   due_date?: string | null; submitted_date?: string | null; status: ReportStatus; owner: string;
   source_label?: SourceLabel;
+}
+export interface Opportunity {
+  id: string; partner_id: string; title: string; stage: OpportunityStage; owner: string;
+  next_step: string; next_step_date?: string | null; updated_at: string; source_label?: SourceLabel;
 }
 export interface Followup {
   id: string; title: string; owner: string; due_date?: string | null; related_partner_id?: string | null;

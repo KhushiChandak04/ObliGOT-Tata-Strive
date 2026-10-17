@@ -188,6 +188,29 @@ class ReportCreate(BaseModel):
     status: Literal["planned", "due", "submitted", "overdue", "accepted"] = "planned"
     owner: str = "Unassigned"
 
+# Partnership lifecycle stages, in order. "closed" ends the pipeline (won, lost, or ended).
+OPPORTUNITY_STAGES: tuple[str, ...] = ("identified", "qualification", "proposal", "approval", "agreement", "active", "renewal", "closed")
+OpportunityStage = Literal["identified", "qualification", "proposal", "approval", "agreement", "active", "renewal", "closed"]
+
+class Opportunity(BaseModel):
+    id: str
+    partner_id: str
+    title: str
+    stage: OpportunityStage = "identified"
+    owner: str = "Unassigned"
+    next_step: str = ""
+    next_step_date: date | None = None
+    updated_at: date
+    source_label: str = "demo"
+
+class OpportunityCreate(BaseModel):
+    partner_id: str
+    title: str = Field(min_length=2, max_length=200)
+    stage: OpportunityStage = "identified"
+    owner: str = Field(default="Unassigned", min_length=2, max_length=120)
+    next_step: str = Field(default="", max_length=500)
+    next_step_date: date | None = None
+
 class AnalyzeRequest(BaseModel):
     partner_id: str | None = None
     context: str = Field(default="", max_length=8000)

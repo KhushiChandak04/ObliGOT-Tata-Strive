@@ -30,7 +30,10 @@ export default function PartnerForm({ partner, onSaved, onCancel }: { partner?: 
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [submitError, setSubmitError] = useState("");
   const [saving, setSaving] = useState(false);
-  const set = (field: keyof FormState) => (value: string) => setForm((current) => ({ ...current, [field]: value }));
+  const set = (field: keyof FormState) => (value: string) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    setErrors((current) => (current[field] ? { ...current, [field]: undefined } : current));
+  };
 
   async function submit(event: FormEvent) {
     event.preventDefault();

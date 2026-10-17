@@ -8,7 +8,7 @@ from app.intelligence import analyze_context
 from app.models import (
     ActionCreate, ActionItem, ActionUpdate, Agreement, AgreementCreate,
     AnalyzeRequest, AnalyzeResponse, FinanceCreate, FinanceRecord,
-    FollowupCreate, FollowupUpdate, Partner, PartnerCreate, PartnerUpdate,
+    FollowupCreate, FollowupUpdate, Opportunity, OpportunityCreate, Partner, PartnerCreate, PartnerUpdate,
     Project, ProjectCreate, ReportCreate, ReportRecord,
 )
 from app.repository import (
@@ -92,7 +92,8 @@ def update_partner(partner_id: str, payload: PartnerUpdate) -> dict:
 # Collections that reference a partner, and the field holding the reference.
 PARTNER_LINKS = {
     "agreements": "partner_id", "projects": "partner_id", "finance": "partner_id",
-    "reports": "partner_id", "actions": "related_partner_id", "followups": "related_partner_id",
+    "reports": "partner_id", "opportunities": "partner_id",
+    "actions": "related_partner_id", "followups": "related_partner_id",
 }
 
 @router.delete("/partners/{partner_id}", status_code=204, tags=["partners"],
@@ -152,8 +153,17 @@ def create_agreement(payload: AgreementCreate) -> dict:
         raise HTTPException(status_code=404, detail="Partner not found")
     return put_record("agreements", {**payload.model_dump(mode="json"), "source_label": "user"})
 
-async def _update_typed_record(collection: str, record_id: str, request: Request, schema, label: str) -> dict:
-    changes = await request.json()
+async def _read_json_object(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Request body must be valid JSON") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+    return body
+
+async def _update_typed_record(collection: str, record_id: str, request: Request, schema, label: str, extra: dict | None = None) -> dict:
+    changes = await _read_json_object(request)
     if not isinstance(changes, dict):
         raise HTTPException(status_code=422, detail="Request body must be a JSON object")
     current = get_record(collection, record_id)
@@ -169,6 +179,7 @@ async def _update_typed_record(collection: str, record_id: str, request: Request
     if data.get("partner_id") and not get_record("partners", data["partner_id"]):
         raise HTTPException(status_code=404, detail="Partner not found")
     data["source_label"] = current.get("source_label", "user")
+    data.update(extra or {})
     return put_record(collection, data, record_id)
 
 @router.get("/agreements/{agreement_id}", response_model=Agreement, tags=["agreements"])
@@ -210,9 +221,7 @@ def get_project(project_id: str) -> dict:
 
 @router.patch("/projects/{project_id}", response_model=Project, tags=["projects"])
 async def update_project(project_id: str, request: Request) -> dict:
-    changes = await request.json()
-    if not isinstance(changes, dict):
-        raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+    changes = await _read_json_object(request)
     allowed = {"partner_id", "name", "status", "owner", "start_date", "end_date", "milestone_summary"}
     unknown = set(changes) - allowed
     if unknown:
@@ -292,6 +301,37 @@ def create_report(payload: ReportCreate) -> dict:
         raise HTTPException(status_code=404, detail="Partner not found")
     return put_record("reports", {**payload.model_dump(mode="json"), "source_label": "user"})
 
+@router.get("/opportunities", response_model=list[Opportunity], tags=["pipeline"])
+def list_opportunities(partner_id: str | None = None, stage: str | None = None) -> list[dict]:
+    records = list_records("opportunities")
+    return [r for r in records
+            if (not partner_id or r.get("partner_id") == partner_id)
+            and (not stage or r.get("stage") == stage)]
+
+@router.post("/opportunities", response_model=Opportunity, status_code=201, tags=["pipeline"])
+def create_opportunity(payload: OpportunityCreate) -> dict:
+    if not get_record("partners", payload.partner_id):
+        raise HTTPException(status_code=404, detail="Partner not found")
+    return put_record("opportunities", {**payload.model_dump(mode="json"), "updated_at": business_today().isoformat(), "source_label": "user"})
+
+@router.get("/opportunities/{opportunity_id}", response_model=Opportunity, tags=["pipeline"])
+def get_opportunity(opportunity_id: str) -> dict:
+    record = get_record("opportunities", opportunity_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    return record
+
+@router.patch("/opportunities/{opportunity_id}", response_model=Opportunity, tags=["pipeline"])
+async def update_opportunity(opportunity_id: str, request: Request) -> dict:
+    return await _update_typed_record("opportunities", opportunity_id, request, OpportunityCreate, "Opportunity",
+                                      extra={"updated_at": business_today().isoformat()})
+
+@router.delete("/opportunities/{opportunity_id}", status_code=204, tags=["pipeline"])
+def delete_opportunity(opportunity_id: str):
+    if not delete_record("opportunities", opportunity_id):
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    return None
+
 @router.get("/followups", tags=["follow-ups"])
 def list_followups(status: str | None = None, related_partner_id: str | None = None) -> list[dict]:
     records = list_records("followups")
@@ -352,9 +392,7 @@ async def import_preview(request: Request) -> dict:
     filename = None
     headers: list[str] = []
     if "application/json" in content_type:
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=422, detail="JSON body must be an object")
+        payload = await _read_json_object(request)
         entity_type = payload.get("entity_type")
         if entity_type not in IMPORT_ENTITY_TYPES:
             raise HTTPException(status_code=422, detail="Unsupported entity_type")

@@ -19,7 +19,7 @@ Status legend: **tested** = covered by backend pytest in in-memory mode; live Fi
 | POST | `/api/partners` | Create (201) | `source_label=user` |
 | GET | `/api/partners/{partner_id}` | Detail | 404 if missing |
 | PATCH | `/api/partners/{partner_id}` | Partial update; `null` clears optional fields | 422 if a required field is cleared |
-| DELETE | `/api/partners/{partner_id}` | Delete (204) | **409** while agreements, projects, finance, reports, actions, or follow-ups reference it |
+| DELETE | `/api/partners/{partner_id}` | Delete (204) | **409** while opportunities, agreements, projects, finance, reports, actions, or follow-ups reference it |
 
 ## Actions (tasks)
 | Method | Path | Purpose | Notes |
@@ -41,6 +41,15 @@ Each collection has the same shape:
 - Agreements: `expiry_date` ≥ `start_date` (422).
 - Projects: `end_date` ≥ `start_date` (422); PATCH rejects unknown fields.
 - Finance: `status` must be allowed for the `record_type` (`FINANCE_STATUSES` in `models.py`); default is the first allowed value.
+
+## Pipeline (opportunities)
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| GET | `/api/opportunities?partner_id=&stage=` | List with optional partner and stage filters | |
+| POST | `/api/opportunities` | Create (201); `updated_at` set to the IST business date | 404 if partner missing; 422 for unknown `stage` (`identified`, `qualification`, `proposal`, `approval`, `agreement`, `active`, `renewal`, `closed`) |
+| GET / PATCH / DELETE | `/api/opportunities/{opportunity_id}` | Detail / merged-and-validated update (refreshes `updated_at`) / delete (204) | 404 if missing |
+
+Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previously 500).
 
 ## Follow-ups (legacy; `actions` is the planned task model)
 | Method | Path | Purpose |

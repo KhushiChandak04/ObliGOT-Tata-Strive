@@ -1,7 +1,7 @@
 import { firebaseAuth } from "../lib/firebase";
 import type {
   ActionItem, Agreement, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup, HealthResponse,
-  Partner, Project, ReportRecord,
+  Opportunity, Partner, Project, ReportRecord,
 } from "../types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -82,6 +82,7 @@ export const api = {
   projects: partnerLinked<Project>("/api/projects"),
   finance: partnerLinked<FinanceRecord>("/api/finance"),
   reports: partnerLinked<ReportRecord>("/api/reports"),
+  opportunities: partnerLinked<Opportunity>("/api/opportunities"),
   followups: {
     list: (filters: { status?: string; relatedPartnerId?: string } = {}) =>
       request<Followup[]>(`/api/followups${query({ status: filters.status, related_partner_id: filters.relatedPartnerId })}`),

@@ -7,26 +7,27 @@ import StateMessage from "../components/ui/StateMessage";
 import StatusBadge from "../components/ui/StatusBadge";
 import FindingList from "../features/intelligence/FindingList";
 import PartnerForm from "../features/partners/PartnerForm";
+import OpportunityTable from "../features/pipeline/OpportunityTable";
 import {ActionTable,AgreementTable,FinanceTable,ProjectTable,ReportTable} from "../features/partners/LinkedRecordTables";
 import {ApiError,api} from "../services/functions.service";
 import {useResource} from "../lib/useResource";
 import {formatDate} from "../lib/utils";
 import type {DeadlineFinding,Partner} from "../types";
 
-type TabId="overview"|"agreements"|"projects"|"finance"|"reports"|"actions";
+type TabId="overview"|"pipeline"|"agreements"|"projects"|"finance"|"reports"|"actions";
 
 export default function PartnerDetailsPage(){
  const {partnerId=""}=useParams();
  const partner=useResource(()=>api.partners.get(partnerId),[partnerId]);
  const linked=useResource(async()=>{
-  const [agreements,projects,finance,reports,actions,dashboard]=await Promise.all([
-   api.agreements.list(partnerId),api.projects.list(partnerId),api.finance.list(partnerId),
+  const [opportunities,agreements,projects,finance,reports,actions,dashboard]=await Promise.all([
+   api.opportunities.list(partnerId),api.agreements.list(partnerId),api.projects.list(partnerId),api.finance.list(partnerId),
    api.reports.list(partnerId),api.actions.list({relatedPartnerId:partnerId}),api.dashboard(),
   ]);
   const rank={high:0,medium:1,low:2};
   const findings=dashboard.findings.filter(f=>f.partner_id===partnerId)
    .sort((a,b)=>rank[a.priority]-rank[b.priority]||(a.days_remaining??Infinity)-(b.days_remaining??Infinity));
-  return {agreements,projects,finance,reports,actions,findings,asOf:dashboard.as_of};
+  return {opportunities,agreements,projects,finance,reports,actions,findings,asOf:dashboard.as_of};
  },[partnerId]);
  const [tab,setTab]=useState<TabId>("overview");
  const [editing,setEditing]=useState(false);
@@ -41,9 +42,10 @@ export default function PartnerDetailsPage(){
  {!partner.loading&&p&&<>
   <ProfilePanel partner={p}/>
   {linked.error&&<StateMessage kind="error" title="Could not load linked records" detail={linked.error.message} action={<button className="button button-secondary" onClick={linked.reload}>Retry</button>}/>}
-  {linked.loading&&<StateMessage kind="loading" title="Loading agreements, projects, finance, reports, and actions…"/>}
-  {linked.data&&<Tabs tab={tab} onChange={setTab} counts={{overview:linked.data.findings.length,agreements:linked.data.agreements.length,projects:linked.data.projects.length,finance:linked.data.finance.length,reports:linked.data.reports.length,actions:linked.data.actions.length}}>
+  {linked.loading&&<StateMessage kind="loading" title="Loading pipeline, agreements, projects, finance, reports, and actions…"/>}
+  {linked.data&&<Tabs tab={tab} onChange={setTab} counts={{overview:linked.data.findings.length,pipeline:linked.data.opportunities.length,agreements:linked.data.agreements.length,projects:linked.data.projects.length,finance:linked.data.finance.length,reports:linked.data.reports.length,actions:linked.data.actions.length}}>
    {tab==="overview"&&<OverviewTab findings={linked.data.findings} asOf={linked.data.asOf}/>}
+   {tab==="pipeline"&&(linked.data.opportunities.length?<><div className="table-panel inner-table"><OpportunityTable rows={linked.data.opportunities}/></div><p className="muted panel-footnote">Create, edit, or move opportunities on the <Link className="text-link" to="/pipeline">Pipeline page</Link>.</p></>:<StateMessage title="No opportunities" detail="Nothing is recorded in the pipeline for this partner yet." action={<Link className="button button-secondary" to="/pipeline">Open pipeline</Link>}/>)}
    {tab==="agreements"&&<AgreementTable rows={linked.data.agreements}/>}
    {tab==="projects"&&<ProjectTable rows={linked.data.projects}/>}
    {tab==="finance"&&<FinanceTable rows={linked.data.finance}/>}
@@ -70,7 +72,7 @@ function ProfilePanel({partner}:{partner:Partner}){
  </div>;
 }
 
-const TABS:{id:TabId;label:string}[]=[{id:"overview",label:"Open findings"},{id:"agreements",label:"Agreements"},{id:"projects",label:"Projects"},{id:"finance",label:"Finance"},{id:"reports",label:"Reports"},{id:"actions",label:"Actions"}];
+const TABS:{id:TabId;label:string}[]=[{id:"overview",label:"Open findings"},{id:"pipeline",label:"Pipeline"},{id:"agreements",label:"Agreements"},{id:"projects",label:"Projects"},{id:"finance",label:"Finance"},{id:"reports",label:"Reports"},{id:"actions",label:"Actions"}];
 
 function Tabs({tab,onChange,counts,children}:{tab:TabId;onChange:(t:TabId)=>void;counts:Record<TabId,number>;children:ReactNode}){
  const refs=useRef<Record<string,HTMLButtonElement|null>>({});

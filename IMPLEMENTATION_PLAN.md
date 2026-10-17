@@ -10,7 +10,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 3 | Project instructions and custom skills | Done — approved |
 | 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
 | 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
-| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | 6a done — awaiting review |
+| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | 6a approved; 6b done — awaiting review |
 | 7 | Deadline engine and action center | Not started |
 | 8 | Funding and compliance | Not started |
 | 9 | Gemini AI integration | Not started |
@@ -68,6 +68,15 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 6b notes — partnership pipeline
+- New `opportunities` collection and routes (`GET/POST /api/opportunities`, `GET/PATCH/DELETE /api/opportunities/{id}`); stages `identified → qualification → proposal → approval → agreement → active → renewal → closed` validated server-side; `updated_at` set on create and every PATCH; partner must exist. Additive — no existing contract changed.
+- Partner DELETE 409 now also counts opportunities.
+- Shared `_read_json_object`: malformed JSON on PATCH routes (agreements, projects, finance, reports, opportunities) and JSON import preview now returns 422 instead of 500.
+- Demo opportunities: demo-001 renewal (linked to its expiring MOU), demo-002 proposal, demo-003 identified.
+- Frontend: Pipeline page with stage filter chips (counts, `aria-pressed`), table sorted by stage then next-step date, one-click "advance to next stage" (none once closed), add/edit dialog with inline delete confirmation; Partner 360 gains a Pipeline tab. Form field errors now clear as the field is edited (also fixed in PartnerForm).
+- Verification: `pytest` → 61 passed (6 new in `tests/test_opportunities.py`, demo integrity extended). `npm run build` passes. Headless Chrome: stage counts 1/0/1/0/0/0/1/0; filters incl. empty stage state; advance Proposal→Approval refreshes updated date; renewal→Closed leaves no advance button; create with validation; edit clears next-step date; delete with confirmation; Partner 360 Pipeline tab; demo-003 delete blocked by `opportunities: 1`; 0 px overflow at 390/768/1280/1440; only the expected 409 in console.
+- Not in 6b: stale next-step and approved-without-MOU rules (Step 7); dashboard pipeline chart (Step 11).
 
 ## Step 6a notes — partner directory and Partner 360
 - Demo dataset (in-memory fallback only; all `source_label=demo`, fictional, dates relative to the IST business date) in `backend/app/demo_data.py`. demo-001 produces exactly five findings: MOU expiring in 21 days, active addendum missing expiry, monthly report 6 days overdue, invoice without due date, UC due in 10 days; a submitted report and received/approved finance records produce none. demo-002 has a draft MOU only; demo-003 has no linked records.

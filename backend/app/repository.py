@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
-from app.demo_data import ACTIONS, AGREEMENTS, FINANCE, FOLLOWUPS, PARTNERS, PROJECTS, REPORTS
+from app.demo_data import ACTIONS, AGREEMENTS, FINANCE, FOLLOWUPS, OPPORTUNITIES, PARTNERS, PROJECTS, REPORTS
 from app.firebase_app import FirebaseUnavailable, get_firebase_app
 
 logger = logging.getLogger("obligot.repository")
@@ -21,6 +21,7 @@ _COLLECTIONS = {
     "projects": PROJECTS,
     "finance": FINANCE,
     "reports": REPORTS,
+    "opportunities": OPPORTUNITIES,
 }
 _firestore_client = None
 _firestore_attempted = False
