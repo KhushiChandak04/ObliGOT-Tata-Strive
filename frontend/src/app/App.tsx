@@ -1,10 +1,19 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { repository, type Agreement, type Invoice, type PipelineItem, type PipelineStage, type Project, type Report } from "../data/repository";
+import { Link, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { repository } from "../data/repository";
+import Dialog from "../components/ui/Dialog";
+import AgreementForm from "../features/agreements/AgreementForm";
+import PartnerForm from "../features/partners/PartnerForm";
+import OpportunityForm from "../features/pipeline/OpportunityForm";
+import MilestoneForm from "../features/projects/MilestoneForm";
+import ProjectForm from "../features/projects/ProjectForm";
+import { AGREEMENT_STATUSES, RENEWAL, SIGNED_COPY, isWebLink, labelOf } from "../lib/agreements";
+import { STAGES, nextStage, stageLabel } from "../lib/pipeline";
+import { MILESTONE_STATUSES } from "../lib/projects";
 import { api } from "../services/functions.service";
 import { useResource } from "../lib/useResource";
 import { CATEGORY_LABELS, todaysAlerts } from "../lib/alerts";
-import type { ActionItem, Alert as ApiAlert, AnalyzeResponse, AlertEvidence, ImportPreview } from "../types";
+import type { ActionItem, Agreement, Alert as ApiAlert, AnalyzeResponse, AlertEvidence, ImportPreview, Milestone, Opportunity, Partner, Project } from "../types";
 
 /** View model for the reference UI, built from a rules-engine alert (GET /api/alerts). */
 type Alert = {
@@ -85,6 +94,7 @@ function AppShell() {
   }, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [params] = useSearchParams();
   const names = new Map((workspace.data?.partners ?? []).map((p) => [p.id, p.name]));
   const apiAlerts = workspace.data?.alerts.alerts ?? [];
   const sorted = apiAlerts.map((alert) => toViewAlert(alert, (id) => names.get(id)));  // already ordered by priority score
@@ -95,14 +105,14 @@ function AppShell() {
   const select = (alert: Alert) => { setNotice(""); setSelectedId(alert.id); };
   const changed = (message: string) => { setSelectedId(null); setNotice(message); workspace.reload(); };
   const page = location.pathname;
-  const title = page === "/action-center" ? "Action Center" : page === "/partner-360" ? "Kaveri Retail Academy" : page === "/dashboard" ? "Good day, team." : page === "/pipeline" ? "Pipeline" : page === "/agreements" ? "Agreements" : page === "/projects" ? "Projects" : page === "/finance" ? "Finance" : page === "/reports" ? "Reports & UCs" : "Import";
-  const eyebrow = page === "/dashboard" ? `Portfolio overview${workspace.data ? ` · rules evaluated ${formatDate(workspace.data.alerts.as_of)}` : ""}` : page === "/partner-360" ? "Partner 360" : page === "/action-center" ? "Live rule alerts" : "Synthetic demo data";
+  const title = page === "/action-center" ? "Action Center" : page === "/partner-360" ? (names.get(params.get("id") ?? "") ?? workspace.data?.partners[0]?.name ?? "Partner 360") : page === "/dashboard" ? "Good day, team." : page === "/pipeline" ? "Pipeline" : page === "/agreements" ? "Agreements" : page === "/projects" ? "Projects" : page === "/finance" ? "Finance" : page === "/reports" ? "Reports & UCs" : "Import";
+  const eyebrow = page === "/dashboard" ? `Portfolio overview${workspace.data ? ` · rules evaluated ${formatDate(workspace.data.alerts.as_of)}` : ""}` : page === "/partner-360" ? "Partner 360" : page === "/action-center" ? "Live rule alerts" : ["/pipeline", "/agreements", "/projects"].includes(page) ? "Live records" : "Synthetic demo data";
   const usesApi = page === "/dashboard" || page === "/action-center";
   return <div className="app-shell"><aside className="sidebar"><Logo light /><nav>{[{to:"/dashboard", label:"Dashboard"}, {to:"/action-center", label:"Action Center", count:open.length}, {to:"/partner-360", label:"Partner 360"}, {to:"/pipeline", label:"Pipeline"}, {to:"/agreements", label:"Agreements"}, {to:"/projects", label:"Projects"}, {to:"/finance", label:"Finance"}, {to:"/reports", label:"Reports & UCs"}, {to:"/import", label:"Import"}].map((item) => <NavLink key={item.to} to={item.to} className={({isActive}) => isActive ? "active" : ""}>{item.label}{item.count ? <span className="pill high">{item.count}</span> : null}</NavLink>)}</nav><button className="logout" onClick={() => navigate("/")}>↩ Log out</button><small>{workspace.data?.alerts.alerts.some((alert) => alert.source_label === "demo") ? "Fictional demo records" : "Synthetic demo data"}</small></aside><main className="app-main"><div className="page-header"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1></div>
     {usesApi && workspace.error && <div className="api-state error" role="alert"><b>Could not reach the ObliGOT API.</b><span>{workspace.error.message}</span><button className="btn small-btn" onClick={workspace.reload}>Retry</button></div>}
     {usesApi && workspace.loading && !workspace.data && <p className="api-state" role="status">Evaluating rules on stored records…</p>}
     {usesApi && notice && <p className="api-state success" role="status">{notice}</p>}
-    {page === "/dashboard" && workspace.data && <Dashboard open={open} sorted={today} tasks={tasks} onSelect={select} />}{page === "/action-center" && workspace.data && <ActionCenter open={open} sorted={sorted} tasks={tasks} hidden={workspace.data.alerts.counts.hidden_by_review} onSelect={select} onChanged={changed} />}{page === "/partner-360" && <Partner360 open={open} onSelect={select} />}{page === "/pipeline" && <PipelinePage />}{page === "/agreements" && <AgreementsPage />}{page === "/projects" && <ProjectsPage />}{page === "/finance" && <FinancePage />}{page === "/reports" && <ReportsPage />}{page === "/import" && <ImportPage />}</main>{selected && workspace.data && <Drawer alert={selected} asOf={workspace.data.alerts.as_of} onClose={() => setSelectedId(null)} onChanged={changed} />}</div>;
+    {page === "/dashboard" && workspace.data && <Dashboard open={open} sorted={today} tasks={tasks} onSelect={select} />}{page === "/action-center" && workspace.data && <ActionCenter open={open} sorted={sorted} tasks={tasks} hidden={workspace.data.alerts.counts.hidden_by_review} onSelect={select} onChanged={changed} />}{page === "/partner-360" && workspace.data && <Partner360 partners={workspace.data.partners} open={open} onSelect={select} onChanged={workspace.reload} />}{page === "/pipeline" && <PipelinePage onChanged={workspace.reload} />}{page === "/agreements" && <AgreementsPage onChanged={workspace.reload} />}{page === "/projects" && <ProjectsPage onChanged={workspace.reload} />}{page === "/finance" && <FinancePage />}{page === "/reports" && <ReportsPage />}{page === "/import" && <ImportPage />}</main>{selected && workspace.data && <Drawer alert={selected} asOf={workspace.data.alerts.as_of} onClose={() => setSelectedId(null)} onChanged={changed} />}</div>;
 }
 
 function AlertRow({ alert, index, onSelect }: { alert: Alert; index: number; onSelect: (alert: Alert) => void }) {
@@ -128,32 +138,131 @@ function ActionCenter({ open, sorted, tasks, hidden, onSelect, onChanged }: { op
   };
   return <><section className="box"><h3>All outstanding ({open.length})</h3>{hidden > 0 && <small>{hidden} deferred or dismissed alert{hidden === 1 ? " is" : "s are"} hidden until the date passes or the record changes.</small>}{sorted.map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} onSelect={onSelect} />)}{!sorted.length && <p>No open alerts.</p>}</section><section className="box task-box"><h3>Follow-up tasks</h3>{error && <p className="api-state error" role="alert">{error}</p>}{tasks.map((task) => <div className="task-row" key={task.id}><span>{task.title}<small> · {task.owner ?? "Unassigned"}{task.due_date ? ` · due ${formatDate(task.due_date)}` : ""}</small></span><button className="btn small-btn" onClick={() => void done(task)} aria-label={`Mark ${task.title} done`}>Mark done</button></div>)}{!tasks.length && <small>None yet. Create one from an alert.</small>}</section></>;
 }
-// Synthetic Partner 360 placeholder (teammate's reference UI); wired to the API in Step 8c.
-const dateFromToday = (days: number) => {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-};
-function Partner360({ open, onSelect }: { open: Alert[]; onSelect: (alert: Alert) => void }) { return <div className="grid2"><section className="box"><h3>MOU timeline</h3><div className="timeline"><i /><em /></div><div className="detail-row"><span>Start</span><span>{dateFromToday(-350)}</span></div><div className="detail-row"><span>End</span><span>{dateFromToday(14)}</span></div><div className="detail-row"><span>Renewal</span><span>— not recorded</span></div></section><section className="box"><h3>Open alerts</h3>{open.filter((alert) => alert.partner === "Kaveri Retail Academy").map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} onSelect={onSelect} />)}</section></div>; }
+/** Partner 360: profile, MOU timeline, open alerts, linked record counts, and activity for one partner. */
+function Partner360({ partners, open, onSelect, onChanged }: { partners: Partner[]; open: Alert[]; onSelect: (alert: Alert) => void; onChanged: () => void }) {
+  const [params, setParams] = useSearchParams();
+  const partnerId = params.get("id") ?? partners[0]?.id ?? "";
+  const [editing, setEditing] = useState(false);
+  const data = useResource(async () => {
+    if (!partnerId) return null;
+    const [partner, agreements, projects, milestones, finance, reports, opportunities, activities, alerts] = await Promise.all([
+      api.partners.get(partnerId), api.agreements.list(partnerId), api.projects.list(partnerId), api.milestones.list({ partnerId }),
+      api.finance.list(partnerId), api.reports.list(partnerId), api.opportunities.list(partnerId), api.activities.list({ partnerId, limit: 6 }), api.alerts.list({ partnerId }),
+    ]);
+    return { partner, agreements, projects, milestones, finance, reports, opportunities, activities, asOf: alerts.as_of };
+  }, [partnerId]);
+  if (!partners.length) return <section className="box"><h3>No partners yet</h3><p>Partner records added through the API appear here.</p></section>;
+  const d = data.data;
+  // The MOU shown on the timeline: the active agreement with the nearest expiry, else the most recent one with dates.
+  const mou = d ? [...d.agreements].filter((a) => a.start_date && a.expiry_date).sort((a, b) => Number(b.status === "active") - Number(a.status === "active") || (a.expiry_date ?? "").localeCompare(b.expiry_date ?? ""))[0] : undefined;
+  const elapsed = mou && d ? Math.min(100, Math.max(0, (Date.parse(d.asOf) - Date.parse(mou.start_date!)) / (Date.parse(mou.expiry_date!) - Date.parse(mou.start_date!)) * 100)) : 0;
+  const partnerAlerts = open.filter((alert) => alert.partnerId === partnerId);
+  const done = d ? d.milestones.filter((m) => m.status === "completed").length : 0;
+  return <>
+    <div className="toolbar"><select value={partnerId} onChange={(event) => setParams({ id: event.target.value })} aria-label="Choose partner">{partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>{d && <button className="btn small-btn" onClick={() => setEditing(true)}>Edit partner</button>}</div>
+    {data.error && <div className="api-state error" role="alert"><b>Could not load this partner.</b><span>{data.error.message}</span><button className="btn small-btn" onClick={data.reload}>Retry</button></div>}
+    {data.loading && !d && <p className="api-state" role="status">Loading partner records…</p>}
+    {d && <div className="grid2">
+      <section className="box"><h3>Profile</h3>
+        <div className="detail-row"><span>Category</span><span>{d.partner.category}</span></div>
+        <div className="detail-row"><span>Relationship status</span><span>{d.partner.status.replace("_", " ")}</span></div>
+        <div className="detail-row"><span>Owner</span><span>{d.partner.owner}</span></div>
+        <div className="detail-row"><span>Contact</span><span>{d.partner.contact_name || "Not recorded"}{d.partner.contact_email ? ` · ${d.partner.contact_email}` : ""}</span></div>
+        <p>{d.partner.summary || "No summary recorded."}</p>{d.partner.source_label === "demo" && <small>Fictional demo record.</small>}</section>
+      <section className="box"><h3>MOU timeline</h3>{mou ? <><div className="timeline" role="img" aria-label={`${Math.round(elapsed)}% of the agreement term elapsed`}><i style={{ right: `${100 - elapsed}%` }} /><em style={{ right: `calc(${100 - elapsed}% - 11px)` }} /></div>
+        <div className="detail-row"><span>Agreement</span><span>{mou.title}</span></div><div className="detail-row"><span>Start</span><span>{formatDate(mou.start_date ?? null)}</span></div><div className="detail-row"><span>End</span><span>{formatDate(mou.expiry_date ?? null)}</span></div>
+        <div className="detail-row"><span>Renewal</span><span>{labelOf(RENEWAL, mou.renewal_status)}</span></div><div className="detail-row"><span>Signed copy</span><span>{labelOf(SIGNED_COPY, mou.signed_copy)}</span></div></>
+        : <p>No agreement with start and end dates is recorded for this partner.</p>}</section>
+      <section className="box"><h3>Open alerts ({partnerAlerts.length})</h3>{partnerAlerts.map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} onSelect={onSelect} />)}{!partnerAlerts.length && <p>No record linked to this partner triggers a rule.</p>}</section>
+      <section className="box"><h3>Linked records</h3>
+        <div className="detail-row"><span>Pipeline</span><Link to="/pipeline">{d.opportunities.length} opportunit{d.opportunities.length === 1 ? "y" : "ies"}</Link></div>
+        <div className="detail-row"><span>Agreements</span><Link to="/agreements">{d.agreements.length}</Link></div>
+        <div className="detail-row"><span>Projects</span><Link to="/projects">{d.projects.length} · {done} of {d.milestones.length} milestones complete</Link></div>
+        <div className="detail-row"><span>Finance records</span><Link to="/finance">{d.finance.length}</Link></div>
+        <div className="detail-row"><span>Reports not yet submitted</span><Link to="/reports">{d.reports.filter((r) => r.status !== "submitted" && r.status !== "accepted").length}</Link></div></section>
+      <section className="box"><h3>Recent activity</h3>{d.activities.map((a) => <div className="detail-row" key={a.id}><span>{a.summary}</span><span className="mono">{a.at.slice(0, 10)}</span></div>)}{!d.activities.length && <p>No reviews, tasks, or status changes recorded yet.</p>}</section>
+    </div>}
+    <Dialog open={editing} title="Edit partner" onClose={() => setEditing(false)}>{d && <PartnerForm partner={d.partner} onCancel={() => setEditing(false)} onSaved={() => { setEditing(false); data.reload(); onChanged(); }} />}</Dialog>
+  </>;
+}
 
-const stages: PipelineStage[] = ["Opportunity", "Qualification", "Proposal", "Approval", "MOU", "Implementation", "Renewal", "Closure"];
+/** Labels from the reference design mapped onto the API's lifecycle stages. */
+const STAGE_LABELS: Record<string, string> = { identified: "Opportunity", agreement: "MOU", active: "Implementation", closed: "Closure" };
+const stageName = (stage: Opportunity["stage"]) => STAGE_LABELS[stage] ?? stageLabel(stage);
+
 const formatDate = (value: string | null): string => value ? new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value)) : "Not recorded";
 const money = (value: number): string => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 function TableState({ message }: { message: string }) { return <p className="table-state">{message}</p>; }
-function PipelinePage() {
-  const [items, setItems] = useState<PipelineItem[]>(repository.pipeline);
-  const move = (item: PipelineItem) => { const index = stages.indexOf(item.stage); if (index < stages.length - 1) setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, stage: stages[index + 1] } : entry)); };
-  return <div className="pipeline-grid">{stages.map((stage) => { const column = items.filter((item) => item.stage === stage); return <section className="pipeline-column" key={stage}><h3>{stage}<span className="pill">{column.length}</span></h3>{column.length ? column.map((item) => <div className="pipeline-card" key={item.id}><b>{item.partner}</b><small>{item.owner}</small><p>{item.nextAction}</p><span className="mono">{formatDate(item.dueDate)}</span>{stage !== "Closure" && <button className="btn small-btn" onClick={() => move(item)}>Move to next stage</button>}</div>) : <TableState message="No opportunities" />}</section>; })}</div>;
+function PipelinePage({ onChanged }: { onChanged: () => void }) {
+  const data = useResource(async () => { const [opportunities, partners] = await Promise.all([api.opportunities.list(), api.partners.list()]); return { opportunities, partners }; }, []);
+  const [dialog, setDialog] = useState<{ opportunity?: Opportunity } | null>(null); const [busy, setBusy] = useState<string | null>(null); const [message, setMessage] = useState("");
+  const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
+  const refresh = (text: string) => { setDialog(null); setMessage(text); data.reload(); onChanged(); };
+  const move = async (item: Opportunity) => {
+    const next = nextStage(item.stage); if (!next) return;
+    setBusy(item.id); setMessage("");
+    try { await api.opportunities.update(item.id, { stage: next }); refresh(`Moved “${item.title}” to ${stageName(next)}.`); }
+    catch (err) { setMessage(err instanceof Error ? err.message : "Could not move the opportunity."); }
+    finally { setBusy(null); }
+  };
+  return <><RegisterState resource={data} label="pipeline" message={message} action={<button className="btn small-btn" onClick={() => setDialog({})} disabled={!data.data}>Add opportunity</button>} />
+    {data.data && <div className="pipeline-grid">{STAGES.map(({ id: stage }) => { const column = data.data!.opportunities.filter((item) => item.stage === stage); return <section className="pipeline-column" key={stage}><h3>{stageName(stage)}<span className="pill">{column.length}</span></h3>{column.length ? column.map((item) => <div className="pipeline-card" key={item.id}><b>{names.get(item.partner_id) ?? item.partner_id}</b><small>{item.title} · {item.owner}</small><p>{item.next_step || "No next step recorded"}</p><span className="mono">{item.next_step_date ? formatDate(item.next_step_date) : "No date"}</span>{stage !== "closed" && <button className="btn small-btn" onClick={() => void move(item)} disabled={busy === item.id}>{busy === item.id ? "Moving…" : `Move to ${stageName(nextStage(stage)!)}`}</button>}<button className="text-button" onClick={() => setDialog({ opportunity: item })} aria-label={`Edit ${item.title}`}>Edit</button></div>) : <TableState message="No opportunities" />}</section>; })}</div>}
+    <Dialog open={dialog !== null} title={dialog?.opportunity ? "Edit opportunity" : "Add opportunity"} onClose={() => setDialog(null)}>{dialog && data.data && <OpportunityForm opportunity={dialog.opportunity} partners={data.data.partners} onCancel={() => setDialog(null)} onSaved={(saved) => refresh(`Saved “${saved.title}”.`)} onDeleted={dialog.opportunity ? () => refresh(`Deleted “${dialog.opportunity!.title}”.`) : undefined} />}</Dialog></>;
 }
 
-function AgreementsPage() {
-  const [query, setQuery] = useState(""); const [status, setStatus] = useState("All");
-  const filtered = repository.agreements.filter((agreement) => `${agreement.partner} ${agreement.reference}`.toLowerCase().includes(query.toLowerCase()) && (status === "All" || agreement.status === status));
-  const buckets = [0, 31, 61].map((minimum, index) => ({ label: `${minimum}-${index === 0 ? 30 : index === 1 ? 60 : 90} days`, count: repository.agreements.filter((agreement) => { const days = Math.ceil((new Date(agreement.endDate).getTime() - Date.now()) / 86400000); return days >= minimum && days <= (index === 0 ? 30 : index === 1 ? 60 : 90); }).length }));
-  return <><div className="radar">{buckets.map((bucket) => <div key={bucket.label}><b>{bucket.count}</b><span>Expiring in {bucket.label}</span></div>)}</div><section className="box"><div className="toolbar"><input className="search" placeholder="Search partner or reference" value={query} onChange={(event) => setQuery(event.target.value)} /><select value={status} onChange={(event) => setStatus(event.target.value)}><option>All</option><option>Active</option><option>Expired</option><option>Draft</option></select></div><DataTable headers={["Partner", "Reference", "Status", "Start", "End", "Signed copy", "Owner", "Renewal"]} rows={filtered.map((agreement) => [agreement.partner, agreement.reference, <span className="pill" key="status">{agreement.status}</span>, formatDate(agreement.startDate), formatDate(agreement.endDate), agreement.signedCopy, agreement.owner, agreement.renewal])} empty="No agreements match the current filters." /></section></>;
+/** Loading, error, and confirmation states plus a toolbar action for the API-backed registers. */
+function RegisterState({ resource, label, message, action }: { resource: { loading: boolean; error: Error | null; data: unknown; reload: () => void }; label: string; message: string; action?: ReactNode }) {
+  return <>{action && <div className="toolbar">{action}</div>}
+    {resource.error && <div className="api-state error" role="alert"><b>Could not load the {label}.</b><span>{resource.error.message}</span><button className="btn small-btn" onClick={resource.reload}>Retry</button></div>}
+    {resource.loading && !resource.data && <p className="api-state" role="status">Loading {label}…</p>}
+    {message && <p className="api-state success" role="status">{message}</p>}</>;
 }
 
-function ProjectsPage() { return <div className="project-grid">{repository.projects.map((project) => { const complete = project.milestones.filter((milestone) => milestone.status === "Complete").length; return <section className="box project-card" key={project.id}><div className="card-heading"><div><h3>{project.name}</h3><p>{project.partner}</p></div><span className="pill">{project.status}</span></div><div className="project-meta"><span>Owner: {project.owner}</span><span>{formatDate(project.startDate)} – {formatDate(project.endDate)}</span></div><div className="progress"><i style={{ width: `${complete / project.milestones.length * 100}%` }} /></div><small>{complete} of {project.milestones.length} milestones complete</small><div className="milestones">{project.milestones.map((milestone) => <div className="milestone" key={milestone.id}><span>{milestone.title}</span><span className={milestone.status === "Overdue" ? "text-bordo" : ""}>{milestone.status} · {formatDate(milestone.dueDate)}</span></div>)}</div></section>; })}</div>; }
+function AgreementsPage({ onChanged }: { onChanged: () => void }) {
+  const [query, setQuery] = useState(""); const [status, setStatus] = useState("all");
+  const [dialog, setDialog] = useState<{ agreement?: Agreement } | null>(null); const [message, setMessage] = useState("");
+  const data = useResource(async () => {
+    // Expiry windows are evaluated by the backend on the IST business date; the browser only subtracts counts.
+    const [agreements, partners, projects, opportunities, in30, in60, in90] = await Promise.all([
+      api.agreements.list(), api.partners.list(), api.projects.list(), api.opportunities.list(),
+      api.agreements.list(undefined, { expiring_within_days: "30" }), api.agreements.list(undefined, { expiring_within_days: "60" }), api.agreements.list(undefined, { expiring_within_days: "90" }),
+    ]);
+    return { agreements, partners, projects, opportunities, buckets: [["0-30", in30.length], ["31-60", in60.length - in30.length], ["61-90", in90.length - in60.length]] as [string, number][] };
+  }, []);
+  const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
+  const refresh = (text: string) => { setDialog(null); setMessage(text); data.reload(); onChanged(); };
+  const filtered = (data.data?.agreements ?? []).filter((a) => `${names.get(a.partner_id) ?? ""} ${a.reference_number ?? ""} ${a.title}`.toLowerCase().includes(query.toLowerCase()) && (status === "all" || a.status === status))
+    .sort((a, b) => (a.expiry_date ?? "9999").localeCompare(b.expiry_date ?? "9999"));
+  return <><RegisterState resource={data} label="agreements" message={message} />
+    {data.data && <><div className="radar">{data.data.buckets.map(([label, count]) => <div key={label}><b>{count}</b><span>Active, expiring in {label} days</span></div>)}</div>
+    <section className="box"><div className="toolbar"><input className="search" placeholder="Search partner, title, or reference" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search agreements" /><select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter by status"><option value="all">All statuses</option>{AGREEMENT_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select><button className="btn small-btn" onClick={() => setDialog({})}>Add agreement</button></div>
+    <DataTable headers={["Partner", "Agreement", "Status", "Start", "End", "Signed copy", "Owner", "Renewal", "Document", ""]} rows={filtered.map((a) => [names.get(a.partner_id) ?? a.partner_id, <span key="t">{a.title}<small> · {a.reference_number ?? "No reference"}</small></span>, <span className="pill" key="status">{labelOf(AGREEMENT_STATUSES, a.status)}</span>, formatDate(a.start_date ?? null), formatDate(a.expiry_date ?? null), labelOf(SIGNED_COPY, a.signed_copy), a.owner, labelOf(RENEWAL, a.renewal_status), isWebLink(a.document_url) ? <a key="doc" href={a.document_url} target="_blank" rel="noopener noreferrer">Open</a> : "None", <button key="edit" className="text-button" onClick={() => setDialog({ agreement: a })} aria-label={`Edit ${a.title}`}>Edit</button>])} empty={data.data.agreements.length ? "No agreements match the current filters." : "No agreements recorded yet."} /></section></>}
+    <Dialog open={dialog !== null} title={dialog?.agreement ? "Edit agreement" : "Add agreement"} onClose={() => setDialog(null)}>{dialog && data.data && <AgreementForm agreement={dialog.agreement} partners={data.data.partners} projects={data.data.projects} opportunities={data.data.opportunities} onCancel={() => setDialog(null)} onSaved={(saved) => refresh(`Saved “${saved.title}”.`)} onDeleted={dialog.agreement ? () => refresh(`Deleted “${dialog.agreement!.title}”.`) : undefined} />}</Dialog></>;
+}
+
+function ProjectsPage({ onChanged }: { onChanged: () => void }) {
+  const data = useResource(async () => { const [projects, milestones, partners] = await Promise.all([api.projects.list(), api.milestones.list(), api.partners.list()]); return { projects, milestones, partners }; }, []);
+  const [dialog, setDialog] = useState<{ kind: "project"; project?: Project } | { kind: "milestone"; projectId: string; milestone?: Milestone; complete?: boolean } | null>(null);
+  const [message, setMessage] = useState("");
+  const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
+  const refresh = (text: string) => { setDialog(null); setMessage(text); data.reload(); onChanged(); };
+  const milestoneStatus = (status: Milestone["status"]) => MILESTONE_STATUSES.find((s) => s.id === status)?.label ?? status;
+  const title = !dialog ? "" : dialog.kind === "project" ? (dialog.project ? "Edit project" : "Add project") : dialog.complete ? "Mark milestone complete" : dialog.milestone ? "Edit milestone" : "Add milestone";
+  return <><RegisterState resource={data} label="projects" message={message} action={<button className="btn small-btn" onClick={() => setDialog({ kind: "project" })} disabled={!data.data}>Add project</button>} />
+    {data.data && (data.data.projects.length ? <div className="project-grid">{data.data.projects.map((project) => {
+      const milestones = data.data!.milestones.filter((m) => m.project_id === project.id).sort((a, b) => (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999"));
+      const complete = milestones.filter((m) => m.status === "completed").length;
+      return <section className="box project-card" key={project.id}><div className="card-heading"><div><h3>{project.name}</h3><p>{project.partner_id ? names.get(project.partner_id) ?? project.partner_id : "No partner"}</p></div><span className="pill">{project.status.replace("_", " ")}</span></div>
+        <div className="project-meta"><span>Owner: {project.owner}</span><span>{formatDate(project.start_date ?? null)} – {formatDate(project.end_date ?? null)}</span></div>
+        <div className="progress" role="img" aria-label={`${complete} of ${milestones.length} milestones complete`}><i style={{ width: `${milestones.length ? complete / milestones.length * 100 : 0}%` }} /></div><small>{milestones.length ? `${complete} of ${milestones.length} milestones complete` : "No milestones recorded"}</small>
+        <div className="milestones">{milestones.map((m) => <div className="milestone" key={m.id}><span>{m.title}</span><span className={m.status === "missed" ? "text-bordo" : ""}>{milestoneStatus(m.status)} · {formatDate(m.due_date ?? null)}{m.completed_date ? ` · done ${formatDate(m.completed_date)}` : ""}</span><span>{m.status !== "completed" && m.status !== "cancelled" && <button className="text-button" onClick={() => setDialog({ kind: "milestone", projectId: project.id, milestone: m, complete: true })} aria-label={`Mark ${m.title} complete`}>Complete</button>}<button className="text-button" onClick={() => setDialog({ kind: "milestone", projectId: project.id, milestone: m })} aria-label={`Edit ${m.title}`}>Edit</button></span></div>)}</div>
+        <div className="button-row"><button className="btn small-btn" onClick={() => setDialog({ kind: "milestone", projectId: project.id })}>Add milestone</button><button className="text-button" onClick={() => setDialog({ kind: "project", project })} aria-label={`Edit ${project.name}`}>Edit project</button></div></section>;
+    })}</div> : <TableState message="No projects recorded yet." />)}
+    <Dialog open={dialog !== null} title={title} onClose={() => setDialog(null)}>
+      {dialog?.kind === "project" && data.data && <ProjectForm project={dialog.project} partners={data.data.partners} onCancel={() => setDialog(null)} onSaved={(saved) => refresh(`Saved “${saved.name}”.`)} onDeleted={dialog.project ? () => refresh(`Deleted “${dialog.project!.name}”.`) : undefined} />}
+      {dialog?.kind === "milestone" && <MilestoneForm projectId={dialog.projectId} milestone={dialog.milestone} markComplete={dialog.complete} onCancel={() => setDialog(null)} onSaved={(saved) => refresh(dialog.complete ? `Marked “${saved.title}” complete.` : `Saved “${saved.title}”.`)} onDeleted={dialog.milestone && !dialog.complete ? () => refresh(`Deleted “${dialog.milestone!.title}”.`) : undefined} />}
+    </Dialog></>;
+}
 
 function FinancePage() { const budgetTotal = repository.budgets.reduce((sum, item) => sum + item.amount, 0); const receivedTotal = repository.fundsReceived.filter((item) => item.status === "Received").reduce((sum, item) => sum + item.amount, 0); const invoiceTotal = repository.invoices.reduce((sum, item) => sum + item.amount, 0); return <><div className="kpis"><Kpi value={budgetTotal} label="Budgeted (INR)" /><Kpi value={receivedTotal} label="Funds received (INR)" /><Kpi value={invoiceTotal} label="Invoices (INR)" /></div><div className="finance-sections"><FinanceSection title="Budgets">{repository.budgets.map((item) => <FinanceRow key={item.id} label={`${item.partner} · ${item.project}`} value={money(item.amount)} detail={item.status} />)}</FinanceSection><FinanceSection title="Funds received">{repository.fundsReceived.map((item) => <FinanceRow key={item.id} label={`${item.partner} · ${item.project}`} value={money(item.amount)} detail={`${item.status} · ${formatDate(item.receivedDate)}`} />)}</FinanceSection><FinanceSection title="Invoices"><DataTable headers={["Partner", "Invoice date", "Due date", "Amount", "Status"]} rows={repository.invoices.map((item) => [item.partner, formatDate(item.invoiceDate), item.dueDate ? formatDate(item.dueDate) : "Due date not recorded", money(item.amount), <span className="pill" key="status">{item.status}</span>])} empty="No invoices recorded." /></FinanceSection></div></>; }
 function FinanceSection({ title, children }: { title: string; children: ReactNode }) { return <section className="box"><h3>{title}</h3>{children}</section>; }

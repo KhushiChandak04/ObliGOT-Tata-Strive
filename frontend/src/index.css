@@ -1597,3 +1597,182 @@ th {
 .task-row small {
   color: var(--muted);
 }
+
+/* Step 8c: shared API forms (Dialog, FormField, form buttons) restyled in the reference palette */
+.dialog {
+  border: 2px solid var(--green);
+  border-radius: 16px;
+  padding: 0;
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  background: var(--bg);
+  color: var(--ink);
+}
+.dialog::backdrop {
+  background: rgba(15, 61, 58, 0.45);
+}
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.dialog-header h2 {
+  font-size: 20px;
+  color: var(--green);
+}
+.icon-button {
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+}
+.dialog > form {
+  margin: 0 22px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 16px;
+  padding: 18px 0 20px;
+}
+.form-wide {
+  grid-column: 1 / -1;
+}
+.form-field {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.form-field input,
+.form-field select,
+.form-field textarea {
+  font: inherit;
+  font-weight: 400;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+}
+.form-field small {
+  font-weight: 400;
+  color: var(--muted);
+}
+.form-field.has-error input,
+.form-field.has-error select,
+.form-field.has-error textarea {
+  border-color: var(--bordo);
+}
+.field-error {
+  color: var(--bordo) !important;
+}
+.form-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--bordo);
+  border-radius: 10px;
+  color: var(--bordo);
+  background: var(--card);
+}
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.form-actions-split {
+  justify-content: space-between;
+  align-items: center;
+}
+.inline-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--bordo);
+  font-size: 13px;
+}
+.button {
+  font: inherit;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 9px 16px;
+  cursor: pointer;
+  border: 1.5px solid var(--green);
+  white-space: nowrap;
+}
+.button-primary {
+  background: var(--green);
+  color: var(--on);
+}
+.button-secondary {
+  background: transparent;
+  color: var(--green);
+}
+.button-danger {
+  background: var(--bordo);
+  border-color: var(--bordo);
+  color: var(--on);
+}
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.text-button {
+  border: 0;
+  background: none;
+  color: var(--green);
+  font: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.danger-text {
+  color: var(--bordo);
+}
+.state-message {
+  padding: 12px;
+  color: var(--muted);
+}
+.milestone > span:last-child {
+  white-space: nowrap;
+}
+.pipeline-card .text-button {
+  justify-self: start;
+}
+td small {
+  color: var(--muted);
+}
+@media (max-width: 700px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.card-heading > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.card-heading .pill {
+  flex: none;
+  align-self: flex-start;
+}
+@media (max-width: 700px) {
+  .project-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.toolbar .small-btn,
+.button-row .small-btn,
+.task-row .small-btn,
+.api-state .small-btn {
+  width: auto;
+  margin-top: 0;
+  flex: none;
+}

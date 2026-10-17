@@ -13,7 +13,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 5    | Application foundation (5a, 5b, 5c)           | 5a done (API-connected UI, now unrouted); 5b/5c blocked on Firebase credentials |
 | 6    | Core partnership workflows (6a–6d)            | Done — approved (backend APIs in use; original pages now unrouted) |
 | 7    | Deadline engine and action center (7a–7c)     | 7a, 7b approved; 7c done (UI now unrouted) |
-| 8    | Funding and compliance + new-UI integration (8a finance backend, 8b core UI wiring, 8c partner/pipeline/agreements/projects, 8d finance/reports) | 8a approved; 8b done — awaiting review |
+| 8    | Funding and compliance + new-UI integration (8a finance backend, 8b core UI wiring, 8c partner/pipeline/agreements/projects, 8d finance/reports, 8e–8f external partner submissions — P1) | 8a, 8b approved; 8c done — awaiting review; 8d–8f planned |
 | 9    | Gemini AI integration                         | Not started                               |
 | 10   | Spreadsheet import                            | Not started                               |
 | 11   | Management dashboard and UI polish (+ motion) | Not started                               |
@@ -51,6 +51,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 - 17 Oct 2026: use the teammate's new frontend (`App.tsx`, `reference/obligot.html` design) and wire it to the FastAPI backend screen by screen, replacing the synthetic `src/data/repository.ts` data and client-side alerts.
 - 17 Oct 2026: Step 8a — commit the backend part; drop the 8a edits to the old, now-unrouted pages.
 - 17 Oct 2026: spreadsheet parsing for Import uses the existing backend `POST /api/import/preview` instead of the browser `xlsx` package.
+- 17 Oct 2026: scope addition — secure external partner submission workflow (P1 supporting differentiator) added as Steps 8e (backend) and 8f (UI), after the obligation screens are live (8d) and before Gemini (9) and import (10).
 
 ## Open questions (awaiting team input)
 
@@ -100,6 +101,43 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API              | Each existing route tested for success, 404, 422, 401/403                                                    |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Scope addition — secure external partner submission workflow (P1, Steps 8e–8f)
+**Why here:** acceptance must update a live obligation (report or milestone) through its API, recalculate alerts, and log activity. Reports go live in 8d; milestones, alerts, reviews, and the activity log already exist. Placing it after 8d and before Gemini (9) and import (10) follows the brief: early enough not to be left to the final hours, below the P0 requirements and the intelligence engine.
+
+**Scope:** two request types only — `progress_update` (linked to a milestone) and `report_submission` (linked to a reporting obligation). No form builder, partner accounts, partner portal, or messaging integrations. The manager copies the link and shares it through existing email/WhatsApp.
+
+**Data model (new `submission_requests` collection; partner input never written directly into canonical records):**
+- `partner_id`, optional `project_id`, `obligation` (`{type: "report" | "milestone", id}`), `request_type`, `period_start`/`period_end`, `requested_info`, `due_date`.
+- `status`: `requested` → `received` (Received — awaiting review) → `accepted` | `changes_requested` (→ `received` again) | `rejected`; `expired` (computed from `token_expires_at`) and `revoked` block submission.
+- `token_hash` (SHA-256 of a random 256-bit `secrets.token_urlsafe(32)` token; the token itself is shown once and never stored), `token_expires_at`, `revoked_at`.
+- `submissions[]` (each round kept: submitted fields, submitter name/role, optional contact email, document links, `submitted_at`), `review` (`decision`, `comment`, `reviewer`, `reviewed_at`), `created_by`, `created_at`.
+
+**Security model:**
+- Public routes under `/api/public/submissions/{token}` (GET scoped context, POST submit) are the only unauthenticated routes; they look the request up by token hash, check expiry, revocation, and that the status allows submission, validate every field with Pydantic, and never accept partner/obligation IDs from the body — scope comes only from the stored request. Internal IDs alone never authorize anything.
+- GET returns only the partner name, request type, obligation title, period, requested information, and due date — no other internal records.
+- One submission per open round (replay → 409); a simple per-token rate limit; payload size limits.
+- Firestore rules stay deny-all; all writes go through FastAPI with the Admin SDK. No secrets in the browser.
+- **File uploads:** no Firebase Storage bucket is configured, so uploads are a documented limitation for now; partners can provide http(s) links to documents (validated, rendered safely). Uploads are added only if a secured Storage bucket is configured.
+
+**Lifecycle effects:** submission → status `received`, activity "Submission received (external partner via link)"; the overdue/due alert stays open (a partner's claim never closes an obligation). Accept → report: `submitted_date` from the submission and status `accepted`; milestone: reported status/completion date applied (completion requires a date) — then alerts recalculate on the next request and the dashboard updates. Changes requested / rejected → reason stored, submission retained, link reopened (changes requested) or closed (rejected). Every transition is logged in `activities`.
+
+**8e (backend):** model, token creation/regeneration/revocation, public GET/POST, internal list/detail/review routes, effects on reports/milestones, activity entries, an "awaiting review" signal for the Action Center, tests for all ten acceptance scenarios that are API-testable.
+**8f (UI):** "Request update" from Partner 360 and from a report/milestone (create request, copy link, status), public `/submit/:token` page outside the app shell (responsive, validated, clear confirmation/errors, "link expired/invalid" states), review screen (compare submission with the current record; accept / request changes / reject with reason), "Received — awaiting review" shown distinctly from accepted records, browser test of the full demo flow in a separate session.
+
+**Acceptance tests (from the brief):** request created for an existing partner and obligation; partner submits from a separate browser session; appears as awaiting review; invalid/expired/revoked links cannot submit; one link cannot touch another partner's records; accept or request changes persists; acceptance updates the obligation and dashboard; request and decision in activity history; refresh keeps state; failures show meaningful errors.
+
+**Decisions needed before 8e:** link lifetime default (proposed 14 days, adjustable per request); whether accepting a report sets `accepted` (proposed) or `submitted`.
+
+## Step 8c notes — Partner 360, Pipeline, Agreements, Projects on the API
+- Partner 360: partner picker (`/partner-360?id=`), title from the selected partner; profile with Edit (reuses `PartnerForm`); MOU timeline from the partner's agreement dates (active agreement with the nearest expiry; elapsed share computed against the backend's `as_of` date); open alerts for the partner (open the shared drawer); linked-record counts linking to each register; recent activity.
+- Pipeline: reference kanban columns mapped onto the API lifecycle stages (Opportunity = identified, MOU = agreement, Implementation = active, Closure = closed); cards show partner, title, owner, next step and date; "Move to …" PATCHes the stage; Add/Edit/Delete via `OpportunityForm`.
+- Agreements: expiry radar buckets come from the backend `expiring_within_days` filter (30/60/90; the browser only subtracts counts); table with real fields (signed copy, renewal, safe document links); search and status filter; Add/Edit/Delete via `AgreementForm`.
+- Projects: reference cards with real milestones and progress; Add/Edit project (`ProjectForm`), Add/Edit/Complete milestones (`MilestoneForm`, completion date required).
+- The tested API forms and native `<dialog>` are reused; their classes (`.dialog`, `.form-grid`, `.form-field`, `.button-*`, …) are restyled with the reference palette tokens. Edits reload the shared alerts so the sidebar count updates.
+- Responsive fixes: `.project-grid` was two columns at every width (pre-existing) → one column under 700 px; card headings wrap; `.small-btn` no longer stretches inside toolbars and button rows.
+- Verification: `npm run build` passes. Headless Chrome on the live API: Partner 360 (timeline 94% elapsed, 8 alerts open the drawer, linked counts, picker switch, edit persists across reload), Pipeline (stage move, create with validation), Agreements (radar 1/0/0, filters, marking renewal "renewed" lowers open alerts 8→7), Projects (completion requires a date; progress 1→2 of 3; alerts 7→6; add project); 0 px overflow at 375/390/768/1280 on all four pages and the dashboard; dialog fits at 390 px; no console errors. Regression: 8b drive passes on a fresh backend.
+- Not in 8c: Finance and Reports still synthetic (8d).
 
 ## Step 8b notes — new UI wired to the API (core) and build fix
 - Build fixed: `App.tsx` no longer imports `xlsx`; `package-lock.json` re-synced (no `xlsx`). Verified with a clean `npm ci` + `npm run build` in an isolated copy.

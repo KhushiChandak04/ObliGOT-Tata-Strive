@@ -37,7 +37,8 @@ Existing collection names and fields are preserved; new fields are optional for 
 | `ai_recommendations` | planned | target, fact ids sent, validated output, model, review_status (pending / approved / edited / rejected), reviewer |
 | `activities` | current (Step 7b) | entity_type, entity_id, partner_id, event, actor, timestamp, details (audit trail) |
 | `users` | planned | uid, email, name, role |
-| `config/rules` | planned | rule thresholds |
+| `config/rules` | current (Step 7a) | rule thresholds |
+| `submission_requests` | planned (Steps 8e–8f, P1) | partner_id, project_id, obligation {type, id}, request_type (`progress_update` / `report_submission`), period, requested_info, due_date, status, token_hash, token_expires_at, revoked_at, submissions[], review, created_by |
 
 Every record carries `source_label` (`demo` or `user`). Demo records are fictional.
 
@@ -75,6 +76,17 @@ Viewer: read. Manager: create/update, review recommendations, tasks. Admin: plus
 
 ## Frontend [planned]
 Typed API client per resource, `useResource` hook, shared `StatusBadge`, `DataTable`, `Dialog`, `EvidencePanel`, `AlertRow`, `PriorityBreakdown`. Pages: Dashboard (management overview + Today's 5), Action center (team workspace), Partners, Partner 360 (tabbed), Pipeline, Agreements, Projects, Finance, Reports, Import, Sign-in. Recharts and `motion` only when approved (Step 11).
+
+## External partner submissions [planned — Steps 8e–8f, P1]
+```
+Manager (internal UI) → POST /api/submission-requests → token shown once, link /submit/<token>
+Partner (separate browser) → /submit/<token> → GET /api/public/submissions/<token> (scoped context only)
+                                             → POST /api/public/submissions/<token> (validated; status → received)
+Manager → review (accept / request changes / reject) → obligation updated only on accept → alerts recomputed → activity logged
+```
+- Only `/api/public/submissions/*` is unauthenticated, and it authorizes solely by an unpredictable token whose SHA-256 hash is stored; scope (partner, obligation) comes from the stored request, never from the request body. Expiry, revocation, allowed status, field validation, single submission per round, and a per-token rate limit are enforced server-side.
+- Partner input is stored on the submission record and never written into canonical records until a manager accepts it. Firestore rules remain deny-all.
+- File uploads are out of scope until a secured Storage bucket is configured; document links (http(s)) are accepted instead.
 
 ## Routing
 `backend/app/main.py` mounts `app.routes.router` at `/api`. `app.openapi()` is exercised in tests to detect missing or malformed route registration. Detail routes return 404 for missing IDs. The full route inventory is in `docs/API_ENDPOINTS.md`. Legacy SQLite modules were removed in Step 4f.
