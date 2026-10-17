@@ -1,0 +1,11 @@
+node_modules/
+frontend/dist/
+frontend/.env
+backend/.env
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.firebase/
+.DS_Store

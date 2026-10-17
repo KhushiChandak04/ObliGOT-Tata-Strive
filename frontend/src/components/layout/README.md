@@ -1,0 +1,1 @@
+App layout currently lives in src/app/App.tsx. Move components here if it grows.\n

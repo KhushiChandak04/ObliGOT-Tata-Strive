@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The FastAPI backend uses the Firebase Admin SDK. Client-side access is denied by default.
+    // If client-side Firestore reads are introduced, require auth and explicit ownership rules.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

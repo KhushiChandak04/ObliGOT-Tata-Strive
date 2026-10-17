@@ -1,0 +1,9 @@
+{
+  "name": "obligot",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build"
+  }
+}
