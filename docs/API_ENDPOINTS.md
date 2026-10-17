@@ -19,7 +19,7 @@ Status legend: **tested** = covered by backend pytest in in-memory mode; live Fi
 | POST | `/api/partners` | Create (201) | `source_label=user` |
 | GET | `/api/partners/{partner_id}` | Detail | 404 if missing |
 | PATCH | `/api/partners/{partner_id}` | Partial update; `null` clears optional fields | 422 if a required field is cleared |
-| DELETE | `/api/partners/{partner_id}` | Delete (204) | **409** while opportunities, agreements, projects, finance, reports, actions, or follow-ups reference it |
+| DELETE | `/api/partners/{partner_id}` | Delete (204) | **409** while opportunities, agreements, projects, milestones, finance, reports, actions, or follow-ups reference it |
 
 ## Actions (tasks)
 | Method | Path | Purpose | Notes |
@@ -42,6 +42,15 @@ Each collection has the same shape:
 - `GET /api/agreements?expiring_within_days=N` (0–3650): active agreements whose `expiry_date` is between today (IST) and today + N days, inclusive.
 - Projects: `end_date` ≥ `start_date` (422); PATCH rejects unknown fields.
 - Finance: `status` must be allowed for the `record_type` (`FINANCE_STATUSES` in `models.py`); default is the first allowed value.
+
+## Milestones
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| GET | `/api/milestones?project_id=&partner_id=&status=` | List with optional filters | |
+| POST | `/api/milestones` | Create (201) | 404 if project missing; `partner_id` is copied from the project (client value ignored); status `planned`, `in_progress`, `completed`, `missed`, `cancelled`; `completed_date` required for and only allowed on `completed` (422) |
+| GET / PATCH / DELETE | `/api/milestones/{milestone_id}` | Detail / merged-and-validated update (partner re-derived from project) / delete (204) | 404 if missing |
+
+Projects: `DELETE /api/projects/{id}` returns **409** while milestones, agreements, finance records, or reports reference it; `PATCH` returns **409** when changing `partner_id` while such records exist.
 
 ## Pipeline (opportunities)
 | Method | Path | Purpose | Notes |

@@ -8,12 +8,13 @@ import StatusBadge from "../components/ui/StatusBadge";
 import FindingList from "../features/intelligence/FindingList";
 import AgreementForm from "../features/agreements/AgreementForm";
 import PartnerForm from "../features/partners/PartnerForm";
+import ProjectForm from "../features/projects/ProjectForm";
 import OpportunityTable from "../features/pipeline/OpportunityTable";
 import {ActionTable,AgreementTable,FinanceTable,ProjectTable,ReportTable} from "../features/partners/LinkedRecordTables";
 import {ApiError,api} from "../services/functions.service";
 import {useResource} from "../lib/useResource";
 import {formatDate} from "../lib/utils";
-import type {Agreement,DeadlineFinding,Partner} from "../types";
+import type {Agreement,DeadlineFinding,Partner,Project} from "../types";
 
 type TabId="overview"|"pipeline"|"agreements"|"projects"|"finance"|"reports"|"actions";
 
@@ -33,6 +34,7 @@ export default function PartnerDetailsPage(){
  const [tab,setTab]=useState<TabId>("overview");
  const [editing,setEditing]=useState(false);
  const [deleting,setDeleting]=useState(false);
+ const [projectDialog,setProjectDialog]=useState<{project?:Project}|null>(null);
  const [agreementDialog,setAgreementDialog]=useState<{mode:"create"}|{mode:"edit";agreement:Agreement}|null>(null);
  const notFound=partner.error instanceof ApiError&&partner.error.status===404;
  const p=partner.data;
@@ -49,7 +51,7 @@ export default function PartnerDetailsPage(){
    {tab==="overview"&&<OverviewTab findings={linked.data.findings} asOf={linked.data.asOf}/>}
    {tab==="pipeline"&&(linked.data.opportunities.length?<><div className="table-panel inner-table"><OpportunityTable rows={linked.data.opportunities}/></div><p className="muted panel-footnote">Create, edit, or move opportunities on the <Link className="text-link" to="/pipeline">Pipeline page</Link>.</p></>:<StateMessage title="No opportunities" detail="Nothing is recorded in the pipeline for this partner yet." action={<Link className="button button-secondary" to="/pipeline">Open pipeline</Link>}/>)}
    {tab==="agreements"&&<><div className="tab-toolbar"><button className="button button-secondary button-small" onClick={()=>setAgreementDialog({mode:"create"})}><Plus size={13} aria-hidden/> Add agreement</button></div><AgreementTable rows={linked.data.agreements} onEdit={a=>setAgreementDialog({mode:"edit",agreement:a})}/></>}
-   {tab==="projects"&&<ProjectTable rows={linked.data.projects}/>}
+   {tab==="projects"&&<><div className="tab-toolbar"><Link className="text-link" to="/projects">Manage milestones on the Projects page</Link><button className="button button-secondary button-small" onClick={()=>setProjectDialog({})}><Plus size={13} aria-hidden/> Add project</button></div><ProjectTable rows={linked.data.projects} onEdit={project=>setProjectDialog({project})}/></>}
    {tab==="finance"&&<FinanceTable rows={linked.data.finance}/>}
    {tab==="reports"&&<ReportTable rows={linked.data.reports}/>}
    {tab==="actions"&&<ActionTable rows={linked.data.actions}/>}
@@ -58,6 +60,11 @@ export default function PartnerDetailsPage(){
    <PartnerForm partner={p} onCancel={()=>setEditing(false)} onSaved={()=>{setEditing(false);partner.reload();}}/>
   </Dialog>
   <DeletePartnerDialog open={deleting} partner={p} onClose={()=>setDeleting(false)}/>
+  <Dialog open={projectDialog!==null} title={projectDialog?.project?"Edit project":"Add project"} onClose={()=>setProjectDialog(null)}>
+   {projectDialog&&<ProjectForm project={projectDialog.project} partners={[p]} defaultPartnerId={p.id}
+     onCancel={()=>setProjectDialog(null)} onSaved={()=>{setProjectDialog(null);linked.reload();}}
+     onDeleted={projectDialog.project?()=>{setProjectDialog(null);linked.reload();}:undefined}/>}
+  </Dialog>
   <Dialog open={agreementDialog!==null} title={agreementDialog?.mode==="edit"?"Edit agreement":"Add agreement"} onClose={()=>setAgreementDialog(null)}>
    {agreementDialog&&linked.data&&<AgreementForm agreement={agreementDialog.mode==="edit"?agreementDialog.agreement:undefined} partners={[p]} defaultPartnerId={p.id}
      projects={linked.data.projects} opportunities={linked.data.opportunities}

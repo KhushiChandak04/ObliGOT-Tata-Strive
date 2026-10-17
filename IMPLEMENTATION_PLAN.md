@@ -10,7 +10,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 3 | Project instructions and custom skills | Done — approved |
 | 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
 | 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
-| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | 6a, 6b approved; 6c done — awaiting review |
+| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | 6a–6c approved; 6d done — awaiting review |
 | 7 | Deadline engine and action center | Not started |
 | 8 | Funding and compliance | Not started |
 | 9 | Gemini AI integration | Not started |
@@ -68,6 +68,14 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 6d notes — projects and milestones
+- New `milestones` collection and routes. `partner_id` is always derived server-side from the milestone's project (client value ignored), so milestones cannot drift from their project's partner. Status `planned`/`in_progress`/`completed`/`missed`/`cancelled`; `completed_date` is required for and only allowed on `completed`.
+- Integrity: `DELETE /api/projects/{id}` → 409 while milestones, agreements, finance, or reports reference it; changing a project's partner → 409 while such records exist; partner delete also counts milestones.
+- Demo milestones on demo-project-001: one completed, one in progress and past due, one planned.
+- Frontend: Projects register (search, status filter, add/edit with confirmed delete showing 409 details); expandable milestone rows (`aria-expanded`/`aria-controls`) with add, edit, delete, and "Mark complete" (status preset, user must enter the actual completion date — never assumed). Partner 360 Projects tab gains add (partner locked) and edit. On phones the milestone panel is sticky inside the horizontally scrolling table so it stays readable.
+- Verification: `pytest` → 77 passed (7 new in `tests/test_milestones.py`, demo integrity extended). `npm run build` passes. Headless Chrome: expand/collapse state; mark complete blocked without a date then succeeds (count 1→2 of 3); add, complete, reopen (completed date dropped), delete milestone; partner change and delete of the demo project blocked with link counts; date-order validation; create/delete unlinked project; Partner 360 add with locked partner; milestone panel within viewport at 375/390 px whether the table is scrolled left or right; 0 px page overflow; only expected 409s in console.
+- Not in 6d: overdue-milestone rule (Step 7).
 
 ## Step 6c notes — agreements/MOU register
 - Agreement fields added (optional, backward compatible): `signed_copy` (default `unknown`), `renewal_status` (default `none`), `project_id`, `opportunity_id`. Links must exist (404) and belong to the agreement's partner (422), checked on create and PATCH (including when the partner changes).

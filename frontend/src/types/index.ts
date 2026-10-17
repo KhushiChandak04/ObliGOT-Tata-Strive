@@ -3,6 +3,7 @@ export type PartnerStatus = "prospect" | "qualification" | "active" | "on_hold" 
 export type Priority = "high" | "medium" | "low";
 export type ActionStatus = "open" | "in_review" | "done" | "deferred";
 export type RecordStatus = "planned" | "active" | "on_hold" | "completed" | "closed";
+export type MilestoneStatus = "planned" | "in_progress" | "completed" | "missed" | "cancelled";
 export type AgreementStatus = "draft" | "under_review" | "active" | "expired" | "closed";
 export type SignedCopyStatus = "received" | "pending" | "unknown";
 export type RenewalStatus = "none" | "in_progress" | "renewed" | "not_renewing";
@@ -31,6 +32,10 @@ export interface Agreement {
 export interface Project {
   id: string; partner_id?: string | null; name: string; status: RecordStatus; owner: string;
   start_date?: string | null; end_date?: string | null; milestone_summary: string; source_label?: SourceLabel;
+}
+export interface Milestone {
+  id: string; project_id: string; partner_id?: string | null; title: string; due_date?: string | null;
+  completed_date?: string | null; status: MilestoneStatus; owner: string; source_label?: SourceLabel;
 }
 export interface FinanceRecord {
   id: string; partner_id: string; project_id?: string | null; record_type: FinanceType; title: string;

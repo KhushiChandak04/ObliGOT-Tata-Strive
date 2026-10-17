@@ -2,14 +2,14 @@ from fastapi.testclient import TestClient
 
 from app import demo_data
 from app.main import app
-from app.models import FINANCE_STATUSES, AgreementCreate, FinanceCreate, OpportunityCreate, ProjectCreate
+from app.models import FINANCE_STATUSES, AgreementCreate, FinanceCreate, MilestoneCreate, OpportunityCreate, ProjectCreate
 from app.rules import scan_deadlines
 from app.repository import _serialize
 
 DEMO_COLLECTIONS = {
     "agreements": demo_data.AGREEMENTS, "projects": demo_data.PROJECTS,
     "finance": demo_data.FINANCE, "reports": demo_data.REPORTS, "actions": demo_data.ACTIONS,
-    "opportunities": demo_data.OPPORTUNITIES,
+    "opportunities": demo_data.OPPORTUNITIES, "milestones": demo_data.MILESTONES,
 }
 
 
@@ -23,7 +23,7 @@ def test_every_demo_record_is_labelled_and_references_a_demo_partner():
             assert record["source_label"] == "demo", (name, record["id"])
             partner = record.get("partner_id") or record.get("related_partner_id")
             assert partner is None or partner in demo_data.PARTNERS, (name, record["id"])
-    for record in records(demo_data.FINANCE) + records(demo_data.REPORTS):
+    for record in records(demo_data.FINANCE) + records(demo_data.REPORTS) + records(demo_data.MILESTONES):
         assert record.get("project_id") is None or record["project_id"] in demo_data.PROJECTS
 
 
@@ -32,6 +32,9 @@ def test_demo_records_pass_create_validation():
         AgreementCreate.model_validate(record)
     for record in records(demo_data.PROJECTS):
         ProjectCreate.model_validate(record)
+    for record in records(demo_data.MILESTONES):
+        MilestoneCreate.model_validate(record)
+        assert record["partner_id"] == demo_data.PROJECTS[record["project_id"]].partner_id
     for record in records(demo_data.OPPORTUNITIES):
         OpportunityCreate.model_validate(record)
     for record in records(demo_data.FINANCE):

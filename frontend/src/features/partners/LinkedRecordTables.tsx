@@ -30,9 +30,10 @@ export function AgreementTable({ rows, partnerName, onEdit, emptyTitle = "No agr
   </table></div>;
 }
 
-export function ProjectTable({ rows }: { rows: Project[] }) {
-  return <Table headers={["Project", "Status", "Start", "End", "Owner"]} empty="No projects" rows={rows.map((p) =>
-    <tr key={p.id}><td><strong>{p.name}</strong><small>{p.milestone_summary || "No milestone summary"}{demo(p.source_label)}</small></td><td><StatusBadge value={p.status} /></td><td>{formatDate(p.start_date)}</td><td>{formatDate(p.end_date)}</td><td>{p.owner}</td></tr>)} />;
+export function ProjectTable({ rows, onEdit }: { rows: Project[]; onEdit?: (p: Project) => void }) {
+  return <Table headers={["Project", "Status", "Start", "End", "Owner", ...(onEdit ? ["Actions"] : [])]} empty="No projects" rows={rows.map((p) =>
+    <tr key={p.id}><td><strong>{p.name}</strong><small>{p.milestone_summary || "No progress note"}{demo(p.source_label)}</small></td><td><StatusBadge value={p.status} /></td><td>{formatDate(p.start_date)}</td><td>{formatDate(p.end_date)}</td><td>{p.owner}</td>
+      {onEdit && <td className="row-actions"><button className="text-button" onClick={() => onEdit(p)} aria-label={`Edit ${p.name}`}>Edit</button></td>}</tr>)} />;
 }
 
 export function FinanceTable({ rows }: { rows: FinanceRecord[] }) {

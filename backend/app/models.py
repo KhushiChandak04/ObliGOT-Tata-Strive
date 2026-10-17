@@ -210,6 +210,36 @@ class ReportCreate(BaseModel):
     status: Literal["planned", "due", "submitted", "overdue", "accepted"] = "planned"
     owner: str = "Unassigned"
 
+MilestoneStatus = Literal["planned", "in_progress", "completed", "missed", "cancelled"]
+
+class Milestone(BaseModel):
+    id: str
+    project_id: str
+    partner_id: str | None = None
+    title: str
+    due_date: date | None = None
+    completed_date: date | None = None
+    status: MilestoneStatus = "planned"
+    owner: str = "Unassigned"
+    source_label: str = "demo"
+
+class MilestoneCreate(BaseModel):
+    """partner_id is not accepted from clients; the server copies it from the project."""
+    project_id: str
+    title: str = Field(min_length=2, max_length=200)
+    due_date: date | None = None
+    completed_date: date | None = None
+    status: MilestoneStatus = "planned"
+    owner: str = Field(default="Unassigned", max_length=120)
+
+    @model_validator(mode="after")
+    def completion_is_recorded_consistently(self):
+        if self.status == "completed" and self.completed_date is None:
+            raise ValueError("completed_date is required when status is completed")
+        if self.status != "completed" and self.completed_date is not None:
+            raise ValueError("completed_date is only allowed when status is completed")
+        return self
+
 # Partnership lifecycle stages, in order. "closed" ends the pipeline (won, lost, or ended).
 OPPORTUNITY_STAGES: tuple[str, ...] = ("identified", "qualification", "proposal", "approval", "agreement", "active", "renewal", "closed")
 OpportunityStage = Literal["identified", "qualification", "proposal", "approval", "agreement", "active", "renewal", "closed"]

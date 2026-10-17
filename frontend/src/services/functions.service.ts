@@ -1,6 +1,6 @@
 import { firebaseAuth } from "../lib/firebase";
 import type {
-  ActionItem, Agreement, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup, HealthResponse,
+  ActionItem, Agreement, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup, HealthResponse, Milestone,
   Opportunity, Partner, Project, ReportRecord,
 } from "../types";
 
@@ -83,6 +83,14 @@ export const api = {
   finance: partnerLinked<FinanceRecord>("/api/finance"),
   reports: partnerLinked<ReportRecord>("/api/reports"),
   opportunities: partnerLinked<Opportunity>("/api/opportunities"),
+  milestones: {
+    list: (filters: { projectId?: string; partnerId?: string; status?: string } = {}) =>
+      request<Milestone[]>(`/api/milestones${query({ project_id: filters.projectId, partner_id: filters.partnerId, status: filters.status })}`),
+    get: (milestoneId: string) => request<Milestone>(`/api/milestones/${id(milestoneId)}`),
+    create: (payload: Partial<Milestone>) => request<Milestone>("/api/milestones", send("POST", payload)),
+    update: (milestoneId: string, payload: Partial<Milestone>) => request<Milestone>(`/api/milestones/${id(milestoneId)}`, send("PATCH", payload)),
+    remove: (milestoneId: string) => request<void>(`/api/milestones/${id(milestoneId)}`, { method: "DELETE" }),
+  },
   followups: {
     list: (filters: { status?: string; relatedPartnerId?: string } = {}) =>
       request<Followup[]>(`/api/followups${query({ status: filters.status, related_partner_id: filters.relatedPartnerId })}`),

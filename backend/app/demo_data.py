@@ -7,9 +7,10 @@ the business date so each demo scenario stays live:
 - demo-002: draft MOU only (drafts are not evaluated).
 - demo-003: early-stage opportunity only.
 Opportunities: demo-001 renewal (MOU expiring), demo-002 proposal, demo-003 identified.
+Milestones (demo-project-001): one completed, one in progress and past its due date, one planned.
 """
 from datetime import timedelta
-from app.models import ActionItem, Agreement, FinanceRecord, Opportunity, Partner, Project, ReportRecord
+from app.models import ActionItem, Agreement, FinanceRecord, Milestone, Opportunity, Partner, Project, ReportRecord
 from app.rules import business_today
 
 today = business_today()
@@ -47,4 +48,9 @@ OPPORTUNITIES = {
     "demo-opportunity-001": Opportunity(id="demo-opportunity-001", partner_id="demo-001", title="Renew skills training MOU (demo)", stage="renewal", owner="Partnerships Team", next_step="Share renewal draft with partner (illustrative).", next_step_date=days(7), updated_at=days(-3), source_label="demo"),
     "demo-opportunity-002": Opportunity(id="demo-opportunity-002", partner_id="demo-002", title="Industry mentoring collaboration (demo)", stage="proposal", owner="Regional Partnerships", next_step="Send proposal for internal review (illustrative).", next_step_date=days(4), updated_at=days(-12), source_label="demo"),
     "demo-opportunity-003": Opportunity(id="demo-opportunity-003", partner_id="demo-003", title="Community outreach pilot (demo)", stage="identified", owner="Program Team", next_step="Schedule introductory call (illustrative).", updated_at=days(-30), source_label="demo"),
+}
+MILESTONES = {
+    "demo-milestone-001": Milestone(id="demo-milestone-001", project_id="demo-project-001", partner_id="demo-001", title="Cohort 1 completion (demo)", due_date=days(-62), completed_date=days(-60), status="completed", owner="Program Team", source_label="demo"),
+    "demo-milestone-002": Milestone(id="demo-milestone-002", project_id="demo-project-001", partner_id="demo-001", title="Cohort 2 enrolment complete (demo)", due_date=days(-15), status="in_progress", owner="Program Team", source_label="demo"),
+    "demo-milestone-003": Milestone(id="demo-milestone-003", project_id="demo-project-001", partner_id="demo-001", title="Mid-programme review (demo)", due_date=days(30), status="planned", owner="Partnerships Team", source_label="demo"),
 }

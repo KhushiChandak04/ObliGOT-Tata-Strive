@@ -69,6 +69,7 @@ Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager
 - `GET /api/finance?partner_id=...` / `POST /api/finance` / `GET|PATCH|DELETE /api/finance/{finance_id}`
 - `GET /api/reports?partner_id=...` / `POST /api/reports` / `GET|PATCH|DELETE /api/reports/{report_id}`
 - `POST /api/intelligence/analyze`
+- `GET /api/milestones?project_id=...&partner_id=...&status=...` / `POST /api/milestones` / `GET|PATCH|DELETE /api/milestones/{milestone_id}`
 - `GET /api/opportunities?partner_id=...&stage=...` / `POST /api/opportunities` / `GET|PATCH|DELETE /api/opportunities/{opportunity_id}`
 - `GET /api/followups?status=...&related_partner_id=...` / `POST /api/followups` / `GET|PATCH|DELETE /api/followups/{followup_id}`
 - `GET /api/rules/deadline-preview`

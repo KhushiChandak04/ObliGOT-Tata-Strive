@@ -9,7 +9,7 @@ from app.intelligence import analyze_context
 from app.models import (
     ActionCreate, ActionItem, ActionUpdate, Agreement, AgreementCreate,
     AnalyzeRequest, AnalyzeResponse, FinanceCreate, FinanceRecord,
-    FollowupCreate, FollowupUpdate, Opportunity, OpportunityCreate, Partner, PartnerCreate, PartnerUpdate,
+    FollowupCreate, FollowupUpdate, Milestone, MilestoneCreate, Opportunity, OpportunityCreate, Partner, PartnerCreate, PartnerUpdate,
     Project, ProjectCreate, ReportCreate, ReportRecord,
 )
 from app.repository import (
@@ -93,7 +93,7 @@ def update_partner(partner_id: str, payload: PartnerUpdate) -> dict:
 # Collections that reference a partner, and the field holding the reference.
 PARTNER_LINKS = {
     "agreements": "partner_id", "projects": "partner_id", "finance": "partner_id",
-    "reports": "partner_id", "opportunities": "partner_id",
+    "reports": "partner_id", "opportunities": "partner_id", "milestones": "partner_id",
     "actions": "related_partner_id", "followups": "related_partner_id",
 }
 
@@ -228,6 +228,16 @@ def list_projects(partner_id: str | None = None) -> list[dict]:
     records = list_records("projects")
     return [r for r in records if not partner_id or r.get("partner_id") == partner_id]
 
+# Records that reference a project through project_id.
+PROJECT_LINKS = ("milestones", "agreements", "finance", "reports")
+
+def _project_links(project_id: str) -> dict[str, int]:
+    return {collection: count for collection in PROJECT_LINKS
+            if (count := sum(r.get("project_id") == project_id for r in list_records(collection)))}
+
+def _links_summary(linked: dict[str, int]) -> str:
+    return ", ".join(f"{collection}: {count}" for collection, count in linked.items())
+
 @router.post("/projects", response_model=Project, status_code=201, tags=["projects"])
 def create_project(payload: ProjectCreate) -> dict:
     if payload.partner_id and not get_record("partners", payload.partner_id):
@@ -261,12 +271,66 @@ async def update_project(project_id: str, request: Request) -> dict:
         validated = ProjectCreate.model_validate(merged)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Linked records carry the project's partner; moving the project would leave them pointing at the old partner.
+    if validated.partner_id != current.get("partner_id") and (linked := _project_links(project_id)):
+        raise HTTPException(status_code=409, detail=f"Project has linked records ({_links_summary(linked)}); its partner cannot be changed.")
     return put_record("projects", {**validated.model_dump(mode="json"), "source_label": current.get("source_label", "user")}, project_id)
 
-@router.delete("/projects/{project_id}", status_code=204, tags=["projects"])
+@router.delete("/projects/{project_id}", status_code=204, tags=["projects"],
+               responses={409: {"description": "Project still has linked records"}})
 def delete_project(project_id: str):
+    if not get_record("projects", project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if linked := _project_links(project_id):
+        raise HTTPException(status_code=409, detail=f"Project has linked records ({_links_summary(linked)}). Reassign or delete them first.")
     if not delete_record("projects", project_id):
         raise HTTPException(status_code=404, detail="Project not found")
+    return None
+
+@router.get("/milestones", response_model=list[Milestone], tags=["projects"])
+def list_milestones(project_id: str | None = None, partner_id: str | None = None, status: str | None = None) -> list[dict]:
+    records = list_records("milestones")
+    return [r for r in records
+            if (not project_id or r.get("project_id") == project_id)
+            and (not partner_id or r.get("partner_id") == partner_id)
+            and (not status or r.get("status") == status)]
+
+def _milestone_record(validated: MilestoneCreate, source_label: str) -> dict:
+    project = get_record("projects", validated.project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {**validated.model_dump(mode="json"), "partner_id": project.get("partner_id"), "source_label": source_label}
+
+@router.post("/milestones", response_model=Milestone, status_code=201, tags=["projects"])
+def create_milestone(payload: MilestoneCreate) -> dict:
+    return put_record("milestones", _milestone_record(payload, "user"))
+
+@router.get("/milestones/{milestone_id}", response_model=Milestone, tags=["projects"])
+def get_milestone(milestone_id: str) -> dict:
+    record = get_record("milestones", milestone_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    return record
+
+@router.patch("/milestones/{milestone_id}", response_model=Milestone, tags=["projects"])
+async def update_milestone(milestone_id: str, request: Request) -> dict:
+    changes = await _read_json_object(request)
+    changes.pop("partner_id", None)  # always derived from the project
+    current = get_record("milestones", milestone_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    merged = {k: v for k, v in current.items() if k not in {"id", "source_label", "partner_id"}}
+    merged.update(changes)
+    try:
+        validated = MilestoneCreate.model_validate(merged)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return put_record("milestones", _milestone_record(validated, current.get("source_label", "user")), milestone_id)
+
+@router.delete("/milestones/{milestone_id}", status_code=204, tags=["projects"])
+def delete_milestone(milestone_id: str):
+    if not delete_record("milestones", milestone_id):
+        raise HTTPException(status_code=404, detail="Milestone not found")
     return None
 
 @router.get("/finance/{finance_id}", response_model=FinanceRecord, tags=["finance"])
