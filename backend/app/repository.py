@@ -26,6 +26,7 @@ _COLLECTIONS = {
     "config": {},
     "alert_reviews": {},
     "activities": {},
+    "documents": {},
 }
 _firestore_client = None
 _firestore_attempted = False

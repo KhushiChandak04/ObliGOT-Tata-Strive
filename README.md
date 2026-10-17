@@ -2,7 +2,7 @@
 
 ObliGOT is a hackathon starter for partnership lifecycle visibility, obligations, reporting, financial tracking, and evidence-grounded AI recommendations.
 
-**Direction (17 Oct 2026):** turn MOU and addendum PDFs into verified, Excel-ready records — page-level evidence, human approval, multi-sheet export — and run the deterministic alerts on approved records only. The data contract exists (`backend/app/documents.py`, `backend/app/workbook.py`, `docs/WORKBOOK_SCHEMA.md`); PDF upload, extraction, review, and export are **not built yet** (see `IMPLEMENTATION_PLAN.md`).
+**Direction (17 Oct 2026):** turn MOU and addendum PDFs into verified, Excel-ready records — page-level evidence, human approval, multi-sheet export — and run the deterministic alerts on approved records only. The data contract exists (`backend/app/documents.py`, `backend/app/workbook.py`, `docs/WORKBOOK_SCHEMA.md`); PDF upload with page-by-page inspection works through the API (`POST /api/documents`, private local storage, no OCR); extraction, review, export, and the upload screen are **not built yet** (see `IMPLEMENTATION_PLAN.md`).
 
 ## Stack
 - Frontend: React, Vite, TypeScript, React Router, Lucide

@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     require_firebase_auth: bool = False
     # Business timezone offset used for "today" in deadline rules (IST = +330 minutes).
     business_utc_offset_minutes: int = 330
+    # Private folder for uploaded PDFs (relative paths resolve inside backend/; git-ignored).
+    document_storage_dir: str = ".document_store"
+    max_document_mb: int = 20
+    max_document_pages: int = 500
 
     model_config = SettingsConfigDict(
         env_file=".env",

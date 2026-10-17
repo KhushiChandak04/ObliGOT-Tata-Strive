@@ -61,6 +61,8 @@ class SourceDocument(BaseModel):
     agreement_id: str | None = None  # required before an addendum's changes can be reviewed; chosen by a human if unsure
     uploaded_at: datetime
     uploaded_by: str
+    size_bytes: int | None = Field(default=None, ge=0)
+    sha256: str | None = None  # content hash, used to detect re-uploads of the same file
     page_count: int | None = Field(default=None, ge=1)
     pages: list[DocumentPage] = Field(default_factory=list)
     status: DocumentStatus = "uploaded"

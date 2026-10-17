@@ -8,6 +8,7 @@ from app import auth
 from app.config import settings
 from app.repository import DataStoreUnavailable
 from app.routes import router
+from app.document_routes import router as document_router
 
 logger = logging.getLogger("obligot")
 
@@ -43,6 +44,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(router, prefix="/api")
+app.include_router(document_router, prefix="/api")
 
 @app.exception_handler(DataStoreUnavailable)
 async def data_store_unavailable(request, exc: DataStoreUnavailable) -> JSONResponse:

@@ -96,7 +96,7 @@ def update_partner(partner_id: str, payload: PartnerUpdate) -> dict:
 PARTNER_LINKS = {
     "agreements": "partner_id", "projects": "partner_id", "finance": "partner_id",
     "reports": "partner_id", "opportunities": "partner_id", "milestones": "partner_id",
-    "actions": "related_partner_id", "followups": "related_partner_id",
+    "actions": "related_partner_id", "followups": "related_partner_id", "documents": "partner_id",
 }
 
 @router.delete("/partners/{partner_id}", status_code=204, tags=["partners"],

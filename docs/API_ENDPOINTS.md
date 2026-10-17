@@ -85,6 +85,13 @@ Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previo
 |---|---|---|---|
 | POST | `/api/import/preview` | Validate JSON rows (`entity_type`, `rows`) or preview a CSV/XLSX upload (`file`, `entity_type`) | Never writes data (`committed: false`); 422 for unknown `entity_type`; XLSX reads the active sheet only; 5 MB limit |
 
+## Documents (Step P2a)
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| POST | `/api/documents` | Upload an MOU/addendum PDF (multipart: `file`, `kind` = `mou`/`addendum`, optional `partner_id`, `agreement_id`) and inspect it page by page | 201 with the document. 415 not multipart or not a PDF (checked by file signature); 413 over `MAX_DOCUMENT_MB`; 422 empty file or bad `kind`; 404 unknown partner/agreement; 422 agreement of another partner; 409 same file already uploaded (`detail.document_id`). A damaged, password-protected, or over-`MAX_DOCUMENT_PAGES` PDF returns 201 with `status: failed` and `error` (file not stored). No text extraction or approval happens here. |
+| GET | `/api/documents` | List documents, newest first | Filters: `partner_id`, `agreement_id`, `status`, `kind` |
+| GET | `/api/documents/{id}` | One document with per-page text status | 404 when missing. There is no download route; files are private. |
+
 ## Common error responses
 - `401` missing or invalid Firebase ID token (only when `REQUIRE_FIREBASE_AUTH=true`).
 - `404` record not found. `409` delete blocked by linked records. `422` validation failure.

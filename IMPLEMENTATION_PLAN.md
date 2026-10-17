@@ -20,8 +20,8 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | Phase | Name | Status |
 | ----- | ---- | ------ |
 | P0 | Scope and repository audit | Done — approved |
-| P1 | Canonical schema and workbook contract (P1a models + contract) | P1a done — awaiting review |
-| P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | Not started |
+| P1 | Canonical schema and workbook contract (P1a models + contract) | P1a done — approved |
+| P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | P2a (backend) done — awaiting review |
 | P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | Not started |
 | P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
@@ -126,6 +126,17 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 **Reused unchanged:** record models and CRUD, link checks, rules engine and priority score, alert review loop and activity log, import preview (re-import path for exported workbooks), the new UI and its forms.
 
 **Known limitations (current):** no real MOU samples (synthetic fixtures only); scanned pages are detected as low-text and need OCR or manual review — no OCR engine is installed; Gemini has not been called successfully (no key); Firestore and Google sign-in are not verified on this machine.
+
+## Step P2a notes — PDF upload and page inspection (backend)
+- New routes in `app/document_routes.py` (mounted at `/api`): `POST /api/documents` (multipart), `GET /api/documents`, `GET /api/documents/{id}`. Additive; no existing contract changed except that partner DELETE now also counts linked `documents` in its 409.
+- Upload checks: multipart only; `kind` mou/addendum; partner/agreement must exist and match (an agreement supplies its partner); non-empty; size ≤ `MAX_DOCUMENT_MB` (20); PDF signature in the first 1024 bytes; same file (SHA-256) already uploaded → 409 with the existing id.
+- `app/pdf_inspect.py` (PyMuPDF, run off the event loop): reads every page; page count and per-page character count and `text`/`low_text` status. Damaged, password-protected, or over-`MAX_DOCUMENT_PAGES` (500) PDFs → record saved with `status: failed` and a readable reason; the file is not stored. Nothing is truncated: too many pages is a failure, not a partial read.
+- Status after upload: `uploaded` when there is usable text; low-text pages listed in `warnings` ("not extracted"); `blocked` when no page has text (likely scanned — OCR not available yet). An addendum without an agreement gets a warning to choose one. Upload never extracts values or approves anything.
+- `app/document_storage.py`: private local folder (`DOCUMENT_STORAGE_DIR`, default `backend/.document_store/`, git-ignored); files named only by server-generated id (`doc-<12 hex>.pdf`); the original filename is kept for display only (path parts and control characters removed). No download route. Firestore holds metadata only.
+- `SourceDocument` gains `size_bytes` and `sha256` (additive). Every upload is logged in `activities` (`document_uploaded`).
+- `pymupdf>=1.24.0,<2.0.0` added to `requirements.txt` (tested with 1.28.2). New settings: `DOCUMENT_STORAGE_DIR`, `MAX_DOCUMENT_MB`, `MAX_DOCUMENT_PAGES` (in `backend/.env.example`).
+- Verification: `python -m pytest -q` → 195 passed (15 new in `tests/test_document_upload.py`, synthetic PDFs generated in the tests: 3-page text PDF, 60-page PDF with page 60 intact in storage, blank page flagged, all-blank PDF blocked, CSV/renamed binary/empty/oversized rejected and nothing stored, damaged and password-protected PDFs failed, page limit, duplicate 409, link validation, unsafe filename, list filters/404, activity log and partner-delete 409). Live check against a running uvicorn: upload 201 (3 pages, page 3 low-text warning), duplicate 409, CSV 415, list, one file in the private folder, activity entry, both routes in OpenAPI, no server errors.
+- Limitations: local storage only (not durable on Cloud Run; Firebase Storage adapter once a bucket exists); no OCR; no frontend yet (P6); agreement DELETE does not yet check linked documents (would be a contract change — to propose with P4).
 
 ## Step P1a notes — data contract
 - New `backend/app/documents.py` (models only, no routes yet): `SourceDocument` (kind mou/addendum, status uploaded → extracting → needs_review → approved, failed, blocked; private `storage_ref`; per-page text status), `Evidence` (document, page, quote, verified), `ExtractedField` (verbatim, proposed value, warnings, review state, approved value, reviewer), `Clause`, `FinancialTerm` (contractual terms, separate from finance records; basis confirmed/estimated/ceiling/unspecified), `Obligation`, `ProgrammeScope`, `AgreementChange` (prior and proposed value, amendment/effective dates, evidence, status), `ReviewIssue`.
