@@ -1,0 +1,2 @@
+# Store and check out text files with LF endings on every OS (avoids CRLF churn between Windows and macOS/Linux).
+* text=auto eol=lf

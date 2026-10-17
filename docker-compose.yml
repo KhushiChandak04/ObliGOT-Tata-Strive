@@ -4,12 +4,10 @@ services:
     ports: ["8000:8000"]
     environment:
       ENVIRONMENT: development
+      PORT: "8000"  # Dockerfile defaults to 8080; match the published port.
       CORS_ORIGINS: '["http://localhost:5173","http://localhost:8080"]'
-      OBLIGOT_DB_PATH: /data/obligot.db
     env_file:
       - ./backend/.env
-    volumes:
-      - obligot_data:/data
   frontend:
     build:
       context: ./frontend
@@ -17,5 +15,3 @@ services:
         VITE_API_BASE_URL: http://localhost:8000
     ports: ["8080:80"]
     depends_on: [api]
-volumes:
-  obligot_data:

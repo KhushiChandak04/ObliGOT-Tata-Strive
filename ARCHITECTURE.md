@@ -66,4 +66,4 @@ Viewer: read. Manager: create/update, review recommendations, tasks. Admin: plus
 Typed API client per resource, `useResource` hook, shared `StatusBadge`, `DataTable`, `Dialog`, `EvidencePanel`, `AlertRow`, `PriorityBreakdown`. Pages: Dashboard (management overview + Today's 5), Action center (team workspace), Partners, Partner 360 (tabbed), Pipeline, Agreements, Projects, Finance, Reports, Import, Sign-in. Recharts and `motion` only when approved (Step 11).
 
 ## Routing
-`backend/app/main.py` mounts `app.routes.router` at `/api`. `app.openapi()` is exercised in tests to detect missing or malformed route registration. Detail routes return 404 for missing IDs. `app/domain_routes.py` and `app/domain_store.py` are unmounted legacy SQLite code (removal proposed in Step 4f).
+`backend/app/main.py` mounts `app.routes.router` at `/api`. `app.openapi()` is exercised in tests to detect missing or malformed route registration. Detail routes return 404 for missing IDs. The full route inventory is in `docs/API_ENDPOINTS.md`. Legacy SQLite modules were removed in Step 4f.

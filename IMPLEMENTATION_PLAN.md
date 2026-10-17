@@ -8,7 +8,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 1 | Repository and API audit | Done — approved |
 | 2 | Architecture proposal | Done — approved |
 | 3 | Project instructions and custom skills | Done — approved |
-| 4 | Existing API route repairs (groups 4a–4f) | 4a–4d approved; 4e done — awaiting review |
+| 4 | Existing API route repairs (groups 4a–4f) | 4a–4e approved; 4f done — awaiting review |
 | 5 | Application foundation | Not started |
 | 6 | Core partnership workflows | Not started |
 | 7 | Deadline engine and action center | Not started |
@@ -68,6 +68,15 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 4f notes — cleanup
+- Removed (verified unreferenced with `git grep`): `backend/app/models.py.bak`, `routes.py.bak`, `routes.routes-fix.bak`, legacy SQLite `domain_store.py` and `domain_routes.py` (never mounted).
+- `docker-compose.yml`: removed `OBLIGOT_DB_PATH` and the `obligot_data` volume (SQLite only); set `PORT: "8000"` because the Dockerfile defaults to 8080 while compose publishes 8000 (found by reading; Docker not run).
+- `frontend/package.json`: removed unused `xlsx@0.18.5` (no imports; known advisories). No lockfile is tracked.
+- `backend/requirements.txt`: `google-genai>=1.0.0,<3.0.0` (code tested against 2.23.0).
+- Added `.gitattributes` (`* text=auto eol=lf`). All tracked files were already LF in the index, so no content renormalization was needed.
+- Rewrote `docs/API_ENDPOINTS.md`, checked against `app.openapi()`.
+- Step 4 route repair is complete. Remaining verified defect from Step 1: projects/milestones not evaluated (Step 7).
 
 ## Step 4e notes — non-blocking Gemini with honest errors
 - `analyze_context` uses `client.aio.models.generate_content` under `asyncio.wait_for` (`GEMINI_TIMEOUT_SECONDS`, default 20), so a slow Gemini call no longer blocks other requests.
