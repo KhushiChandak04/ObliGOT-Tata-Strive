@@ -29,5 +29,5 @@ export const api = {
   deletePartner: (id: string) => request<void>(`/api/partners/${encodeURIComponent(id)}`, { method: "DELETE" }),
   actions: () => request<ActionItem[]>("/api/actions"),
   updateAction: (id: string, payload: Partial<ActionItem>) => request<ActionItem>(`/api/actions/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
-  analyze: (payload: { partner_id?: string; context?: string }) => request<{ summary: string; observations: string[]; recommendations: string[]; ai_used: boolean }>("/api/intelligence/analyze", { method: "POST", body: JSON.stringify(payload) }),
+  analyze: (payload: { partner_id?: string; context?: string }) => request<{ summary: string; observations: string[]; recommendations: string[]; ai_used: boolean; ai_error?: string | null }>("/api/intelligence/analyze", { method: "POST", body: JSON.stringify(payload) }),
 };

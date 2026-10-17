@@ -197,6 +197,8 @@ class AnalyzeResponse(BaseModel):
     observations: list[str]
     recommendations: list[str]
     ai_used: bool
+    # Machine-readable reason when ai_used is false: not_configured, timeout, empty_response, api_error:<code>, error:<type>.
+    ai_error: str | None = None
 
 class FollowupCreate(BaseModel):
     title: str = Field(min_length=3, max_length=240)

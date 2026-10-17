@@ -8,7 +8,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 1 | Repository and API audit | Done — approved |
 | 2 | Architecture proposal | Done — approved |
 | 3 | Project instructions and custom skills | Done — approved |
-| 4 | Existing API route repairs (groups 4a–4f) | 4a–4c approved; 4d done — awaiting review |
+| 4 | Existing API route repairs (groups 4a–4f) | 4a–4d approved; 4e done — awaiting review |
 | 5 | Application foundation | Not started |
 | 6 | Core partnership workflows | Not started |
 | 7 | Deadline engine and action center | Not started |
@@ -68,6 +68,14 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 4e notes — non-blocking Gemini with honest errors
+- `analyze_context` uses `client.aio.models.generate_content` under `asyncio.wait_for` (`GEMINI_TIMEOUT_SECONDS`, default 20), so a slow Gemini call no longer blocks other requests.
+- `AnalyzeResponse` gains optional `ai_error` (additive): `not_configured`, `timeout`, `empty_response`, `api_error:<code>`, `error:<ExceptionType>`. Summary text states the reason. Errors are logged by type/code only.
+- Frontend `api.analyze` return type updated with `ai_error`.
+- Verification: `python -m pytest -q` → 51 passed (8 new in `tests/test_intelligence.py`, including a concurrency test that fails if the blocking client is used). Real library check with an invalid key → `ai_error=api_error:400`, fallback returned.
+- Not yet tested: a successful live Gemini call (no valid key). Output is still line-split free text — replaced by validated structured output in Step 9.
+- Note: `requirements.txt` pins `google-genai<2.0.0` while this machine has 2.23.0; the code uses APIs present in both. Align in 4f.
 
 ## Step 4d notes — per-type finance statuses
 - `FinanceCreate.status` is validated against `FINANCE_STATUSES[record_type]` (approved contract change). Default on create is the first entry:

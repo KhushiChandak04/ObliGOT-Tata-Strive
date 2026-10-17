@@ -7,7 +7,7 @@ Status key: **[current]** exists in the codebase today; **[planned]** approved i
 - **Backend [current]:** FastAPI and Pydantic — the single backend (team decision, Step 2). Router in `app.routes` mounted at `/api` by `app.main`.
 - **Persistence [current]:** Cloud Firestore through the Firebase Admin SDK in `app.repository`. Without credentials the backend logs a warning and uses an in-memory demo fallback that resets on restart and is reported as `demo-memory-fallback` by `/api/health`. Firestore operation failures raise `DataStoreUnavailable` → HTTP 503.
 - **Authentication [current, partial]:** optional Firebase ID-token middleware (`REQUIRE_FIREBASE_AUTH`) using `app.auth.verify_token`; the Firebase Admin app is created once in `app.firebase_app` and shared with Firestore. Invalid token → 401; auth service unavailable → 503. **[planned]** role checks (admin / manager / viewer) via FastAPI dependencies, roles stored in `users`.
-- **AI [current, partial]:** server-side Gemini with a rules-first fallback. **[planned]** structured, validated, fact-grounded output and human review.
+- **AI [current, partial]:** server-side Gemini via the async `google-genai` client with a timeout; failures return `ai_used=false` plus `ai_error` and are logged without request details. **[planned]** structured, validated, fact-grounded output and human review.
 - **Import [current]:** CSV/XLSX/JSON preview only; never writes data.
 
 ## Request flow

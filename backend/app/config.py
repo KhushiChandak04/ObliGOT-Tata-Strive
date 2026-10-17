@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173"]
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    gemini_timeout_seconds: float = 20.0
     firebase_project_id: str = ""
     require_firebase_auth: bool = False
     # Business timezone offset used for "today" in deadline rules (IST = +330 minutes).

@@ -52,7 +52,7 @@ Open http://127.0.0.1:5173.
 The Firebase Admin SDK uses Application Default Credentials in supported Google Cloud environments. Prefer attached service identity on Cloud Run instead of shipping service-account keys.
 
 ### Gemini
-Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager. Never use `VITE_GEMINI_API_KEY`; Vite variables are exposed to the browser. When Gemini is absent or errors, the API returns a clear rules-first response and `ai_used=false`.
+Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager. Never use `VITE_GEMINI_API_KEY`; Vite variables are exposed to the browser. When Gemini is absent or errors, the API returns a clear rules-first response with `ai_used=false` and a machine-readable `ai_error` (`not_configured`, `timeout`, `empty_response`, `api_error:<HTTP code>`, or `error:<type>`). `GEMINI_TIMEOUT_SECONDS` (default 20) bounds each request.
 
 ## API endpoints
 - `GET /api/health`
