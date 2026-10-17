@@ -11,7 +11,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
 | 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
 | 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | Done — approved |
-| 7 | Deadline engine and action center (7a engine, 7b review loop, 7c UI) | 7a approved; 7b done — awaiting review |
+| 7 | Deadline engine and action center (7a engine, 7b review loop, 7c UI) | 7a, 7b approved; 7c done — awaiting review |
 | 8 | Funding and compliance | Not started |
 | 9 | Gemini AI integration | Not started |
 | 10 | Spreadsheet import | Not started |
@@ -68,6 +68,14 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 7c notes — action center UI
+- Action center: summary strip; Today's 5 (shared definition with the dashboard); all alerts with filters and a reviewed toggle; tasks with mark done and reassign; alert detail dialog with evidence split into record/computed values, why it matters, priority breakdown, related alerts, and review actions with validated forms (owner required for tasks, reason ≥ 5 chars to dismiss, defer date after today). Deep links `?alert=` / `?task=`; a stale alert link shows an explanatory message.
+- Dashboard: "Open alerts" KPI (by level) and Today's 5 from `/api/alerts` (links into the Action center); open tasks link to their row. Partner 360: "Open alerts" tab from `/api/alerts?partner_id=` and a new Activity tab. `FindingList` removed; nothing in the UI reads dashboard `findings` any more.
+- Small backend additions found while testing: review records store `rule_title`/`record_title` so the "reopened" activity entry is readable (test updated). Evidence values are presented readably (dates formatted, snake_case statuses title-cased).
+- Verification: `pytest` → 144 passed. `npm run build` passes. Headless Chrome full loop: dashboard KPI 8 (2/3/3) and Today's 5 → deep link → detail (evidence, score 50+15+10=75, 7 related) → create task (validation, then success; alert leaves Today's 5) → dismiss (reason required; hidden count 1; visible with toggle; banner) → reopen → defer (min date tomorrow) → acknowledge → complete the milestone (alert clears; task shows "from a resolved alert") → reassign and mark task done → dashboard KPI 6 (1/3/2) → Partner 360 activity log of every step in IST → stale deep link message → keyboard open/Escape → 390 px: 0 px overflow, dialog fits; no console errors. Regression drives 6a–6d pass on a fresh backend (only expected 409s).
+- Open decision: dashboard `findings` (legacy `rules.scan_deadlines`) is now unused by the UI; propose removing it (contract change) and retiring `scan_deadlines`.
+- Not in 7c: Reports and Finance pages are still placeholders (Step 8), so alert "Record" links for those types land on placeholder pages until then.
 
 ## Step 7b notes — review loop and activity log
 - `app/reviews.py`: review model and validation, fact fingerprint, review attachment (hide dismissed / still-deferred), activity logging, actor resolution.

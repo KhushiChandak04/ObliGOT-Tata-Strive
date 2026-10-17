@@ -531,7 +531,8 @@ def review_alert(alert_id: str, payload: ReviewCreate, request: Request) -> dict
         "decision": payload.decision, "deferred_until": payload.deferred_until.isoformat() if payload.deferred_until else None,
         "reason": (payload.reason or "").strip() or None, "note": (payload.note or "").strip() or None,
         "reviewer": actor(request), "reviewed_at": now_iso(), "fingerprint": fingerprint(alert), "task_id": None,
-        "rule_id": alert["rule_id"], "record_type": alert["record_type"], "record_id": alert["record_id"], "partner_id": alert["partner_id"],
+        "rule_id": alert["rule_id"], "rule_title": alert["rule_title"], "record_title": alert["record_title"],
+        "record_type": alert["record_type"], "record_id": alert["record_id"], "partner_id": alert["partner_id"],
     }, alert_id)
     detail = {"deferred": f" until {review['deferred_until']}", "dismissed": f": {review['reason']}"}.get(payload.decision, "")
     log_activity(actor_name=review["reviewer"], event=f"alert_{payload.decision}",
@@ -545,7 +546,7 @@ def clear_alert_review(alert_id: str, request: Request):
     review = get_record("alert_reviews", alert_id)
     if not review or not delete_record("alert_reviews", alert_id):
         raise HTTPException(status_code=404, detail="No review recorded for this alert")
-    log_activity(actor_name=actor(request), event="alert_review_cleared", summary=f"Reopened alert {alert_id} (previously {review['decision']})",
+    log_activity(actor_name=actor(request), event="alert_review_cleared", summary=f"Reopened “{review.get('rule_title', alert_id)}” for {review.get('record_title', review.get('record_id', 'record'))} (previously {review['decision']})",
                  entity_type=review.get("record_type", "alerts"), entity_id=review.get("record_id", alert_id), partner_id=review.get("partner_id"),
                  details={"alert_id": alert_id})
     return None
@@ -568,7 +569,8 @@ def create_task_from_alert(alert_id: str, payload: TaskFromAlert, request: Reque
     review = put_record("alert_reviews", {
         "decision": "task_created", "deferred_until": None, "reason": None, "note": None, "reviewer": who, "reviewed_at": now_iso(),
         "fingerprint": fingerprint(alert), "task_id": task["id"],
-        "rule_id": alert["rule_id"], "record_type": alert["record_type"], "record_id": alert["record_id"], "partner_id": alert["partner_id"],
+        "rule_id": alert["rule_id"], "rule_title": alert["rule_title"], "record_title": alert["record_title"],
+        "record_type": alert["record_type"], "record_id": alert["record_id"], "partner_id": alert["partner_id"],
     }, alert_id)
     log_activity(actor_name=who, event="task_created_from_alert",
                  summary=f"Created task “{task['title']}” for {task['owner']} from alert “{alert['rule_title']}”",
