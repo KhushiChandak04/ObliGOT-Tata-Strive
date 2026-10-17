@@ -148,10 +148,9 @@ function Landing() {
     "✓ Values extracted with page and quote",
     "  dates, amounts, deadlines, schedules",
     "▸ Checking quotes, dates, and totals…",
-    "⚠ Unclear values flagged for review",
-    "✓ Rules run on approved records only",
-    "▸ Gemini explains the alert…",
-    "⏸ Waiting for human approval",
+    "⚠ Unclear values are highlighted with source pages",
+    "✓ Export an editable workbook with evidence",
+    "▸ Groq explains the alert…",
   ];
   useEffect(() => {
     const timer = window.setInterval(
@@ -263,7 +262,7 @@ function Landing() {
           </InfoPanel>
           <InfoPanel
             className="card-panel"
-            tag="GEMINI"
+            tag="GROQ"
             title="AI explains & drafts"
           >
             Summaries and follow-ups, clearly labelled as AI interpretation with
@@ -558,15 +557,27 @@ function AppShell() {
     if (firebaseAuth) await signOut(firebaseAuth);
     navigate("/");
   };
+  const runtime = useResource(() => api.health(), []);
+  const [runtimeMode, setRuntimeMode] = useState<string | null>(null);
+  useEffect(() => {
+    if (runtime.data?.database) setRuntimeMode(runtime.data.database);
+  }, [runtime.data?.database]);
+  useEffect(() => {
+    const updateMode = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      if (detail) setRuntimeMode(detail);
+    };
+    window.addEventListener("obligot:storage-mode", updateMode);
+    return () => window.removeEventListener("obligot:storage-mode", updateMode);
+  }, []);
   const workspace = useResource(async () => {
-    const [alerts, tasks, partners, documents, summary] = await Promise.all([
+    const [alerts, tasks, partners, summary] = await Promise.all([
       api.alerts.list(),
       api.actions.list(),
       api.partners.list(),
-      api.documents.list(),
       api.dashboardSummary(),
     ]);
-    return { alerts, tasks, partners, documents, summary };
+    return { alerts, tasks, partners, summary };
   }, []);
   useEffect(() => {
     if (location.pathname === "/dashboard" && previousPath.current !== "/dashboard") {
@@ -636,7 +647,9 @@ function AppShell() {
             ? "Live rule alerts"
             : ["/pipeline", "/agreements", "/projects"].includes(page)
               ? "Live records"
-              : "Synthetic demo data";
+              : runtimeMode === "demo-memory-fallback"
+                ? "Synthetic demo data"
+                : "Live records";
   const usesApi = page === "/dashboard" || page === "/action-center";
   return (
     <div className="app-shell">
@@ -679,22 +692,33 @@ function AppShell() {
         <button className="logout" onClick={() => void logOut()}>
           ↩ Log out
         </button>
-        <small>
-          {workspace.data?.alerts.alerts.some(
-            (alert) => alert.source_label === "demo",
-          )
-            ? "Fictional demo records"
-            : "Synthetic demo data"}
-        </small>
       </aside>
       <main className="app-main">
+        {runtimeMode === "demo-memory-fallback" && (
+          <div className="api-state demo-banner" role="status">
+            <b>DEMO MODE — SYNTHETIC DATA — NOT CONNECTED TO LIVE FIRESTORE RECORDS</b>
+            <span>Changes are held in backend memory and reset when the backend restarts.</span>
+          </div>
+        )}
+        {runtimeMode === "firestore" && (
+          <div className="api-state live-banner" role="status">
+            LIVE FIRESTORE MODE — this identifies the configured data source, not its current availability.
+          </div>
+        )}
+        {runtime.error && (
+          <div className="api-state error" role="alert">
+            <b>LIVE DATA STATUS UNAVAILABLE</b>
+            <span>{runtime.error.message}</span>
+            <button className="btn small-btn" onClick={runtime.reload}>Retry status</button>
+          </div>
+        )}
         <div className="page-header">
           <span className="eyebrow">{eyebrow}</span>
           <h1>{title}</h1>
         </div>
         {usesApi && workspace.error && (
           <div className="api-state error" role="alert">
-            <b>Could not reach the ObliGOT API.</b>
+            <b>Could not load workspace data.</b>
             <span>{workspace.error.message}</span>
             <button className="btn small-btn" onClick={workspace.reload}>
               Retry
@@ -742,7 +766,7 @@ function AppShell() {
           <DocumentsPage partners={livePartners} />
         )}
         {page.startsWith("/documents/") && (
-          <DocumentReviewPage partners={livePartners} onApproved={workspace.reload} />
+          <DocumentReviewPage partners={livePartners} />
         )}
         {page === "/pipeline" && <PipelinePage onChanged={workspace.reload} />}
         {page === "/agreements" && (
@@ -832,13 +856,13 @@ function Dashboard({
       </div>
       <div className="document-strip">
         <span>
-          <b>{summary.documents.awaiting_review}</b> Documents awaiting review
+          <b>{summary.documents.awaiting_review}</b> Documents extracted
         </span>
         <span>
           <b>{summary.documents.needs_attention}</b> Extraction failures / retry
         </span>
         <span>
-          <b>{summary.documents.addenda_awaiting_review}</b> Pending addendum approvals
+          <b>{summary.documents.addenda_awaiting_review}</b> Addenda extracted
         </span>
       </div>
       <div className="grid2">
@@ -2057,41 +2081,45 @@ function ReportsPage() {
 }
 
 function documentStatus(document: SourceDocument): string {
-  if (document.status === "blocked")
-    return document.kind === "addendum" && !document.agreement_id
-      ? "Unlinked addendum"
-      : "Needs OCR";
+  if (document.status === "blocked") return "Extraction blocked";
   if (document.status === "retry_required") return "Retry required";
-  return document.status === "needs_review"
-    ? "Needs Review"
-    : document.status[0].toUpperCase() + document.status.slice(1);
+  if (document.status === "needs_review") return "Extracted";
+  if (document.status === "approved") return "Previously approved";
+  return document.status[0].toUpperCase() + document.status.slice(1);
 }
 
 function DocumentsPage({ partners }: { partners: Partner[] }) {
   const data = useResource(() => api.documents.list(), []);
   const [kind, setKind] = useState<"mou" | "addendum">("mou");
-  const [partnerId, setPartnerId] = useState("");
-  const [agreementId, setAgreementId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploaded, setUploaded] = useState<SourceDocument | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState("");
   const upload = async (file: File) => {
     setBusy(true);
     setError("");
     setUploaded(null);
     try {
-      const saved = await api.documents.upload(
-        file,
-        kind,
-        partnerId || undefined,
-        agreementId || undefined,
-      );
+      const saved = await api.documents.upload(file, kind);
       setUploaded(saved);
       data.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
       setBusy(false);
+    }
+  };
+  const retry = async (documentId: string) => {
+    setRetryingId(documentId);
+    setRetryError("");
+    try {
+      await api.documents.extract(documentId);
+      data.reload();
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : "Extraction could not be retried.");
+    } finally {
+      setRetryingId(null);
     }
   };
   return (
@@ -2108,20 +2136,6 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
             <EnumOptions group="document_kind" current={kind} />
           </select>
         </label>
-        <label>
-          Partner{" "}
-          <select
-            value={partnerId}
-            onChange={(event) => setPartnerId(event.target.value)}
-          >
-            <option value="">Select partner</option>
-            {partners.map((partner) => (
-              <option value={partner.id} key={partner.id}>
-                {partner.name}
-              </option>
-            ))}
-          </select>
-        </label>
         <label className="dropzone compact">
           {busy ? "Uploading…" : "Upload PDF"}
           <input
@@ -2131,6 +2145,7 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) void upload(file);
+              event.currentTarget.value = "";
             }}
           />
         </label>
@@ -2147,9 +2162,14 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
             {documentStatus(uploaded)}). Nothing has been extracted yet.
           </span>
           <Link className="btn small-btn" to={`/documents/${uploaded.id}`}>
-            Open to extract and review
+            Open to extract
           </Link>
         </div>
+      )}
+      {retryError && (
+        <p className="api-state error" role="alert">
+          {retryError}
+        </p>
       )}
       {data.error && (
         <p className="api-state error" role="alert">
@@ -2167,7 +2187,7 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
       <section className="box">
         <h3>
           Source documents{" "}
-          <small>Synthetic demo data is not used for uploaded documents.</small>
+          <small>Uploaded documents are distinct from the synthetic demo samples.</small>
         </h3>
         <DataTable
           headers={[
@@ -2177,10 +2197,12 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
             "Agreement",
             "Uploaded",
             "Status",
+            "Action",
           ]}
           rows={(data.data ?? []).map((document) => [
             <Link to={`/documents/${document.id}`} key={document.id}>
               {document.filename}
+              {document.source_label === "demo" && <small className="synthetic-row-label">Synthetic sample · no source PDF</small>}
             </Link>,
             document.kind.toUpperCase(),
             partners.find((partner) => partner.id === document.partner_id)
@@ -2193,6 +2215,16 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
             >
               {documentStatus(document)}
             </span>,
+            document.source_label !== "demo" && (document.status === "retry_required" || document.status === "blocked") ? (
+              <button
+                className="btn outline small-btn"
+                key="retry"
+                disabled={retryingId !== null}
+                onClick={() => void retry(document.id)}
+              >
+                {retryingId === document.id ? "Retrying…" : "Retry extraction"}
+              </button>
+            ) : null,
           ])}
           empty="No documents uploaded yet."
         />
@@ -2201,15 +2233,13 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
   );
 }
 
-const DECIDABLE: { key: Exclude<ProposalCollection, "extracted_fields">; label: string }[] = [
+const EXTRACTION_GROUPS: { key: Exclude<ProposalCollection, "extracted_fields">; label: string }[] = [
   { key: "tables", label: "Tables" },
   { key: "obligations", label: "Obligations and deadlines" },
   { key: "financial_terms", label: "Financial terms" },
   { key: "clauses", label: "Clauses" },
   { key: "programme_scope", label: "Programme scope" },
 ];
-
-const PENDING_STATES = ["proposed", "needs_review"];
 
 function deadlineText(o: ObligationProposal): string {
   if (o.due_date) return `due ${formatDate(o.due_date)}`;
@@ -2315,19 +2345,12 @@ function PageViewer({ documentId, pageCount, page, onPage }: { documentId: strin
   );
 }
 
-function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onApproved: () => void }) {
+function DocumentReviewPage({ partners }: { partners: Partner[] }) {
   const location = useLocation();
   const documentId = location.pathname.split("/")[2] ?? "";
   const data = useResource<DocumentReview>(() => api.documents.review(documentId), [documentId]);
-  const [partnerId, setPartnerId] = useState("");
-  const [createPartner, setCreatePartner] = useState(false);
-  const check = useResource(
-    () => api.documents.approvalCheck(documentId, { partnerId: partnerId || undefined, createPartner }),
-    [documentId, partnerId, createPartner, data.data],
-  );
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notes, setNotes] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
   const status = data.data?.document.status;
   // While extraction runs in the background, refresh every few seconds to show progress.
@@ -2352,54 +2375,33 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
       </p>
     );
   const review = data.data;
-  if (!review) return <p className="api-state">No review data available.</p>;
+  if (!review) return <p className="api-state">No extraction data available.</p>;
   const doc = review.document;
-  const locked = doc.status !== "needs_review";
   const run = async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
-    setMessage("");
+    setMessage(null);
     try {
       await action();
-      setMessage(success);
+      setMessage({ text: success, error: false });
       data.reload();
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "The request failed.");
+      setMessage({ text: err instanceof Error ? err.message : "The request failed.", error: true });
     } finally {
       setBusy(false);
     }
   };
-  const decide = (collection: ProposalCollection, item: { id: string }, decision: "approve" | "reject" | "defer", value?: string | number | boolean | null) =>
-    void run(
-      () => api.documents.decide(documentId, collection, item.id, { decision, value, note: notes[item.id] || undefined }),
-      `Saved: ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "deferred"}.`,
-    );
-  const noteInput = (id: string, label: string) => (
-    <input
-      aria-label={label}
-      placeholder="Note (needed to defer, or to approve an unverified quote)"
-      value={notes[id] ?? ""}
-      onChange={(event) => setNotes({ ...notes, [id]: event.target.value })}
-      disabled={busy || locked}
-    />
-  );
-  const decisionButtons = (collection: ProposalCollection, item: { id: string; review_state: string }, value?: string | number | boolean | null, canApprove = true) => (
-    <span className="button-row">
-      <button className="btn small-btn" disabled={busy || locked || !canApprove} onClick={() => decide(collection, item, "approve", value)}>
-        {item.review_state === "approved" ? "Approved" : "Approve"}
-      </button>
-      <button className="btn outline small-btn" disabled={busy || locked} onClick={() => decide(collection, item, "reject")}>
-        Reject
-      </button>
-      <button className="btn outline small-btn" disabled={busy || locked} onClick={() => decide(collection, item, "defer")}>
-        Defer
-      </button>
-    </span>
-  );
   const extraction = doc.extraction;
-  const canExtract = ["uploaded", "failed", "blocked", "needs_review", "retry_required"].includes(doc.status);
-  const pending = [...review.fields, ...DECIDABLE.flatMap(({ key }) => review[key] as { review_state: string }[])].filter((i) =>
-    PENDING_STATES.includes(i.review_state),
-  ).length;
+  const canExtract = doc.source_label !== "demo"
+    && ["uploaded", "failed", "blocked", "needs_review", "extracted", "retry_required"].includes(doc.status);
+  const downloadWorkbook = () => void run(async () => {
+    const blob = await api.documents.exportDocumentWorkbook(documentId);
+    const url = URL.createObjectURL(blob);
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.download = `obligot-${documentId}-extraction.xlsx`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, "Editable extraction workbook downloaded.");
   return (
     <>
       <section className="box">
@@ -2411,6 +2413,11 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
           {doc.kind.toUpperCase()} · {doc.page_count ?? "?"} pages · uploaded {formatDate(doc.uploaded_at)} by {doc.uploaded_by}
           {doc.partner_id ? ` · ${partners.find((p) => p.id === doc.partner_id)?.name ?? doc.partner_id}` : " · no partner linked"}
         </p>
+        {doc.source_label === "demo" && (
+          <p className="api-state demo-notice" role="note">
+            Synthetic demonstration record only. No source PDF was uploaded or processed, and no page evidence is available.
+          </p>
+        )}
         {doc.warnings.map((warning) => (
           <p className="api-state" key={warning}>
             {warning}
@@ -2422,20 +2429,22 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
           </p>
         )}
         {doc.status !== "extracting" && extraction?.finished_at && (
-          <p className={`api-state ${extraction.mode === "gemini" ? "" : "error"}`} role="status">
-            {extraction.mode === "gemini"
-              ? "Extracted by Gemini; every value still needs your review."
+          <p className={`api-state ${extraction.mode === "groq" || extraction.mode === "gemini" ? "" : "error"}`} role="status">
+            {doc.source_label === "demo"
+              ? "Synthetic example values only; no document was extracted."
+              : extraction.mode === "groq" || extraction.mode === "gemini"
+              ? "AI extraction complete."
               : extraction.mode === "partial"
-                ? "Partly extracted: Gemini finished some parts; the rest was pattern-matched only (dates, references, amounts)."
+                ? "Partly extracted: AI finished some parts; the rest was pattern-matched only (dates, references, amounts)."
                 : "Not extracted by AI: only pattern matching (dates, references, amounts with a currency) was possible."}{" "}
             {extraction.note}
-            {extraction.retryable ? " Re-run extraction later to complete it." : ""}
+            {extraction.retryable ? " Retry extraction to complete missing pages or parts." : ""}
           </p>
         )}
         {doc.status === "extracting" && extraction && (
           <p className="api-state" role="status">
             {extraction.pages_read < extraction.pages_to_read
-              ? `Reading scanned pages with Gemini: ${extraction.pages_read} of ${extraction.pages_to_read}…`
+              ? `Reading scanned pages with Groq: ${extraction.pages_read} of ${extraction.pages_to_read}…`
               : `Extracting values: part ${extraction.chunks_done} of ${extraction.chunks_total || "?"}…`}
           </p>
         )}
@@ -2444,40 +2453,47 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
             <button
               className="btn small-btn"
               disabled={busy}
-              onClick={() => void run(() => api.documents.extract(documentId), "")}
+              onClick={() => void run(() => api.documents.extract(documentId), "Extraction started. Progress will update here.")}
             >
-              {doc.status === "needs_review" ? "Re-run extraction" : "Read & extract with Gemini"}
+              {doc.status === "retry_required" ? "Retry extraction" : extraction?.finished_at ? "Re-run extraction" : "Read & extract"}
             </button>
           </div>
         )}
-        {doc.status === "approved" && <p className="api-state success">Approved by {doc.approved_by}. Values are now operational records.</p>}
+        {extraction?.finished_at && doc.status !== "extracting" && (
+          <button className="btn" disabled={busy} onClick={downloadWorkbook}>
+            Download editable Excel workbook
+          </button>
+        )}
+        {message && (
+          <p className={`api-state ${message.error ? "error" : "success"}`} role={message.error ? "alert" : "status"}>
+            {message.text}
+          </p>
+        )}
       </section>
       <div className="review-workspace">
         <section className="box">
-          <h3>Review fields</h3>
+          <h3>Extracted values</h3>
+          <p>Values are exported with their source evidence. They remain document-scoped and do not update operational records.</p>
           {review.fields.length ? (
             review.fields.map((field) => (
               <div className="review-field" key={field.id}>
                 <div>
                   <b>{field.field.replaceAll("_", " ")}</b>
                   <small>
-                    Proposed: {String(field.approved_value ?? field.proposed_value ?? "—")} · as written: {field.verbatim || "No verbatim source text recorded."}
+                    {String(field.approved_value ?? field.proposed_value ?? "Not stated")} · as written: {field.verbatim || "No verbatim source text recorded."}
                   </small>
                   <EvidenceLine evidence={field.evidence} onShow={setPage} />
                   {field.warnings.map((w) => (
                     <small key={w}>⚠ {w}</small>
                   ))}
-                  {!locked && noteInput(field.id, `Note for ${field.field}`)}
                 </div>
-                <span className={`pill ${field.review_state === "approved" ? "" : "high"}`}>{field.review_state.replace("_", " ")}</span>
-                {decisionButtons("extracted_fields", field, field.proposed_value ?? null, field.proposed_value != null)}
               </div>
             ))
           ) : (
-            <p>No extracted fields are available. Extraction must complete before human review.</p>
+            <p>No extracted fields are available yet.</p>
           )}
-          {DECIDABLE.map(({ key, label }) => {
-            const items = review[key] as unknown as (Record<string, unknown> & { id: string; review_state: string; warnings: string[]; evidence?: DocumentEvidence | null })[];
+          {EXTRACTION_GROUPS.map(({ key, label }) => {
+            const items = review[key] as unknown as (Record<string, unknown> & { id: string; warnings: string[]; evidence?: DocumentEvidence | null })[];
             if (!items.length) return null;
             return (
               <div key={key}>
@@ -2491,16 +2507,13 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
                       {item.warnings.map((w) => (
                         <small key={w}>⚠ {w}</small>
                       ))}
-                      {!locked && noteInput(item.id, `Note for ${label}`)}
                     </div>
-                    <span className={`pill ${item.review_state === "approved" ? "" : "high"}`}>{item.review_state.replace("_", " ")}</span>
-                    {decisionButtons(key, item)}
                   </div>
                 ))}
               </div>
             );
           })}
-          {review.issues.length > 0 && <h3>Issues to resolve</h3>}
+          {review.issues.length > 0 && <h3>Extraction notes</h3>}
           {review.issues.map((issue) => (
             <div className="review-field" key={issue.id}>
               <div>
@@ -2508,28 +2521,7 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
                   {issue.code.replaceAll("_", " ").toLowerCase()} ({issue.severity})
                 </b>
                 <small>{issue.message}</small>
-                {issue.resolution && <small>Resolution: {issue.resolution}</small>}
-                {!locked && issue.status === "open" && noteInput(issue.id, `Resolution for ${issue.code}`)}
               </div>
-              <span className={`pill ${issue.status === "open" ? "high" : ""}`}>{issue.status}</span>
-              {!locked && issue.status === "open" && (
-                <span className="button-row">
-                  <button
-                    className="btn small-btn"
-                    disabled={busy || !notes[issue.id]}
-                    onClick={() => void run(() => api.documents.resolveIssue(documentId, issue.id, { status: "resolved", resolution: notes[issue.id] }), "Issue resolved.")}
-                  >
-                    Resolve
-                  </button>
-                  <button
-                    className="btn outline small-btn"
-                    disabled={busy || !notes[issue.id]}
-                    onClick={() => void run(() => api.documents.resolveIssue(documentId, issue.id, { status: "deferred", resolution: notes[issue.id] }), "Issue deferred.")}
-                  >
-                    Defer
-                  </button>
-                </span>
-              )}
             </div>
           ))}
         </section>
@@ -2538,55 +2530,10 @@ function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onA
           {(doc.page_count ?? 0) > 0 ? (
             <PageViewer documentId={documentId} pageCount={doc.page_count ?? 0} page={Math.min(page, doc.page_count ?? 1)} onPage={setPage} />
           ) : (
-            <p>The file could not be read, so there are no pages to show.</p>
+            <p>{doc.source_label === "demo" ? "Synthetic example only; no source PDF or pages exist." : "The file could not be read, so there are no pages to show."}</p>
           )}
         </aside>
       </div>
-      <div className="review-footer">
-        <span>
-          {pending} awaiting a decision · {review.issues.filter((i) => i.status === "open").length} open issues
-        </span>
-        {!doc.partner_id && !locked && (
-          <span className="button-row">
-            <select aria-label="Partner for this agreement" value={partnerId} onChange={(event) => setPartnerId(event.target.value)}>
-              <option value="">Choose partner</option>
-              {partners.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <label>
-              <input type="checkbox" checked={createPartner} onChange={(event) => setCreatePartner(event.target.checked)} /> or create it from the
-              approved partner name
-            </label>
-          </span>
-        )}
-        <button
-          className="btn"
-          disabled={busy || locked || !check.data?.ready}
-          onClick={() =>
-            void run(async () => {
-              await api.documents.approve(documentId, { partner_id: partnerId || undefined, create_partner: createPartner || undefined });
-              onApproved();
-            }, "Approved: the agreement and its obligations are now operational records, and alerts were recalculated.")
-          }
-        >
-          Approve records
-        </button>
-      </div>
-      {!locked && check.data && !check.data.ready && (
-        <ul className="api-state" aria-label="What still blocks approval">
-          {check.data.blockers.map((b) => (
-            <li key={b}>{b}</li>
-          ))}
-        </ul>
-      )}
-      {message && (
-        <p className="api-state" role="status">
-          {message}
-        </p>
-      )}
     </>
   );
 }
@@ -2651,13 +2598,13 @@ function ImportPage() {
     }
   };
   const exportWorkbook = async () => {
-    setExportMessage("Preparing approved workbook…");
+    setExportMessage("Preparing operational workbook…");
     try {
       const blob = await api.documents.exportWorkbook();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = "obligot-approved-workbook.xlsx";
+      anchor.download = "obligot-operational-workbook.xlsx";
       anchor.click();
       URL.revokeObjectURL(url);
       setExportMessage("Workbook downloaded from the backend.");
@@ -2685,10 +2632,10 @@ function ImportPage() {
       </div>
       {tab === "export" ? (
         <section className="box">
-          <h3>Approved-record export</h3>
+          <h3>Operational-record export</h3>
           <p>
-            Only backend-approved document-derived records are included.
-            Proposed AI values are never exported.
+            This workbook contains operational records. Extracted PDF values are kept separate;
+            open a document and download its editable workbook to export its fields and evidence.
           </p>
           <p className="mono">
             Sheets: Partners · Agreements · Programmes_Projects · Programme_Scope ·
@@ -3020,7 +2967,7 @@ function Drawer({
           onClick={() => void run()}
           disabled={running}
         >
-          {running ? "Asking Gemini…" : "Ask Gemini for a recommendation"}
+          {running ? "Asking Groq…" : "Ask Groq for a recommendation"}
         </button>
         <div className="ai-output mono" aria-live="polite">
           {!running && !ai && "No recommendation requested."}

@@ -5,7 +5,7 @@ Synthetic fixtures modelled on the team's descriptions of the three sample MOUs 
 - "MoU 2-like": a quarterly budget table that continues across a page break.
 - "MoU 3-like": a receipt-format annexure, utilization deadlines of 15 and 20 days after year end, monthly and
   quarterly reporting, and a deadline relative to receiving an instalment.
-Gemini is faked: these tests check how the application keeps, verifies, and flags what the model returns,
+Groq is faked: these tests check how the application keeps, verifies, and flags what the model returns,
 not the model's reading accuracy on the real documents."""
 import json
 
@@ -16,8 +16,7 @@ from app import document_routes
 from app.config import settings
 from app.extraction import ChunkExtraction, build_proposals, chunk_pages
 from app.main import app
-from app.repository import get_record, list_records
-from test_document_review import approve_all
+from app.repository import list_records
 from test_page_reading import install, reading, scanned_pdf, upload
 
 client = TestClient(app)
@@ -26,7 +25,7 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "document_storage_dir", str(tmp_path / "store"))
-    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
 
 
 DOC = {"id": "doc-0000000000aa", "kind": "mou", "partner_id": "demo-003", "agreement_id": None}
@@ -73,7 +72,7 @@ def test_schedules_after_the_signature_page_are_extracted_as_tables(monkeypatch)
     doc = upload(scanned_pdf(MOU1))
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review" and final["extraction"]["pages_sent"] == [1, 2, 3]
+    assert final["status"] == "extracted" and final["extraction"]["pages_sent"] == [1, 2, 3]
     data = client.get(f"/api/documents/{doc['id']}/extraction").json()
     budget, tranches = data["tables"]
     assert (budget["section"], budget["kind"], budget["pages"]) == ("Schedule A", "budget", [3])
@@ -83,11 +82,7 @@ def test_schedules_after_the_signature_page_are_extracted_as_tables(monkeypatch)
     assert budget["review_state"] == "proposed" and tranches["kind"] == "tranches"
     uc = data["obligations"][0]
     assert uc["evidence"]["section"] == "Clause 6" and uc["evidence"]["printed_page"] == "1"  # separately identifiable
-    # Tables go through review and are linked to the agreement on approval.
-    approve_all(doc["id"])
-    body = client.post(f"/api/documents/{doc['id']}/approve", json={"create_partner": False}).json()
-    assert get_record("tables", budget["id"])["agreement_id"] == body["agreement_id"]
-    assert get_record("tables", budget["id"])["review_state"] == "approved"
+    assert client.post(f"/api/documents/{doc['id']}/approve", json={}).status_code == 404
 
 
 # ---- MoU 2-like: a table continuing across pages ----

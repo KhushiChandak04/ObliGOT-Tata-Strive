@@ -1,4 +1,4 @@
-"""Workbook export (Step P3c): contract conformance, approved-only content, agreement with the store, re-import."""
+"""Operational workbook export: contract conformance, agreement with the store, re-import."""
 import io
 from datetime import datetime
 
@@ -8,9 +8,9 @@ from openpyxl import load_workbook
 
 from app.config import settings
 from app.main import app
-from app.repository import get_record, list_records
+from app.repository import list_records
 from app.workbook import SHEETS
-from test_document_review import approve_all, decide, extracted, proposals  # sibling module (pytest puts tests/ on sys.path)
+from test_document_review import extracted  # sibling module (pytest puts tests/ on sys.path)
 
 client = TestClient(app)
 
@@ -18,7 +18,7 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "document_storage_dir", str(tmp_path / "store"))
-    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
 
 
 def export():
@@ -92,38 +92,11 @@ def test_export_matches_the_store_and_leaves_missing_values_empty():
     assert not any(r.get("obligation_type") == "invoice" for r in obligations)  # invoices are not obligations here
 
 
-def test_only_approved_document_values_are_exported(monkeypatch):
+def test_extracted_document_values_stay_out_of_operational_workbook(monkeypatch):
     doc = extracted(monkeypatch, partner_id="demo-003")
-    _, wb = export()
-    assert table(wb, "Clauses") == [] and not any(r["obligation_id"].startswith(doc["id"]) for r in table(wb, "Obligations_Milestones"))
-    data = proposals(doc["id"])
-    fund = next(o for o in data["obligations"] if o["obligation_type"] == "fund_release")
-    decide(doc["id"], "obligations", fund["id"], "reject", note="Not a separate obligation")
-    approve_all(doc["id"])
-    assert client.post(f"/api/documents/{doc['id']}/approve", json={}).status_code == 200
-    _, wb = export()
-    obligations = {r["obligation_id"]: r for r in table(wb, "Obligations_Milestones")}
-    assert fund["id"] not in obligations  # rejected
-    report = next(o for o in proposals(doc["id"])["obligations"] if o["title"] == "Inception report")
-    row = obligations[report["id"]]
-    assert row["status"] == "planned" and row["source_page"] == 3 and "inception report" in row["source_quote"]
-    assert row["source_document_id"] == doc["id"]
-    assert report["operational_ref"]["id"] not in obligations  # the created report is not listed twice
-    clause = table(wb, "Clauses")[0]
-    assert clause["clause_type"] == "termination" and clause["needs_legal_review"] is True and clause["source_page"] == 3
-    agreement = next(a for a in table(wb, "Agreements") if a["source_document_id"] == doc["id"])
-    assert agreement["effective_date"].date().isoformat() == "2025-12-01" and agreement["review_state"] == "approved"
-    assert get_record("agreements", agreement["agreement_id"])["reference_number"] == agreement["reference_number"]
-
-
-def test_no_private_metadata_in_the_workbook(monkeypatch):
-    doc = extracted(monkeypatch, partner_id="demo-003")
-    approve_all(doc["id"])
-    client.post(f"/api/documents/{doc['id']}/approve", json={})
     _, wb = export()
     text = " ".join(str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row if c.value is not None)
-    stored = get_record("documents", doc["id"])
-    assert "local:" not in text and stored["sha256"] not in text and "storage_ref" not in text
+    assert doc["id"] not in text and doc["filename"] not in text
 
 
 def test_partners_sheet_reimports_through_the_existing_preview():

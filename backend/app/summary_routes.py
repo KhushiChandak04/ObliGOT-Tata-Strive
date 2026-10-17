@@ -57,9 +57,9 @@ def dashboard_summary() -> dict:
         "agreements": {"active": sum(1 for a in agreements if a.get("status") == "active"),
                        "expired": sum(1 for a in agreements if a.get("status") == "expired")},
         "documents": {
-            "awaiting_review": sum(1 for d in documents if d.get("status") == "needs_review"),
+            "awaiting_review": sum(1 for d in documents if d.get("status") in {"extracted", "needs_review"}),
             "needs_attention": sum(1 for d in documents if d.get("status") in {"failed", "blocked", "retry_required"}),
-            "addenda_awaiting_review": sum(1 for d in documents if d.get("kind") == "addendum" and d.get("status") == "needs_review"),
+            "addenda_awaiting_review": sum(1 for d in documents if d.get("kind") == "addendum" and d.get("status") in {"extracted", "needs_review"}),
         },
         "reporting": {
             "overdue": len(overdue_reports),

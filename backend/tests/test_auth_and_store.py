@@ -42,6 +42,7 @@ class BrokenFirestore:
 
 
 def test_firestore_failure_returns_503_not_500(monkeypatch):
+    monkeypatch.setattr(repository, "_TEST_MEMORY_STORE", False)
     monkeypatch.setattr(repository, "_firestore_client", BrokenFirestore())
     monkeypatch.setattr(repository, "_firestore_attempted", True)
     c = TestClient(app, raise_server_exceptions=False)

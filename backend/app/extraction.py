@@ -1,15 +1,11 @@
-"""Evidence-linked extraction: Gemini proposes values from page text; deterministic code checks every proposal.
+"""Evidence-linked extraction: Groq proposes values from page text; deterministic code checks every proposal.
 
-Flow: stored PDF → page text (PyMuPDF) → chunks of whole pages → one structured Gemini call per chunk →
+Flow: stored PDF → page text (PyMuPDF) → chunks of whole pages → one structured Groq call per chunk →
 Pydantic validation → normalization (dates, amounts, currency) → evidence verified against the cited page →
 proposals + review issues saved as `needs_review`. Nothing here is approved or operational.
 Document text is untrusted data; the prompt tells the model to ignore instructions inside it, and nothing the
 model returns is trusted without the checks below.
 """
-import asyncio
-import json
-import logging
-import random
 import re
 from collections.abc import Awaitable, Callable
 from datetime import date
@@ -18,13 +14,12 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
+from app.groq_client import GroqRequestError, structured_completion
 from app.documents import (
     ClauseType, CommitmentBasis, Evidence, FinancialTermType, ObligationFrequency, ObligationType, ScopeDimension,
     normalize_text, verify_evidence,
 )
 from app.validators import remove_duplicates, table_checks, tranche_checks
-
-logger = logging.getLogger("obligot.extraction")
 
 # Agreement-level fields the model may propose, with how each is normalized.
 AGREEMENT_FIELDS: dict[str, Literal["text", "date"]] = {
@@ -46,7 +41,7 @@ ESSENTIAL_FIELDS = {
 LEGAL_REVIEW_CLAUSES = {"termination", "penalty", "exception"}
 
 
-# ---- model output schema (also sent to Gemini as the response schema) ----
+# ---- model output schema ----
 
 class _Cited(BaseModel):
     page: int = Field(description="Page number from the <<<PAGE n>>> marker where the quote appears")
@@ -217,7 +212,7 @@ def build_prompt(kind: str, page_texts: list[str], pages: list[int], total_pages
             f"This part contains pages {pages[0]}–{pages[-1]} of {total_pages}.\n\n{body}")
 
 
-# ---- Gemini call ----
+# ---- Groq call ----
 
 class ExtractionFailed(Exception):
     """`retryable`: trying again later can succeed (rate limit, overload, timeout); otherwise the request itself,
@@ -231,107 +226,25 @@ class ExtractionFailed(Exception):
 
 Generate = Callable[[str], Awaitable[str]]
 
-_semaphores: dict[int, asyncio.Semaphore] = {}
-
-
-def _limit() -> asyncio.Semaphore:
-    """At most GEMINI_MAX_CONCURRENCY calls at once (per event loop), to avoid burning quota in bursts."""
-    loop = id(asyncio.get_running_loop())
-    if loop not in _semaphores:
-        _semaphores[loop] = asyncio.Semaphore(max(1, settings.gemini_max_concurrency))
-    return _semaphores[loop]
-
-
-def _error_details(exc: Exception) -> str:
-    details = getattr(exc, "details", None) or getattr(exc, "response_json", None) or ""
-    return details if isinstance(details, str) else json.dumps(details, default=str)
-
-
-def classify_error(exc: Exception) -> tuple[str, bool, float | None]:
-    """(code, retryable, suggested wait in seconds) for a Gemini API error. Codes:
-    invalid_request (400), auth_error (401/403), model_not_found (404), quota_exhausted (daily quota),
-    rate_limited (per-minute limit), unavailable (5xx), error:<type> (anything else)."""
-    code = getattr(exc, "code", None)
-    details = _error_details(exc)
-    if code == 400:
-        return ("auth_error" if "API key" in details or "API_KEY" in details else "invalid_request"), False, None
-    if code in (401, 403):
-        return "auth_error", False, None
-    if code == 404:
-        return "model_not_found", False, None
-    if code == 429:
-        if "PerDay" in details or "per day" in details.lower():
-            return "quota_exhausted", False, None
-        match = re.search(r'"?retryDelay"?\s*:\s*"(\d+(?:\.\d+)?)s"', details)
-        return "rate_limited", True, float(match.group(1)) if match else None
-    if isinstance(code, int) and 500 <= code < 600:
-        return "unavailable", True, None
-    return f"error:{type(exc).__name__}", False, None
-
-
-MESSAGES = {
-    "invalid_request": "Gemini rejected the request as invalid",
-    "auth_error": "Gemini rejected the API key (check GEMINI_API_KEY)",
-    "model_not_found": "The configured Gemini model is not available to this key",
-    "quota_exhausted": "Today's Gemini quota is used up; try again tomorrow or use a key with more quota",
-    "rate_limited": "Gemini rate limit reached; try again in a minute",
-    "unavailable": "Gemini is temporarily overloaded; try again in a few minutes",
-    "timeout": "Gemini did not respond in time",
-}
-
-
-async def gemini_structured(contents, schema: type[BaseModel]) -> str:
-    """One structured-JSON Gemini call (text or text + images). Returns raw JSON text; callers validate it.
-
-    - A model that is overloaded, rate-limited, out of daily quota, or unavailable to the key is replaced by the
-      next model in GEMINI_FALLBACK_MODELS (free-tier quotas are per model).
-    - Retryable errors (rate limit, overload, timeout) are retried up to GEMINI_MAX_RETRIES times with exponential
-      backoff, waiting Google's suggested delay when given (capped by GEMINI_MAX_RETRY_WAIT_SECONDS).
-    - Permanent errors (invalid request, bad key, exhausted daily quota on every model) are never retried.
-    """
-    if not settings.gemini_api_key:
-        raise ExtractionFailed("not_configured", "Gemini is not configured on the server")
-    from google import genai
-    from google.genai import types
-    client = genai.Client(api_key=settings.gemini_api_key)
-    config = types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema, temperature=0)
-    models = [settings.gemini_model, *[m for m in settings.gemini_fallback_models if m != settings.gemini_model]]
-    current, attempt = 0, 0
-    while True:
-        try:
-            async with _limit():
-                response = await asyncio.wait_for(
-                    client.aio.models.generate_content(model=models[current], contents=contents, config=config),
-                    timeout=settings.gemini_extraction_timeout_seconds,
-                )
-            return response.text or ""
-        except asyncio.TimeoutError:
-            code, retryable, wait = "timeout", True, None
-        except Exception as exc:
-            code, retryable, wait = classify_error(exc)
-        logger.warning("Gemini %s on %s (attempt %s)", code, models[current], attempt + 1)  # never the request content
-        if code in ("unavailable", "rate_limited", "quota_exhausted", "model_not_found") and current + 1 < len(models):
-            current += 1
-            continue
-        if retryable and attempt < settings.gemini_max_retries:
-            delay = wait if wait is not None else settings.gemini_backoff_base_seconds * (2 ** attempt)
-            await asyncio.sleep(min(delay, settings.gemini_max_retry_wait_seconds) + random.uniform(0, 0.25 * min(delay, 1)))
-            attempt += 1
-            continue
-        raise ExtractionFailed(code, MESSAGES.get(code, f"The Gemini request failed ({code})"), retryable)
-
-
-async def gemini_generate(prompt: str) -> str:
-    return await gemini_structured(prompt, ChunkExtraction)
+async def groq_generate(prompt: str) -> str:
+    try:
+        return await structured_completion(
+            [{"role": "user", "content": prompt}],
+            ChunkExtraction,
+            model=settings.groq_model,
+            timeout=settings.groq_document_timeout_seconds,
+        )
+    except GroqRequestError as exc:
+        raise ExtractionFailed(exc.code, str(exc), exc.retryable) from exc
 
 
 def parse_chunk(text: str) -> ChunkExtraction:
     if not text.strip():
-        raise ExtractionFailed("empty_response", "Gemini returned an empty response")
+        raise ExtractionFailed("empty_response", "Groq returned an empty response")
     try:
         return ChunkExtraction.model_validate_json(text)
     except ValidationError as exc:
-        raise ExtractionFailed("malformed_response", "Gemini returned data that does not match the extraction schema") from exc
+        raise ExtractionFailed("malformed_response", "Groq returned data that does not match the extraction schema") from exc
 
 
 # ---- deterministic post-processing ----

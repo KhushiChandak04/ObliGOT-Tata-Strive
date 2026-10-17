@@ -3,7 +3,7 @@ import type {
   ActionItem, Activity, Agreement, Alert, AlertReview, AlertsResponse, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup,
   HealthResponse, ImportPreview, Milestone,
   Opportunity, Partner, Project, ReportRecord, SourceDocument, DocumentReview, AmendmentChange,
-  ApprovalCheck, ApprovalResult, ProposalCollection, DashboardSummary, AppOptions,
+  DashboardSummary, AppOptions,
 } from "../types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -11,6 +11,11 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").
 /** An HTTP error from the backend; `status` is 0 when the backend could not be reached. */
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); this.name = "ApiError"; }
+}
+
+function observeStorageMode(response: Response): void {
+  const mode = response.headers.get("X-Obligot-Storage-Mode");
+  if (mode) window.dispatchEvent(new CustomEvent("obligot:storage-mode", { detail: mode }));
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -43,6 +48,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new ApiError(`Cannot reach the ObliGOT API at ${API_BASE}.`, 0);
   }
+  observeStorageMode(response);
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -61,6 +67,7 @@ async function requestBlob(path: string): Promise<Blob> {
   } catch {
     throw new ApiError(`Cannot reach the ObliGOT API at ${API_BASE}.`, 0);
   }
+  observeStorageMode(response);
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(errorMessage(body.detail, response.status), response.status);
@@ -166,15 +173,6 @@ export const api = {
       return { document: r.document, fields: r.extracted_fields, clauses: r.clauses, financial_terms: r.financial_terms,
         obligations: r.obligations, programme_scope: r.programme_scope, tables: r.tables ?? [], issues: r.review_issues };
     },
-    decide: (documentId: string, collection: ProposalCollection, itemId: string,
-      payload: { decision: "approve" | "reject" | "defer" | "reset"; value?: string | number | boolean | null; note?: string }) =>
-      request<Record<string, unknown>>(`/api/documents/${id(documentId)}/proposals/${collection}/${id(itemId)}`, send("PATCH", payload)),
-    resolveIssue: (documentId: string, issueId: string, payload: { status: "resolved" | "deferred" | "open"; resolution?: string }) =>
-      request<Record<string, unknown>>(`/api/documents/${id(documentId)}/issues/${id(issueId)}`, send("PATCH", payload)),
-    approvalCheck: (documentId: string, options: { partnerId?: string; createPartner?: boolean } = {}) =>
-      request<ApprovalCheck>(`/api/documents/${id(documentId)}/approval-check${query({ partner_id: options.partnerId, create_partner: options.createPartner ? "true" : undefined })}`),
-    approve: (documentId: string, options: { partner_id?: string; create_partner?: boolean; owner?: string } = {}) =>
-      request<ApprovalResult>(`/api/documents/${id(documentId)}/approve`, send("POST", options)),
     /** One page as a JPEG (authenticated), for comparing extracted values with the source. */
     pageImage: (documentId: string, page: number) => requestBlob(`/api/documents/${id(documentId)}/pages/${page}/image`),
     history: (agreementId: string) =>
@@ -182,5 +180,7 @@ export const api = {
     decideAmendment: (changeId: string, decision: "approve" | "reject" | "unresolved" | "reset", extra: { effective_date?: string; note?: string } = {}) =>
       request<AmendmentChange>(`/api/agreement-changes/${id(changeId)}`, send("PATCH", { decision, ...extra })),
     exportWorkbook: () => requestBlob("/api/export/workbook"),
+    exportDocumentWorkbook: (documentId: string) =>
+      requestBlob(`/api/documents/${id(documentId)}/export/workbook`),
   },
 };

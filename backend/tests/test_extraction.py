@@ -1,17 +1,14 @@
-"""Evidence-linked extraction (Step P3a). Gemini is replaced by fakes; all documents are synthetic.
+"""Evidence-linked extraction. Groq is replaced by fakes; all documents are synthetic.
 
-A live Gemini call is not exercised here (no key in the test environment).
+A live provider call is not exercised here; all uploaded documents are synthetic.
 """
 import asyncio
 import json
 import re
 from datetime import date
-from types import SimpleNamespace
-
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
-from google import genai
 
 from app import document_routes, extraction
 from app.config import settings
@@ -34,7 +31,7 @@ DOC = {"id": "doc-0123456789ab", "kind": "mou", "partner_id": "demo-001", "agree
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "document_storage_dir", str(tmp_path / "store"))
-    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
 
 
 def make_pdf(pages: list[str]) -> bytes:
@@ -89,13 +86,13 @@ def pages_of(prompt: str) -> list[int]:
     return [int(n) for n in re.findall(r"<<<PAGE (\d+)>>>", prompt)]
 
 
-def fake_gemini(monkeypatch, respond):
+def fake_groq(monkeypatch, respond):
     prompts: list[str] = []
 
     async def generate(prompt: str) -> str:
         prompts.append(prompt)
         return respond(prompt)
-    monkeypatch.setattr(document_routes, "gemini_generate", generate)
+    monkeypatch.setattr(document_routes, "groq_generate", generate)
     return prompts
 
 
@@ -201,66 +198,28 @@ def test_ambiguities_become_issues():
     assert any(i["code"] == "AMBIGUOUS" and "page 3" in i["message"] for i in out["review_issues"])
 
 
-# ---- Gemini client wrapper ----
+def test_groq_text_extraction_uses_the_configured_model_and_schema(monkeypatch):
+    call = {}
 
-def install_fake_client(monkeypatch, behaviour):
-    calls = []
+    async def structured(messages, schema, *, model, timeout):
+        call.update(messages=messages, schema=schema, model=model, timeout=timeout)
+        return "{}"
 
-    class FakeModels:
-        async def generate_content(self, model, contents, config):
-            calls.append(config)
-            return await behaviour()
-
-    class FakeClient:
-        def __init__(self, api_key):
-            self.aio = SimpleNamespace(models=FakeModels())
-
-    monkeypatch.setattr(genai, "Client", FakeClient)
-    return calls
-
-
-def test_gemini_wrapper_requests_structured_json(monkeypatch):
-    async def ok():
-        return SimpleNamespace(text="{}")
-    calls = install_fake_client(monkeypatch, ok)
-    assert asyncio.run(extraction.gemini_generate("prompt")) == "{}"
-    assert calls[0].response_mime_type == "application/json" and calls[0].response_schema is ChunkExtraction
-    assert calls[0].temperature == 0
-
-
-@pytest.mark.parametrize("behaviour, code", [
-    ("timeout", "timeout"), (429, "rate_limited"), (500, "unavailable"), (503, "unavailable"), (400, "invalid_request"),
-    (401, "auth_error"), (403, "auth_error"), (404, "model_not_found"), ("boom", "error:RuntimeError"),
-])
-def test_gemini_wrapper_reports_errors(monkeypatch, behaviour, code):
-    async def fail():
-        if behaviour == "timeout":
-            await asyncio.sleep(1)
-        if isinstance(behaviour, int):
-            raise type("ApiError", (Exception,), {"code": behaviour})()
-        raise RuntimeError("boom")
-    install_fake_client(monkeypatch, fail)
-    monkeypatch.setattr(settings, "gemini_extraction_timeout_seconds", 0.01)
-    with pytest.raises(ExtractionFailed) as err:
-        asyncio.run(extraction.gemini_generate("prompt"))
-    assert err.value.code == code
-
-
-def test_gemini_wrapper_without_key(monkeypatch):
-    monkeypatch.setattr(settings, "gemini_api_key", "")
-    with pytest.raises(ExtractionFailed) as err:
-        asyncio.run(extraction.gemini_generate("prompt"))
-    assert err.value.code == "not_configured"
+    monkeypatch.setattr(extraction, "structured_completion", structured)
+    monkeypatch.setattr(settings, "groq_model", "test-text-model")
+    assert asyncio.run(extraction.groq_generate("synthetic prompt")) == "{}"
+    assert call["schema"] is ChunkExtraction and call["model"] == "test-text-model"
+    assert call["messages"] == [{"role": "user", "content": "synthetic prompt"}]
 
 
 # ---- API ----
 
 def test_extract_end_to_end_creates_proposals_only(monkeypatch):
-    prompts = fake_gemini(monkeypatch, lambda p: json.dumps(good_output(pages_of(p))))
+    prompts = fake_groq(monkeypatch, lambda p: json.dumps(good_output(pages_of(p))))
 
     async def blank_reader(images):  # page 4 is blank: read from its image, nothing on it
         return json.dumps({"pages": [{"page": n, "page_type": "blank", "transcript": "", "legibility": "good"} for n, _ in images]})
-    monkeypatch.setattr(document_routes, "gemini_read_pages", blank_reader)
+    monkeypatch.setattr(document_routes, "groq_read_pages", blank_reader)
     before = {c: len(list_records(c)) for c in ("agreements", "projects", "milestones", "reports", "finance")}
     alerts_before = client.get("/api/alerts").json()["counts"]["total"]
     doc = upload(PAGES + [""])
@@ -268,7 +227,7 @@ def test_extract_end_to_end_creates_proposals_only(monkeypatch):
     assert started.status_code == 202
     assert started.json()["status"] == "extracting"  # the response is sent before the background job runs
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review" and final["error"] is None
+    assert final["status"] == "extracted" and final["error"] is None
     run = final["extraction"]
     assert run["ai_used"] and run["chunks_done"] == run["chunks_total"] == 1 and run["finished_at"]
     assert run["pages_sent"] == [1, 2, 3] and run["pages_skipped_low_text"] == [4]
@@ -285,12 +244,12 @@ def test_extract_end_to_end_creates_proposals_only(monkeypatch):
 
 def test_long_document_is_sent_in_chunks_covering_every_page(monkeypatch):
     monkeypatch.setattr(settings, "extraction_chunk_chars", 600)
-    prompts = fake_gemini(monkeypatch, lambda p: "{}")
+    prompts = fake_groq(monkeypatch, lambda p: "{}")
     pages = [f"SYNTHETIC page {n}: clause text for testing only (fictional). " * 3 for n in range(1, 61)]
     doc = upload(pages)
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review"
+    assert final["status"] == "extracted"
     assert len(prompts) == final["extraction"]["chunks_total"] > 1
     assert sum((pages_of(p) for p in prompts), []) == list(range(1, 61))
 
@@ -302,40 +261,40 @@ def test_failure_in_a_later_part_keeps_finished_work_and_resumes(monkeypatch):
     def respond(prompt):
         calls["n"] += 1
         if calls["n"] == 2 and calls["fail"]:
-            raise ExtractionFailed("rate_limited", "Gemini rate limit reached; try again in a minute", retryable=True)
+            raise ExtractionFailed("rate_limited", "Groq rate limit reached", retryable=True)
         return json.dumps(good_output(pages_of(prompt)))
-    fake_gemini(monkeypatch, respond)
+    fake_groq(monkeypatch, respond)
     doc = upload(PAGES)
     client.post(f"/api/documents/{doc['id']}/extract")
     partial = client.get(f"/api/documents/{doc['id']}").json()
     run = partial["extraction"]
-    assert partial["status"] == "needs_review" and run["mode"] == "partial" and run["retryable"]
+    assert partial["status"] == "extracted" and run["mode"] == "partial" and run["retryable"]
     assert run["ai_error"] == "rate_limited" and run["chunks_done"] == 1 and "then stopped (rate_limited" in run["note"]
     data = client.get(f"/api/documents/{doc['id']}/extraction").json()
     pending = next(i for i in data["review_issues"] if i["code"] == "SEMANTIC_EXTRACTION_PENDING")
     assert "pattern matching only" in pending["message"]
-    assert any(f["field"] == "partner_name" for f in data["extracted_fields"])  # part 1 (Gemini) kept
+    assert any(f["field"] == "partner_name" for f in data["extracted_fields"])  # part 1 (Groq) kept
     calls["n"], calls["fail"] = 0, False
     assert client.post(f"/api/documents/{doc['id']}/extract").status_code == 202
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review" and final["extraction"]["mode"] == "gemini"
+    assert final["status"] == "extracted" and final["extraction"]["mode"] == "groq"
     assert calls["n"] == final["extraction"]["chunks_total"] - 1  # the finished part came from the cache
     assert not any(i["code"] == "SEMANTIC_EXTRACTION_PENDING" for i in client.get(f"/api/documents/{doc['id']}/extraction").json()["review_issues"])
 
 
 def test_malformed_model_output_falls_back_to_pattern_matching(monkeypatch):
-    fake_gemini(monkeypatch, lambda p: '{"fields": "not a list"}')
+    fake_groq(monkeypatch, lambda p: '{"fields": "not a list"}')
     doc = upload(PAGES)
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review" and final["extraction"]["ai_error"] == "malformed_response"
+    assert final["status"] == "extracted" and final["extraction"]["ai_error"] == "malformed_response"
     assert final["extraction"]["mode"] == "deterministic" and "does not match the extraction schema" in final["extraction"]["note"]
     fields = {f["field"]: f for f in client.get(f"/api/documents/{doc['id']}/extraction").json()["extracted_fields"]}
     assert fields["expiry_date"]["proposed_value"] == "2027-03-31" and fields["expiry_date"]["evidence"]["verified"]
 
 
 def test_rerun_replaces_proposals_without_duplicates(monkeypatch):
-    fake_gemini(monkeypatch, lambda p: json.dumps(good_output(pages_of(p))))
+    fake_groq(monkeypatch, lambda p: json.dumps(good_output(pages_of(p))))
     doc = upload(PAGES)
     client.post(f"/api/documents/{doc['id']}/extract")
     client.post(f"/api/documents/{doc['id']}/extract")
@@ -343,21 +302,21 @@ def test_rerun_replaces_proposals_without_duplicates(monkeypatch):
 
 
 def test_extract_preconditions(monkeypatch):
-    fake_gemini(monkeypatch, lambda p: "{}")
+    fake_groq(monkeypatch, lambda p: "{}")
     assert client.post("/api/documents/doc-000000000000/extract").status_code == 404
-    monkeypatch.setattr(settings, "gemini_api_key", "")
-    blank = upload(["", ""])  # scanned/blank and no Gemini to read page images
+    monkeypatch.setattr(settings, "groq_api_key", "")
+    blank = upload(["", ""])  # scanned/blank and no Groq to read page images
     assert blank["status"] == "blocked" and client.post(f"/api/documents/{blank['id']}/extract").status_code == 409
-    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
     damaged = client.post("/api/documents", data={"kind": "mou"},
                           files={"file": ("bad.pdf", b"%PDF-1.7 broken", "application/pdf")}).json()
     assert client.post(f"/api/documents/{damaged['id']}/extract").status_code == 409
     doc = upload(PAGES)
-    monkeypatch.setattr(settings, "gemini_api_key", "")
-    response = client.post(f"/api/documents/{doc['id']}/extract")  # without Gemini: pattern matching, clearly marked
+    monkeypatch.setattr(settings, "groq_api_key", "")
+    response = client.post(f"/api/documents/{doc['id']}/extract")  # without Groq: pattern matching, clearly marked
     assert response.status_code == 202 and response.json()["extraction"]["mode"] == "deterministic"
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review" and final["extraction"]["ai_used"] is False and final["extraction"]["retryable"]
+    assert final["status"] == "extracted" and final["extraction"]["ai_used"] is False and final["extraction"]["retryable"]
 
 
 def test_running_extraction_blocks_a_second_start(monkeypatch):
@@ -368,5 +327,5 @@ def test_running_extraction_blocks_a_second_start(monkeypatch):
         "started_at": now_iso(), "model": "m", "chunks_total": 1}})
     assert client.post(f"/api/documents/{doc['id']}/extract").status_code == 409
     patch_record("documents", doc["id"], {"extraction": {"started_at": "2026-01-01T00:00:00+05:30", "model": "m", "chunks_total": 1}})
-    fake_gemini(monkeypatch, lambda p: "{}")
+    fake_groq(monkeypatch, lambda p: "{}")
     assert client.post(f"/api/documents/{doc['id']}/extract").status_code == 202  # stale run may be restarted

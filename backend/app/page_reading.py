@@ -1,4 +1,4 @@
-"""Reading scanned pages: render each page to an image and ask Gemini to transcribe and classify it.
+"""Reading scanned pages: render each page to an image and ask Groq to transcribe and classify it.
 
 The result is an AI transcription — an aid for extraction and review, never a verified fact. Unreadable or
 redacted text must be marked, not guessed; the reviewer compares values with the page image.
@@ -9,7 +9,8 @@ import pymupdf
 from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
-from app.extraction import ExtractionFailed, gemini_structured
+from app.extraction import ExtractionFailed
+from app.groq_client import GroqRequestError, image_data_url, structured_completion
 
 PageTypeName = Literal[
     "cover_stamp", "main_agreement", "signature", "schedule", "annexure", "project_proposal", "budget_table",
@@ -69,25 +70,34 @@ def batches(page_numbers: list[int], size: int) -> list[list[int]]:
     return [page_numbers[i:i + size] for i in range(0, len(page_numbers), size)]
 
 
-async def gemini_read_pages(images: list[tuple[int, bytes]]) -> str:
-    """One Gemini call for a batch of page images. Returns raw JSON for `parse_batch`."""
-    from google.genai import types
-    contents: list = [types.Part.from_text(text=INSTRUCTIONS)]
+async def groq_read_pages(images: list[tuple[int, bytes]]) -> str:
+    """One Groq vision call for up to three page images. Returns raw JSON for `parse_batch`."""
+    if len(images) > 3:
+        raise ExtractionFailed("invalid_request", "Groq vision accepts at most three page images per request")
+    content: list[dict[str, object]] = [{"type": "text", "text": INSTRUCTIONS}]
     for number, image in images:
-        contents.append(types.Part.from_text(text=f"PHYSICAL PAGE {number}"))
-        contents.append(types.Part.from_bytes(data=image, mime_type="image/jpeg"))
-    return await gemini_structured(contents, BatchReading)
+        content.append({"type": "text", "text": f"PHYSICAL PAGE {number}"})
+        content.append({"type": "image_url", "image_url": {"url": image_data_url(image)}})
+    try:
+        return await structured_completion(
+            [{"role": "user", "content": content}],
+            BatchReading,
+            model=settings.groq_vision_model,
+            timeout=settings.groq_document_timeout_seconds,
+        )
+    except GroqRequestError as exc:
+        raise ExtractionFailed(exc.code, str(exc), exc.retryable) from exc
 
 
 def parse_batch(text: str, expected: list[int]) -> list[ModelPageReading]:
     """Validate a batch reading: exactly one entry per requested page, nothing else."""
     if not text.strip():
-        raise ExtractionFailed("empty_response", "Gemini returned an empty page reading")
+        raise ExtractionFailed("empty_response", "Groq returned an empty page reading")
     try:
         reading = BatchReading.model_validate_json(text)
     except ValidationError as exc:
-        raise ExtractionFailed("malformed_response", "Gemini returned a page reading that does not match the schema") from exc
+        raise ExtractionFailed("malformed_response", "Groq returned a page reading that does not match the schema") from exc
     got = sorted(p.page for p in reading.pages)
     if got != sorted(expected):
-        raise ExtractionFailed("malformed_response", f"Gemini read pages {got} but was sent pages {sorted(expected)}")
+        raise ExtractionFailed("malformed_response", f"Groq read pages {got} but was sent pages {sorted(expected)}")
     return sorted(reading.pages, key=lambda p: p.page)

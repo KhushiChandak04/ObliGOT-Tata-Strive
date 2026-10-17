@@ -1,21 +1,19 @@
-"""Scan-aware page reading (Step S1). Synthetic scanned PDFs (text rendered to images, no text layer);
-Gemini replaced by fakes. Sample-MOU checks are local only (no Gemini) and skip when samples/ is absent."""
+"""Groq scan-aware page reading. Synthetic scanned PDFs; provider calls are faked in tests."""
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
-from google import genai
 
 from app import document_routes
 from app.config import settings
-from app.extraction import ExtractionFailed, gemini_structured, ChunkExtraction
+from app.extraction import ExtractionFailed
+from app.groq_client import structured_completion
 from app.main import app
-from app.page_reading import parse_batch, render_page
-from app.repository import list_records
+from app.page_reading import BatchReading, groq_read_pages, parse_batch, render_page
+from app.repository import list_records, patch_record
 
 client = TestClient(app)
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
@@ -31,7 +29,7 @@ SCANNED = [
 @pytest.fixture(autouse=True)
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "document_storage_dir", str(tmp_path / "store"))
-    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
 
 
 def scanned_pdf(texts: list[str], with_text_layer: set[int] = frozenset()) -> bytes:
@@ -73,15 +71,39 @@ def install(monkeypatch, pages: dict[int, dict], extraction=None):
     async def extractor(prompt):
         prompts.append(prompt)
         return json.dumps(extraction or {})
-    monkeypatch.setattr(document_routes, "gemini_read_pages", reader)
-    monkeypatch.setattr(document_routes, "gemini_generate", extractor)
+    monkeypatch.setattr(document_routes, "groq_read_pages", reader)
+    monkeypatch.setattr(document_routes, "groq_generate", extractor)
     return calls, prompts
 
 
-def test_scanned_upload_is_not_blocked_when_gemini_can_read_images():
+def test_scanned_upload_is_not_blocked_when_groq_can_read_images():
     doc = upload(scanned_pdf(SCANNED))
     assert doc["status"] == "uploaded" and all(p["text_status"] == "low_text" for p in doc["pages"])
     assert "All pages are scanned images" in doc["warnings"][0] and "AI transcription" in doc["warnings"][0]
+
+
+def test_legacy_gemini_blocked_scan_can_be_retried_with_groq(monkeypatch):
+    monkeypatch.setattr(settings, "groq_api_key", "")
+    monkeypatch.setattr(document_routes.ocr, "ocr_available", lambda: False)
+    doc = upload(scanned_pdf(SCANNED))
+    assert doc["status"] == "blocked"
+    patch_record("documents", doc["id"], {
+        "warnings": [
+            "No page has embedded text (likely a scanned PDF). Configure Gemini or OCR to extract text from the page images."
+        ]
+    })
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
+    pages = {n: reading(n, text) for n, text in enumerate(SCANNED, 1)}
+    install(monkeypatch, pages)
+
+    response = client.post(f"/api/documents/{doc['id']}/extract")
+
+    assert response.status_code == 202
+    final = client.get(f"/api/documents/{doc['id']}").json()
+    assert final["status"] == "extracted", final["error"]
+    assert final["extraction"]["mode"] == "groq"
+    assert not any("Configure Gemini" in warning or "Configure Groq" in warning for warning in final["warnings"])
+    assert len(client.get(f"/api/documents/{doc['id']}/pages").json()) == len(SCANNED)
 
 
 def test_scanned_pages_are_read_in_batches_and_extraction_continues_past_the_signature(monkeypatch):
@@ -94,7 +116,7 @@ def test_scanned_pages_are_read_in_batches_and_extraction_continues_past_the_sig
     doc = upload(scanned_pdf(SCANNED))
     assert client.post(f"/api/documents/{doc['id']}/extract").status_code == 202
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review", final["error"]
+    assert final["status"] == "extracted", final["error"]
     assert [[n for n, _ in c] for c in calls] == [[1, 2], [3]]
     assert all(magic == b"\xff\xd8" for c in calls for _, magic in c)  # JPEG page images
     run = final["extraction"]
@@ -103,7 +125,7 @@ def test_scanned_pages_are_read_in_batches_and_extraction_continues_past_the_sig
     assert "printed page number: 2" in prompts[0]
     stored = client.get(f"/api/documents/{doc['id']}/pages").json()
     assert [(p["page_number"], p["method"], p["page_type"]) for p in stored] == \
-        [(1, "gemini_vision", "main_agreement"), (2, "gemini_vision", "signature"), (3, "gemini_vision", "schedule")]
+        [(1, "groq_vision", "main_agreement"), (2, "groq_vision", "signature"), (3, "groq_vision", "schedule")]
     assert stored[0]["printed_page_number"] == "2" and stored[0]["page_number"] == 1  # printed ≠ physical
     evidence = client.get(f"/api/documents/{doc['id']}/extraction").json()["obligations"][0]["evidence"]
     assert evidence["verified"] and evidence["basis"] == "ai_transcript"
@@ -113,7 +135,7 @@ def test_unreadable_scan_without_any_text_asks_for_a_retry_and_saves_nothing_wro
     async def reader(images):
         return json.dumps({"pages": [reading(9, "text")]})  # wrong pages: rejected
     install(monkeypatch, {})
-    monkeypatch.setattr(document_routes, "gemini_read_pages", reader)
+    monkeypatch.setattr(document_routes, "groq_read_pages", reader)
     doc = upload(scanned_pdf(SCANNED))
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
@@ -131,14 +153,14 @@ def test_reading_stops_part_way_keeps_finished_pages_and_flags_the_rest(monkeypa
     async def reader(images):
         calls["n"] += 1
         if calls["n"] == 2:
-            raise ExtractionFailed("quota_exhausted", "Today's Gemini quota is used up")
+            raise ExtractionFailed("rate_limited", "Groq rate limit reached", retryable=True)
         return json.dumps({"pages": [reading(n, SCANNED[n - 1]) for n, _ in images]})
     install(monkeypatch, {})
-    monkeypatch.setattr(document_routes, "gemini_read_pages", reader)
+    monkeypatch.setattr(document_routes, "groq_read_pages", reader)
     doc = upload(scanned_pdf(SCANNED))
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review" and final["extraction"]["ai_error"] == "quota_exhausted"
+    assert final["status"] == "extracted" and final["extraction"]["ai_error"] == "rate_limited"
     assert [p["page_number"] for p in client.get(f"/api/documents/{doc['id']}/pages").json()] == [1, 2]  # kept
     issues = {i["code"]: i for i in client.get(f"/api/documents/{doc['id']}/extraction").json()["review_issues"]}
     assert issues["PAGES_NOT_READ"]["severity"] == "error" and "Pages 3 have no text" in issues["PAGES_NOT_READ"]["message"]
@@ -175,7 +197,7 @@ def test_mixed_pdf_reads_only_pages_without_a_text_layer(monkeypatch):
     client.post(f"/api/documents/{doc['id']}/extract")
     assert [[n for n, _ in c] for c in calls] == [[2]]
     methods = {p["page_number"]: p["method"] for p in client.get(f"/api/documents/{doc['id']}/pages").json()}
-    assert methods == {1: "text_layer", 2: "gemini_vision", 3: "text_layer"}
+    assert methods == {1: "text_layer", 2: "groq_vision", 3: "text_layer"}
     assert "<<<PAGE 1>>> [read from the PDF text layer]" in prompts[0]
 
 
@@ -203,65 +225,87 @@ def test_parse_batch_and_render_page():
         render_page(data, 4)
 
 
-def test_rate_limit_is_retried_then_reported(monkeypatch):
-    attempts = {"n": 0}
+def test_groq_vision_sends_json_and_base64_image(monkeypatch):
+    payloads = []
 
-    class Limited(Exception):
-        code = 429
+    class Response:
+        status_code = 200
+        headers = {}
 
-    class FakeModels:
-        async def generate_content(self, model, contents, config):
-            attempts["n"] += 1
-            if attempts["n"] < 3:
-                raise Limited()
-            return SimpleNamespace(text="{}")
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps({"pages": [reading(1, "Fictional text")]})}}]}
 
-    class FakeClient:
-        def __init__(self, api_key):
-            self.aio = SimpleNamespace(models=FakeModels())
-    monkeypatch.setattr(genai, "Client", FakeClient)
-    monkeypatch.setattr(settings, "gemini_max_retries", 3)
-    assert asyncio.run(gemini_structured("prompt", ChunkExtraction)) == "{}" and attempts["n"] == 3
-    attempts["n"] = -5
-    with pytest.raises(ExtractionFailed) as err:
-        asyncio.run(gemini_structured("prompt", ChunkExtraction))
-    assert err.value.code == "rate_limited" and err.value.retryable and attempts["n"] == -1  # 1 try + 3 retries
+    class Client:
+        def __init__(self, timeout):
+            pass
 
+        async def __aenter__(self):
+            return self
 
-def test_error_classification_respects_daily_quota_and_retry_hints():
-    from app.extraction import classify_error
+        async def __aexit__(self, *args):
+            return None
 
-    def err(code, details):
-        return type("ApiError", (Exception,), {"code": code, "details": details})()
-    daily = {"error": {"details": [{"violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}
-    minute = {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "17s"}]}}
-    assert classify_error(err(429, daily)) == ("quota_exhausted", False, None)  # never retried today
-    assert classify_error(err(429, minute)) == ("rate_limited", True, 17.0)  # Google's suggested wait is used
-    assert classify_error(err(400, {"error": {"message": "API key not valid"}}))[0] == "auth_error"
-    assert classify_error(err(502, {}))[:2] == ("unavailable", True)
+        async def post(self, url, headers, json):
+            payloads.append(json)
+            return Response()
+
+    monkeypatch.setattr("app.groq_client.httpx.AsyncClient", Client)
+    monkeypatch.setattr(settings, "groq_vision_model", "test-vision")
+    result = asyncio.run(groq_read_pages([(1, b"synthetic jpeg")]))
+    assert json.loads(result)["pages"][0]["transcript"] == "Fictional text"
+    payload = payloads[0]
+    assert payload["model"] == "test-vision"
+    assert payload["response_format"] == {"type": "json_object"}
+    image = payload["messages"][1]["content"][2]["image_url"]["url"]
+    assert image.startswith("data:image/jpeg;base64,")
+    assert "Return only a valid JSON object" in payload["messages"][0]["content"]
 
 
-def test_permanent_errors_are_not_retried(monkeypatch):
-    attempts = {"n": 0}
+def test_groq_structured_request_retries_rate_limit(monkeypatch):
+    payloads = []
 
-    class Denied(Exception):
-        code = 403
+    class Response:
+        def __init__(self, status_code):
+            self.status_code = status_code
+            self.headers = {}
 
-    class FakeModels:
-        async def generate_content(self, model, contents, config):
-            attempts["n"] += 1
-            raise Denied()
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"}}]}
 
-    class FakeClient:
-        def __init__(self, api_key):
-            self.aio = SimpleNamespace(models=FakeModels())
-    monkeypatch.setattr(genai, "Client", FakeClient)
-    with pytest.raises(ExtractionFailed) as err:
-        asyncio.run(gemini_structured("prompt", ChunkExtraction))
-    assert err.value.code == "auth_error" and not err.value.retryable and attempts["n"] == 1
+    class Client:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers, json):
+            payloads.append(json)
+            return Response(429 if len(payloads) == 1 else 200)
+
+    monkeypatch.setattr("app.groq_client.httpx.AsyncClient", Client)
+    monkeypatch.setattr(settings, "groq_max_retries", 2)
+    monkeypatch.setattr(settings, "groq_backoff_base_seconds", 0)
+    monkeypatch.setattr(settings, "groq_max_retry_wait_seconds", 0)
+    assert asyncio.run(structured_completion(
+        [{"role": "user", "content": "synthetic prompt"}],
+        BatchReading,
+        model="test-model",
+        timeout=1,
+    )) == "{}"
+    assert len(payloads) == 2 and payloads[0]["response_format"] == {"type": "json_object"}
 
 
-# ---- real sample MOUs: local structure only (nothing is sent to Gemini) ----
+def test_groq_vision_rejects_more_than_three_images():
+    with pytest.raises(ExtractionFailed) as error:
+        asyncio.run(groq_read_pages([(n, b"synthetic") for n in range(1, 5)]))
+    assert error.value.code == "invalid_request"
+
+
+# ---- real sample MOUs: local structure only (no document data is sent to Groq) ----
 
 SAMPLE_PAGES = {"MoU 1.pdf": 9, "MoU 2.pdf": 27, "mou_3.pdf": 28}
 
@@ -274,26 +318,3 @@ def test_sample_mous_are_detected_as_scanned_and_accepted(name, pages):
     assert doc["page_count"] == pages and all(p["text_status"] == "low_text" for p in doc["pages"])
     assert doc["status"] == "uploaded" and "All pages are scanned images" in doc["warnings"][0]
     assert render_page(data, pages)[:2] == b"\xff\xd8"  # the last page (where schedules may be) renders
-
-
-def test_overloaded_model_falls_back_to_the_next_model(monkeypatch):
-    used = []
-
-    class Overloaded(Exception):
-        code = 503
-
-    class FakeModels:
-        async def generate_content(self, model, contents, config):
-            used.append(model)
-            if model == "primary-model":
-                raise Overloaded()
-            return SimpleNamespace(text="{}")
-
-    class FakeClient:
-        def __init__(self, api_key):
-            self.aio = SimpleNamespace(models=FakeModels())
-    monkeypatch.setattr(genai, "Client", FakeClient)
-    monkeypatch.setattr(settings, "gemini_model", "primary-model")
-    monkeypatch.setattr(settings, "gemini_fallback_models", ["fallback-model"])
-    assert asyncio.run(gemini_structured("prompt", ChunkExtraction)) == "{}"
-    assert used == ["primary-model", "fallback-model"]  # switched at once, no waiting

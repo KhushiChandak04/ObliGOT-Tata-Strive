@@ -1,4 +1,4 @@
-"""Optional local OCR with Tesseract, used only for scanned pages Gemini could not read.
+"""Optional local OCR with Tesseract, used only for scanned pages Groq vision could not read.
 
 Requires the Tesseract program itself (not just a Python package): it is detected on PATH (or TESSERACT_CMD).
 When it is missing, nothing here runs and the app behaves as before. OCR output is plain text — tables lose their

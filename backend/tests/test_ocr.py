@@ -43,16 +43,19 @@ def test_detection_requires_the_program_not_just_a_setting(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda cmd: "/usr/bin/tesseract")
     monkeypatch.setattr(settings, "ocr_enabled", False)
     assert ocr.ocr_available() is False
-    assert client.get("/api/health").json()["ocr_available"] is False
+    health = client.get("/api/health").json()
+    assert health["ocr_available"] is False
+    assert health["document_extraction"].startswith("Groq vision")
+    assert health["extraction_without_gemini"] == health["document_extraction"]
 
 
-def test_without_gemini_scanned_pages_are_read_by_ocr_and_labelled(monkeypatch):
+def test_without_groq_scanned_pages_are_read_by_ocr_and_labelled(monkeypatch):
     calls = fake_ocr(monkeypatch)
     doc = upload(scanned_pdf(PAGES))
     assert doc["status"] == "uploaded" and "local OCR reads them" in doc["warnings"][0]
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert final["status"] == "needs_review" and final["extraction"]["mode"] == "deterministic"
+    assert final["status"] == "extracted" and final["extraction"]["mode"] == "deterministic"
     assert "OCR read 2 scanned pages" in final["extraction"]["note"] and calls == [1, 2]
     pages = client.get(f"/api/documents/{doc['id']}/pages").json()
     assert [p["method"] for p in pages] == ["ocr", "ocr"]
@@ -61,8 +64,8 @@ def test_without_gemini_scanned_pages_are_read_by_ocr_and_labelled(monkeypatch):
     assert fields["expiry_date"]["evidence"]["basis"] == "ocr_text" and fields["expiry_date"]["evidence"]["verified"]
 
 
-def test_ocr_fills_pages_gemini_could_not_read(monkeypatch):
-    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+def test_ocr_fills_pages_groq_could_not_read(monkeypatch):
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
     monkeypatch.setattr(settings, "vision_batch_pages", 1)
     calls = fake_ocr(monkeypatch)
     state = {"n": 0}
@@ -70,36 +73,36 @@ def test_ocr_fills_pages_gemini_could_not_read(monkeypatch):
     async def reader(images):
         state["n"] += 1
         if state["n"] == 2:
-            raise ExtractionFailed("quota_exhausted", "Today's Gemini quota is used up")
+            raise ExtractionFailed("rate_limited", "Groq rate limit reached", retryable=True)
         return json.dumps({"pages": [reading(n, PAGES[n - 1]) for n, _ in images]})
 
     async def generate(prompt):
-        raise ExtractionFailed("quota_exhausted", "Today's Gemini quota is used up")
-    monkeypatch.setattr(document_routes, "gemini_read_pages", reader)
-    monkeypatch.setattr(document_routes, "gemini_generate", generate)
+        raise ExtractionFailed("rate_limited", "Groq rate limit reached", retryable=True)
+    monkeypatch.setattr(document_routes, "groq_read_pages", reader)
+    monkeypatch.setattr(document_routes, "groq_generate", generate)
     doc = upload(scanned_pdf(PAGES))
     client.post(f"/api/documents/{doc['id']}/extract")
     methods = {p["page_number"]: p["method"] for p in client.get(f"/api/documents/{doc['id']}/pages").json()}
-    assert methods == {1: "gemini_vision", 2: "ocr"} and calls == [2]
+    assert methods == {1: "groq_vision", 2: "ocr"} and calls == [2]
     issues = {i["code"] for i in client.get(f"/api/documents/{doc['id']}/extraction").json()["review_issues"]}
     assert "PAGES_NOT_READ" not in issues and "SEMANTIC_EXTRACTION_PENDING" in issues
 
 
-def test_a_later_gemini_run_replaces_ocr_text(monkeypatch):
+def test_a_later_groq_run_replaces_ocr_text(monkeypatch):
     fake_ocr(monkeypatch)
     doc = upload(scanned_pdf(PAGES))
-    client.post(f"/api/documents/{doc['id']}/extract")  # no Gemini: OCR
-    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    client.post(f"/api/documents/{doc['id']}/extract")  # no Groq: OCR
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
 
     async def reader(images):
         return json.dumps({"pages": [reading(n, PAGES[n - 1]) for n, _ in images]})
 
     async def generate(prompt):
         return "{}"
-    monkeypatch.setattr(document_routes, "gemini_read_pages", reader)
-    monkeypatch.setattr(document_routes, "gemini_generate", generate)
+    monkeypatch.setattr(document_routes, "groq_read_pages", reader)
+    monkeypatch.setattr(document_routes, "groq_generate", generate)
     client.post(f"/api/documents/{doc['id']}/extract")
-    assert [p["method"] for p in client.get(f"/api/documents/{doc['id']}/pages").json()] == ["gemini_vision", "gemini_vision"]
+    assert [p["method"] for p in client.get(f"/api/documents/{doc['id']}/pages").json()] == ["groq_vision", "groq_vision"]
 
 
 def test_ocr_failure_is_reported_and_unread_pages_are_flagged(monkeypatch):

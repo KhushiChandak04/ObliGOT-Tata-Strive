@@ -14,7 +14,7 @@ from app.models import (
     Project, ProjectCreate, ReportCreate, ReportRecord,
 )
 from app.repository import (
-    firestore_enabled, get_record, list_records, patch_record, put_record, delete_record,
+    firestore_enabled, get_record, list_records, patch_record, put_record, delete_record, storage_mode,
 )
 from app.amendments import apply_due_changes
 from app.ocr import ocr_available
@@ -28,12 +28,15 @@ IMPORT_ENTITY_TYPES = {"agreements", "projects", "finance", "finance-records", "
 
 @router.get("/health", tags=["system"])
 def health() -> dict:
+    mode = storage_mode()
+    extraction_status = "Groq vision and structured extraction when configured; otherwise local OCR and deterministic text matching"
     return {"status": "ok", "app": "ObliGOT API", "environment": settings.environment,
-            "database": "firestore" if firestore_enabled() else "demo-memory-fallback",
-            "ai_configured": bool(settings.gemini_api_key), "auth_required": settings.require_firebase_auth,
+            "database": mode,
+            "ai_configured": settings.groq_available, "auth_required": settings.require_firebase_auth,
             # OCR needs the Tesseract program itself, not just a Python package; none is installed or used yet.
             "ocr_available": ocr_available(),
-            "extraction_without_gemini": "pattern matching on text-layer pages and stored page readings only"}
+            "document_extraction": extraction_status,
+            "extraction_without_gemini": extraction_status}
 
 @router.get("/dashboard", tags=["dashboard"])
 def dashboard() -> dict:
@@ -55,8 +58,9 @@ def dashboard() -> dict:
         },
         "findings": scan_deadlines({"agreements": agreements, "projects": projects, "finance": finance, "reports": reports}),
         "as_of": business_today().isoformat(),
-        "storage_mode": "firestore" if firestore_enabled() else "demo-memory-fallback",
-        "demo_data_notice": "Any record marked source_label=demo is illustrative, not verified.",
+        "storage_mode": storage_mode(),
+        "demo_data_notice": "Synthetic demo mode is process-local and never reads or writes Firestore." if storage_mode() == "demo-memory-fallback"
+        else "Any record marked source_label=demo is illustrative, not verified.",
     }
 
 @router.get("/partners", response_model=list[Partner], tags=["partners"])

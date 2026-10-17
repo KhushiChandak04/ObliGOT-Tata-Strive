@@ -1,14 +1,35 @@
 # Workbook schema
 
-Standard Excel representation of **approved, normalized** partnership data. Generated from `backend/app/workbook.py` (the source of truth; tests check it against the models). Download it from `GET /api/export/workbook` (Step P3c).
+## Operational workbook
+
+Standard Excel representation of operational partnership data. Generated from `backend/app/workbook.py` (the source of truth; tests check it against the models). Download it from `GET /api/export/workbook`.
 
 - Each sheet's first column is its stable ID. `→ Sheet` marks a reference to that sheet's ID column.
-- Operational columns hold the latest approved effective values. Original values and every addendum change are in `Addenda_Change_History`.
+- Operational columns hold values stored in operational records. Original values and historical addendum changes are in `Addenda_Change_History`.
 - Missing values are left empty, never filled with guesses. Amounts are never summed across currencies or record types.
 - `source_document_id`, `source_page`, `source_quote` point to the evidence for PDF-derived rows.
-- Content: operational records (staff-entered, or created by approving a document) plus approved document values; pending, rejected, and deferred proposals are never exported. `Obligations_Milestones` lists approved document obligations (with the status of the record each created) and the other milestones, reports, and utilization certificates; invoices, budgets, and receipts are financial records, not obligations, and are not in this workbook. `Validation_Review_Issues` lists every review issue with its status.
-- `amended` is TRUE when an approved addendum change has been applied to the agreement; `unresolved_changes` counts its unresolved changes; `Addenda_Change_History` lists every change (prior and proposed value, dates, page, quote, status, reviewer). Operational columns show the current effective values.
+- Content: operational records plus any document-derived records already stored from the former approval workflow. New document extraction output is not included; use the per-document extraction workbook below. `Obligations_Milestones` lists stored milestones, reports, and utilization certificates; invoices, budgets, and receipts are financial records, not obligations.
+- Historical addendum changes remain visible in `Addenda_Change_History`; new extracted changes do not alter operational agreement values.
 - Formatting: frozen header row, filters, `yyyy-mm-dd` dates, `#,##0.00` numbers, sized columns, an `About` sheet. `Partners` is the first (active) sheet, so it re-imports through `POST /api/import/preview`.
+
+## Document-specific extraction workbook
+
+Download from `GET /api/documents/{id}/export/workbook` after extraction. This workbook contains document-scoped Groq/deterministic output and does not create or update operational records. It is an ordinary editable `.xlsx`; edits made in Excel are not synchronized back to ObliGOT.
+
+| Sheet | Contents |
+|---|---|
+| `About` | Filename, document type, extraction status/mode, links, and limitations |
+| `Fields` | Target, field, extracted value, text as written, warnings, and source evidence |
+| `Clauses` | Type, heading, summary, verbatim text, legal-review flag, and source evidence |
+| `Financial_Terms` | Term, description, amount/currency/basis, dates, conditions, and evidence |
+| `Obligations` | Type, title, frequency, fixed/relative deadline details, owner, and evidence |
+| `Programme_Scope` | Dimension, value, target, location/period, and evidence |
+| `Tables` | Extracted-table index and notes; each table also has its own editable `Table_n` sheet with source page and cell values |
+| `Page_Readings` | Physical/printed page, reading method, page classification, transcript, and reading notes |
+| `Extraction_Notes` | Extraction/validation findings and affected pages or fields |
+| `Addendum_Changes` | Any generated addendum comparison output; these values are not applied to agreements |
+
+Evidence columns retain physical page, printed page when known, section, source quote, whether it was found, verification error, and basis (`text_layer`, `ai_transcript`, or OCR). Evidence based on AI transcription still needs comparison with the scanned source image. Workbook cells are not protected.
 
 ## Partners
 

@@ -13,8 +13,8 @@ ObliGOT is an AI-assisted partnership management system for Tata STRIVE Code Ody
 
 ## Stack and layout
 - `frontend/` — React 18, Vite 5, TypeScript, React Router, Lucide, Firebase Web SDK (Auth only). Plain CSS in `src/index.css`. API client in `src/services/functions.service.ts`.
-- `backend/` — FastAPI + Pydantic (the **only** backend). Routes in `app/routes.py` mounted at `/api`; models in `app/models.py`; persistence in `app/repository.py` (Firestore via Admin SDK, or labelled in-memory fallback); rules in `app/rules.py`; Gemini in `app/intelligence.py`.
-- Firestore client access is denied (`firestore.rules`); all reads/writes go through FastAPI. Authorization is enforced in FastAPI, not by hiding UI.
+- `backend/` — FastAPI + Pydantic (the **only** backend). Routes in `app/routes.py` mounted at `/api`; models in `app/models.py`; persistence in `app/repository.py` (Firestore via Admin SDK, or explicitly selected labelled in-memory demo store); rules in `app/rules.py`; Groq handles contextual analysis and document extraction.
+- Firestore client access is denied (`firestore.rules`); all reads/writes go through FastAPI. Authorization is enforced in FastAPI, not by hiding UI. Live Firestore is the default; `OBLIGOT_DEMO_MODE=true` explicitly selects isolated, fictional in-memory data. Automatic transition after a Firestore error is off by default and only enabled with `OBLIGOT_AUTO_DEMO_FALLBACK=true`.
 
 ## Commands
 - Backend tests: `cd backend && python -m pytest -q`
@@ -23,7 +23,7 @@ ObliGOT is an AI-assisted partnership management system for Tata STRIVE Code Ody
 - Ad-hoc Python scripts: run with `python -I` and insert `backend/` into `sys.path` — another project's `app` package can shadow imports on this machine.
 
 ## Domain rules
-- Deterministic code owns dates, deadlines, status evaluation, arithmetic, scoring, and alert creation/resolution. Gemini only summarizes, explains, recommends, and drafts — grounded in supplied fact IDs, validated, and reviewed by a human.
+- Deterministic code owns dates, deadlines, status evaluation, arithmetic, scoring, and alert creation/resolution. Document extraction is advisory, evidence-linked, and exported to a document-scoped editable workbook; it never creates operational records automatically and has no in-app approve/reject/defer gate. AI recommendations remain grounded in supplied facts, validated, and reviewed by a human.
 - Alerts are computed from current records with stable IDs `{rule_id}:{record_type}:{record_id}`; only human review decisions are persisted. "Today" uses Asia/Kolkata.
 - Every alert shows: issue → evidence (actual fields/values) → why it matters → priority (with breakdown) → recommended action → owner → due date.
 - Never fabricate metrics, dates, amounts, commitments, or AI success. AI failure returns `ai_used=false` with a reason and keeps deterministic alerts.

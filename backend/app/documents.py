@@ -1,8 +1,7 @@
 """Document-to-data contract: source documents, evidence, extracted fields, clauses, financial terms, amendments.
 
-These models describe PDF-derived data before and after human review. Nothing here is operational until a
-reviewer approves it; the rules engine reads only approved, normalized records (see ARCHITECTURE.md).
-Model output is untrusted: evidence is verified deterministically against the extracted page text.
+Document extraction stays separate from operational records and is exported in a document-scoped workbook.
+Evidence is verified deterministically against the extracted page text. Legacy review fields remain readable.
 """
 import re
 import unicodedata
@@ -14,9 +13,9 @@ from pydantic import BaseModel, Field, model_validator
 from app.models import _check_date_order
 
 DocumentKind = Literal["mou", "addendum"]
-# uploaded → extracting → needs_review → approved. failed: processing error; blocked: needs OCR/manual input or
-# an addendum whose target agreement is not yet chosen. A document is never approved because extraction finished.
-DocumentStatus = Literal["uploaded", "extracting", "needs_review", "approved", "failed", "blocked", "retry_required"]
+# uploaded → extracting → extracted. failed: processing error; blocked: needs OCR/manual input or
+# an addendum whose target agreement is not yet chosen. `needs_review` and `approved` remain for stored legacy records.
+DocumentStatus = Literal["uploaded", "extracting", "extracted", "needs_review", "approved", "failed", "blocked", "retry_required"]
 PageTextStatus = Literal["text", "low_text"]
 ReviewState = Literal["proposed", "needs_review", "approved", "rejected", "deferred"]
 ExtractionTarget = Literal["partner", "agreement", "programme", "scope", "financial_term", "obligation", "clause"]
@@ -65,7 +64,7 @@ class PageReading(BaseModel):
     id: str
     document_id: str
     page_number: int = Field(ge=1)  # physical index in the PDF, from 1
-    method: Literal["text_layer", "gemini_vision", "ocr"]
+    method: Literal["text_layer", "groq_vision", "gemini_vision", "ocr"]
     model: str | None = None
     transcript: str = ""
     printed_page_number: str | None = None  # as printed on the page, if readable; distinct from page_number
@@ -93,7 +92,7 @@ class ExtractionRun(BaseModel):
     pages_sent: list[int] = Field(default_factory=list)
     pages_skipped_low_text: list[int] = Field(default_factory=list)
     ai_used: bool = False
-    mode: Literal["gemini", "partial", "deterministic"] = "gemini"  # partial: Gemini for some parts, pattern matching for the rest
+    mode: Literal["groq", "gemini", "partial", "deterministic"] = "groq"
     retryable: bool = False  # re-running later can complete what is missing
     note: str | None = None  # which stages completed and which need a retry or review
     ai_error: str | None = None  # not_configured, timeout, rate_limited, empty_response, malformed_response, api_error:<code>, error:<type>
@@ -109,7 +108,7 @@ class SourceDocument(BaseModel):
     uploaded_at: datetime
     uploaded_by: str
     size_bytes: int | None = Field(default=None, ge=0)
-    sha256: str | None = None  # content hash, used to detect re-uploads of the same file
+    sha256: str | None = None  # private content hash; identical uploads still create separate document records
     page_count: int | None = Field(default=None, ge=1)
     pages: list[DocumentPage] = Field(default_factory=list)
     status: DocumentStatus = "uploaded"

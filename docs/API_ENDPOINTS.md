@@ -2,13 +2,17 @@
 
 All routes are defined in `backend/app/routes.py` and mounted under `/api` by `backend/app/main.py`. The interactive schema is at `/docs` while the backend runs. This table was checked against `app.openapi()` in Step 4f.
 
-Status legend: **tested** = covered by backend pytest in in-memory mode; live Firestore, live Gemini success, and real Firebase token verification are not yet tested.
+Status legend: **tested** = covered by backend pytest in in-memory mode; live Firestore, real-MOU extraction accuracy, and real Firebase token verification are not yet tested. Synthetic text-extraction and scanned-image Groq smoke requests have succeeded.
+
+Live Firestore is the default. Setting `OBLIGOT_DEMO_MODE=true` before starting the backend explicitly selects a separate, synthetic in-memory dataset. `/api/health` and `/api/dashboard` report `demo-memory-fallback` in this mode; demo mutations stay in memory and reset on backend restart. Firestore errors in live mode return `503` and do not switch to synthetic records. Firebase authentication remains enabled according to `REQUIRE_FIREBASE_AUTH` in either mode.
+
+`POST /api/intelligence/analyze` and document PDF extraction use Groq chat completions when `GROQ_API_KEY` is configured. Groq vision reads scanned page images using `GROQ_VISION_MODEL`; structured text extraction uses `GROQ_MODEL`. Keys are server-only. Gemini is not used by document extraction.
 
 ## System and dashboard
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
 | GET | `/` | Service pointer to docs and health | Public |
-| GET | `/api/health` | Status, storage mode (`firestore` / `demo-memory-fallback`), `ai_configured`, `auth_required` | Public even when auth is required |
+| GET | `/api/health` | Status, storage mode (`firestore` / `demo-memory-fallback`), `ai_configured` (Groq), `document_extraction`, `auth_required` | Public even when auth is required; legacy `extraction_without_gemini` is retained as an alias; live-store initialization failure returns 503; demo mode is not a Firestore health check |
 | GET | `/api/dashboard` | Record-derived metrics, deterministic deadline `findings`, `as_of` (IST business date), storage mode | Findings skip resolved records (Step 4a) |
 | GET | `/api/alerts?partner_id=&level=&category=&include_reviewed=` | Deterministic alerts from the rules engine (`app/engine.py`), computed on every call and sorted by priority score; each has `rule_id`, evidence (record vs computed values), why it matters, recommended action, owner, due date, `related_alert_ids`, and a priority breakdown | `level` must be `high`, `medium`, or `low` (422 otherwise). Each alert has `review` (current, or `null`), `previous_review` when the facts changed since, and `hidden_by_review`. Dismissed and still-deferred alerts are omitted unless `include_reviewed=true`; `counts.hidden_by_review` reports how many |
 | POST | `/api/alerts/{alert_id}/review` | Record `acknowledged`, `deferred` (`deferred_until` after today, ≤ 365 days), or `dismissed` (`reason` ≥ 5 chars); stored in `alert_reviews` with a fingerprint of the alert's stored facts; logs an activity | 404 if the alert is not currently raised; 422 on invalid combinations |
@@ -78,7 +82,7 @@ Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previo
 ## Intelligence
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
-| POST | `/api/intelligence/analyze` | Gemini analysis of `partner_id` summary + `context` | Returns `ai_used`; when false, `ai_error` is `not_configured`, `timeout`, `empty_response`, `api_error:<code>`, or `error:<type>` |
+| POST | `/api/intelligence/analyze` | Groq analysis of `partner_id` summary + `context` | Returns `ai_used`; when false, `ai_error` is `not_configured`, `timeout`, `empty_response`, `api_error:<code>`, or `error:<type>` |
 
 ## Import
 | Method | Path | Purpose | Notes |
@@ -91,45 +95,39 @@ Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previo
 | GET | `/api/dashboard/summary` | Management summary computed from current records and alerts | Amounts summed per currency and per kind only; coverage from approved scope |
 | GET | `/api/options` | Allowed values (schema enums) and current partners, projects, agreements, states, programmes | For forms and filters |
 
-## Documents (Step P2a)
+## Documents (P6 document-to-workbook workflow)
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
-| POST | `/api/documents` | Upload an MOU/addendum PDF (multipart: `file`, `kind` = `mou`/`addendum`, optional `partner_id`, `agreement_id`) and inspect it page by page | 201 with the document. 415 not multipart or not a PDF (checked by file signature); 413 over `MAX_DOCUMENT_MB`; 422 empty file or bad `kind`; 404 unknown partner/agreement; 422 agreement of another partner; 409 same file already uploaded (`detail.document_id`). A damaged, password-protected, or over-`MAX_DOCUMENT_PAGES` PDF returns 201 with `status: failed` and `error` (file not stored). No text extraction or approval happens here. |
+| POST | `/api/documents` | Upload an MOU/addendum PDF (multipart: `file`, `kind` = `mou`/`addendum`, optional `partner_id`, `agreement_id`) and inspect it page by page | 201 with a new document ID on every upload, including identical file contents. 415 not multipart or not a PDF; 413 over `MAX_DOCUMENT_MB`; 422 empty file or bad `kind`; 404 unknown partner/agreement; 422 agreement of another partner. A damaged, password-protected, or over-`MAX_DOCUMENT_PAGES` PDF returns 201 with `status: failed` and `error` (file not stored). The UI does not require partner selection. |
 | GET | `/api/documents` | List documents, newest first | Filters: `partner_id`, `agreement_id`, `status`, `kind` |
-| GET | `/api/documents/{id}` | One document with per-page text status | 404 when missing. There is no download route; files are private. |
-| POST | `/api/documents/{id}/extract` | Start Gemini extraction in the background (Step P3a) | 202 with `status: extracting`; poll `GET /api/documents/{id}` (`extraction.chunks_done` / `chunks_total`) until `needs_review` or `failed` (`error`, `extraction.ai_error`). 503 when Gemini is not configured (status unchanged). 409 while running (unless stale > 15 min), when approved, when the file was unreadable, when no page has text, or when proposals were already reviewed. 404 when missing. |
-| PATCH | `/api/documents/{id}/proposals/{collection}/{item_id}` | Review one proposal (Step P3b). `collection`: `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope`. Body: `decision` (`approve`/`reject`/`defer`/`reset`), optional `value` (corrected extracted field), `changes` (corrected fields of other proposals, approve only), `note` | 422: approving with nothing to approve, bad date, unknown/forbidden change, defer without a note, approving unverified evidence without a note. 409 unless the document needs review. Reviewer and time recorded; logged. |
-| PATCH | `/api/documents/{id}/issues/{issue_id}` | Resolve, defer, or reopen a review issue (`status`, `resolution`) | Resolution note required for resolved/deferred |
-| GET | `/api/documents/{id}/approval-check` | `{ready, blockers}` (optional `partner_id`, `create_partner`) | Blockers: undecided values, open issues, two different approved values for one field, expiry before start, no partner, addendum (P4), wrong status |
-| POST | `/api/documents/{id}/approve` | Approve a reviewed MOU. Body: `partner_id`, `create_partner`, `owner`, `overwrite_existing` | 409 with `blockers`, or with `conflicts` when approved values differ from an already linked agreement (nothing written). Creates/fills the agreement (`source_document_id`), a project when milestones/scope/programme are approved, and milestones, reports, and UC finance records from approved obligations; fund releases and other obligations stay register-only. The document becomes `approved` and locked. |
-| GET | `/api/documents/{id}/extraction` | Proposals for review: `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope`, `review_issues`, plus `document` | None of these are approved or operational. |
+| GET | `/api/documents/{id}` | One document with per-page text status | 404 when missing. Source PDFs remain private and have no download route. |
+| POST | `/api/documents/{id}/extract` | Start or retry Groq extraction in the background | 202 with `status: extracting`; poll `GET /api/documents/{id}` for progress until `extracted`, `retry_required`, or `failed`. Completed page readings and extraction chunks are reused on retry. 409 while a run is active (unless stale > 15 min), for an unreadable file, when no extraction method is available for scanned pages, or for legacy reviewed/approved records. 404 when missing. |
+| GET | `/api/documents/{id}/extraction` | Extracted values: `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope`, `tables`, `review_issues`, plus `document` | Values remain scoped to the source document; they do not create or update operational records. |
+| GET | `/api/documents/{id}/export/workbook` | Download an editable, document-specific XLSX containing extracted values, evidence, page readings, tables, extraction notes, and any generated addendum changes | 404 when missing. Edits in the workbook are not saved back to ObliGOT or operational collections. Requires sign-in when `REQUIRE_FIREBASE_AUTH=true`. |
 
 ## Scanned pages (Step S1)
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
-| GET | `/api/documents/{id}/pages` | Document map: per physical page, `method` (`text_layer` / `gemini_vision`), `page_type`, `printed_page_number`, section labels, table continuation flags, unreadable spots, legibility, transcript | Filled by extraction; transcripts of scanned pages are AI readings, not verified facts |
+| GET | `/api/documents/{id}/pages` | Document map: per physical page, `method` (`text_layer` / `groq_vision`), `page_type`, `printed_page_number`, section labels, table continuation flags, unreadable spots, legibility, transcript | Filled by extraction; transcripts of scanned pages are AI readings, not verified facts |
 | GET | `/api/documents/{id}/pages/{n}/image` | JPEG of one page for side-by-side review (`dpi` 50–200, default 110) | Requires sign-in like every route; `Cache-Control: private, no-store`; 404 outside the page range |
 
-`GET /api/documents/{id}/extraction` also returns `tables` (S2): headers, rows with page and raw cells, per-row `verified`, units, notes, section; obligations carry a `deadline` rule (type, wording, offset, unit, trigger, recurrence); evidence carries `section` and `printed_page`. Tables are reviewed through `PATCH /api/documents/{id}/proposals/tables/{item_id}`.
+Tables (S2) are exported as editable Excel sheets with their original headers, rows, and source pages. Obligations carry a `deadline` rule (type, wording, offset, unit, trigger, recurrence); evidence carries `section` and `printed_page`.
 
-`POST /api/documents/{id}/extract` now reads scanned pages first (page images in batches of `VISION_BATCH_PAGES`), then extracts from the text layer and the transcripts; `extraction.pages_to_read` / `pages_read` report progress. Scanned PDFs are accepted (`uploaded`) when Gemini is configured, and `blocked` only when it is not. Rate limits (429) and temporary overload (503) are retried (`GEMINI_RETRY_DELAYS`); otherwise the run fails with `rate_limited` / `unavailable`.
+`POST /api/documents/{id}/extract` reads scanned pages first (at most three page images per Groq vision request), then extracts from the text layer and transcripts; `extraction.pages_to_read` / `pages_read` report progress. Existing page readings and completed extraction chunks are reused on retry. Rate limits (429), timeouts, and temporary overload (5xx) are retried with bounded backoff; otherwise the run records an error and available partial output remains exportable. Legacy `gemini` extraction mode values remain readable; new runs report `groq`.
 
 ## Addenda (Step P4a)
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
 | GET | `/api/documents/{id}/agreement-candidates` | Agreements an addendum may amend, with reasons (same partner, reference number found) | Suggestion only; nothing is linked automatically |
-| PATCH | `/api/documents/{id}/link` | Choose the agreement an addendum amends (`agreement_id`) | Addenda only (422 for an MOU); 422 other partner; 409 once changes were decided or after approval |
-| POST | `/api/documents/{id}/changes` | Compare the extracted addendum with the agreement's current values; create proposed changes (prior → proposed, amendment/effective dates, evidence) | Restated values are reported as `unchanged`; two values for one term, or a different value from another addendum with the same effective date → `unresolved`. 409 before linking/extraction or after decisions |
+| PATCH | `/api/documents/{id}/link` | Choose the agreement an addendum amends (`agreement_id`) | Addenda only (422 for an MOU); 422 for a different partner. Link is explicit; no record is applied. |
+| POST | `/api/documents/{id}/changes` | Compare an extracted addendum with the agreement's current values; create document-scoped changes (prior → proposed, amendment/effective dates, evidence) | Restated values are reported as `unchanged`; conflicting or unclear values remain notes in the workbook. Changes never update the operational agreement. |
 | GET | `/api/documents/{id}/changes` | The addendum's changes in effective-date order | |
-| PATCH | `/api/agreement-changes/{id}` | `decision` approve / reject / unresolved / reset; optional `effective_date`, `amendment_date`, corrected `proposed_value` (with `note`) | Approve needs a known effective date and verified evidence (422); 409 when a different value is already approved for the same term and effective date; unresolved needs a note |
-| GET | `/api/agreements/{id}/history` | Original values, every change, current effective values, counts (proposed/approved/rejected/unresolved/applied/scheduled) | |
-
-`POST /api/documents/{id}/approve` also approves an addendum once it is linked, compared, every change decided, and issues closed: approved changes in force are applied to the agreement (latest effective date wins per term; status recomputed from the new expiry), future-dated ones are applied when their date arrives (checked when alerts or agreements are read), unresolved and rejected changes are never applied; approved added obligations become operational records.
+| GET | `/api/agreements/{id}/history` | Original values, historical changes, and current effective values | Read-only; historical previously approved changes remain visible. |
 
 ## Export (Step P3c)
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
-| GET | `/api/export/workbook` | Download the standard workbook (`docs/WORKBOOK_SCHEMA.md`) | XLSX attachment `obligot-workbook-<date>.xlsx`; operational records and approved document values only; logged as `workbook_exported`. Requires sign-in when `REQUIRE_FIREBASE_AUTH=true`. |
+| GET | `/api/export/workbook` | Download the standard operational workbook (`docs/WORKBOOK_SCHEMA.md`) | XLSX attachment `obligot-workbook-<date>.xlsx`; does not include new document-scoped extraction output, which uses the per-document route above. Historical operational records remain. Requires sign-in when `REQUIRE_FIREBASE_AUTH=true`. |
 
 ## Common error responses
 - `401` missing or invalid Firebase ID token (only when `REQUIRE_FIREBASE_AUTH=true`).

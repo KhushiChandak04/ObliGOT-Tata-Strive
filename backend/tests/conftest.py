@@ -6,34 +6,27 @@ from app.config import settings
 
 @pytest.fixture(autouse=True)
 def local_settings_do_not_apply(monkeypatch):
-    """Tests must not depend on a developer's backend/.env (auth, Firebase credentials, Gemini key)."""
+    """Tests must not depend on a developer's backend/.env or credentials."""
     monkeypatch.setattr(settings, "require_firebase_auth", False)
     monkeypatch.setattr(settings, "firebase_credentials_file", "")
-    monkeypatch.setattr(settings, "gemini_api_key", "")
-    monkeypatch.setattr(settings, "gemini_backoff_base_seconds", 0.0)  # no real waiting on retries in tests
-    monkeypatch.setattr(settings, "gemini_max_retry_wait_seconds", 0.0)
-    monkeypatch.setattr(settings, "gemini_fallback_models", [])
+    monkeypatch.setattr(settings, "groq_api_key", "")
     monkeypatch.setattr(settings, "ocr_enabled", False)  # OCR tests switch it on with a fake; results never depend on the machine
 
 
 @pytest.fixture(autouse=True)
-def no_real_gemini(monkeypatch):
-    """Tests must never send anything to Google. Tests that exercise the client install their own fake."""
-    from google import genai
-
-    class Blocked:
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError("A test tried to call the real Gemini API; install a fake instead")
-    monkeypatch.setattr(genai, "Client", Blocked)
-
-
-@pytest.fixture(autouse=True)
-def isolated_memory_store():
-    """Run every test against the in-memory store and restore it afterwards, so tests cannot leak records."""
+def isolated_memory_store(monkeypatch):
+    """Give each test an isolated repository adapter without contacting Firestore."""
     saved = {name: dict(records) for name, records in repository._COLLECTIONS.items()}
+    saved_demo = {name: dict(records) for name, records in repository._DEMO_COLLECTIONS.items()}
     repository._firestore_client = None
     repository._firestore_attempted = True
+    monkeypatch.setattr(repository, "_DEMO_MODE", False)
+    monkeypatch.setattr(repository, "_AUTO_DEMO_FALLBACK", False)
+    monkeypatch.setattr(repository, "_TEST_MEMORY_STORE", True)
     yield
     for name, records in repository._COLLECTIONS.items():
         records.clear()
         records.update(saved[name])
+    for name, records in repository._DEMO_COLLECTIONS.items():
+        records.clear()
+        records.update(saved_demo[name])

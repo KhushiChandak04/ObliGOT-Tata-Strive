@@ -73,26 +73,26 @@ export interface DashboardResponse {
   demo_data_notice: string;
 }
 export type DocumentKind = "mou" | "addendum";
-export type DocumentStatus = "uploaded" | "extracting" | "needs_review" | "approved" | "failed" | "blocked" | "retry_required";
-// Documents, extraction proposals, and review (backend/app/documents.py, document_routes.py, document_review.py).
+export type DocumentStatus = "uploaded" | "extracting" | "extracted" | "needs_review" | "approved" | "failed" | "blocked" | "retry_required";
+// Documents and extraction output (backend/app/documents.py and document_routes.py).
 export interface ExtractionRun {
   started_at: string; finished_at?: string | null; model: string; pages_to_read: number; pages_read: number;
   chunks_total: number; chunks_done: number; pages_sent: number[]; pages_skipped_low_text: number[];
   ai_used: boolean; ai_error?: string | null; counts: Record<string, number>;
-  /** gemini: fully AI-extracted; partial: Gemini for some parts, pattern matching for the rest; deterministic: no Gemini. */
-  mode: "gemini" | "partial" | "deterministic"; retryable: boolean; note?: string | null;
+  /** groq: fully AI-extracted; partial: Groq for some parts, pattern matching for the rest; deterministic: no AI extraction. */
+  mode: "groq" | "gemini" | "partial" | "deterministic"; retryable: boolean; note?: string | null;
 }
 export interface SourceDocument {
   id: string; filename: string; kind: DocumentKind; partner_id?: string | null; agreement_id?: string | null;
   uploaded_at: string; uploaded_by: string; page_count?: number | null; status: DocumentStatus;
   pages?: { page_number: number; char_count: number; text_status: "text" | "low_text" }[];
   warnings: string[]; error?: string | null; extraction?: ExtractionRun | null;
-  approved_by?: string | null; approved_at?: string | null;
+  approved_by?: string | null; approved_at?: string | null; source_label?: SourceLabel;
 }
 export type ProposalReviewState = "proposed" | "needs_review" | "approved" | "rejected" | "deferred";
 export interface DocumentEvidence {
   document_id: string; page: number; quote: string; verified: boolean; verification_error?: string | null;
-  /** text_layer: matched the PDF's own text; ai_transcript: matched Gemini's reading of a scanned page (weaker). */
+  /** text_layer: matched the PDF's own text; ai_transcript: matched an AI transcription of a scanned page (weaker). */
   basis?: "text_layer" | "ai_transcript" | "ocr_text" | null; section?: string | null; printed_page?: string | null;
 }
 interface ProposalBase {
@@ -132,11 +132,6 @@ export type ProposalCollection = "extracted_fields" | "clauses" | "financial_ter
 export interface DocumentReview {
   document: SourceDocument; fields: ExtractedField[]; clauses: ClauseProposal[]; financial_terms: FinancialTermProposal[];
   obligations: ObligationProposal[]; programme_scope: ScopeProposal[]; tables: TableProposal[]; issues: DocumentIssue[];
-}
-export interface ApprovalCheck { ready: boolean; blockers: string[] }
-export interface ApprovalResult {
-  document: SourceDocument; agreement_id: string; partner_id: string | null; project_id?: string | null;
-  created: Record<string, number>; partner_created?: boolean; project_created?: boolean;
 }
 /** An addendum's change to an agreement (GET /api/agreements/{id}/history). */
 export interface AmendmentChange {

@@ -79,9 +79,10 @@ def test_blank_or_scanned_pages_are_flagged_not_treated_as_extracted():
     assert doc["warnings"] and "Page 2 has little or no embedded text" in doc["warnings"][0]
 
 
-def test_pdf_without_any_text_is_blocked_for_manual_review():
+def test_pdf_without_any_text_is_blocked_with_extraction_guidance():
     doc = upload(make_pdf(["", ""])).json()
-    assert doc["status"] == "blocked" and "Gemini is not configured to read page images" in doc["warnings"][0]
+    assert doc["status"] == "blocked"
+    assert "Configure Groq vision or install Tesseract OCR to extract text" in doc["warnings"][0]
 
 
 def test_non_pdf_empty_and_oversized_files_are_rejected(monkeypatch):
@@ -107,12 +108,14 @@ def test_page_limit_rejects_instead_of_truncating(monkeypatch):
     assert doc["status"] == "failed" and "3 pages; the limit is 2" in doc["error"]
 
 
-def test_same_file_twice_returns_conflict_with_existing_id():
+def test_same_file_can_be_uploaded_twice_as_separate_documents():
     data = make_pdf([clause(1)])
     first = upload(data).json()
     second = upload(data)
-    assert second.status_code == 409 and second.json()["detail"]["document_id"] == first["id"]
-    assert len(list_records("documents")) == 1
+    assert second.status_code == 201
+    assert second.json()["id"] != first["id"]
+    assert second.json()["sha256"] == first["sha256"]
+    assert len(list_records("documents")) == 2
 
 
 def test_kind_and_links_are_validated():

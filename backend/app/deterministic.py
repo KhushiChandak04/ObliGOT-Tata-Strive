@@ -1,4 +1,4 @@
-"""Deterministic extraction used when Gemini is unavailable (no key, quota used up, or failing).
+"""Deterministic extraction used when Groq is unavailable (no key, quota used up, or failing).
 
 It recovers only explicitly labelled, pattern-identifiable facts from text that is actually available — the PDF
 text layer, OCR text, or page readings already stored — and never interprets clauses, obligations, or tables:
@@ -6,7 +6,7 @@ text layer, OCR text, or page readings already stored — and never interprets c
 - reference numbers introduced by "Ref./Reference/MOU/Agreement No.",
 - money amounts written with a currency code or an unambiguous currency symbol (any country; see app.money).
 Every value keeps its exact matched wording as the quote, so evidence is verified against the same text.
-Labels are recognised in English only; documents in other languages need Gemini or manual entry.
+Labels are recognised in English only; documents in other languages need Groq or manual entry.
 """
 import re
 from datetime import date

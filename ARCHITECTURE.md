@@ -5,19 +5,19 @@ Status key: **[current]** exists in the codebase today; **[planned]** approved i
 ## Overview
 - **Frontend [current]:** React 18, TypeScript, Vite, React Router, Lucide, Firebase Web SDK (Auth only). Plain CSS design system in `frontend/src/index.css`.
 - **Backend [current]:** FastAPI and Pydantic — the single backend (team decision, Step 2). Router in `app.routes` mounted at `/api` by `app.main`.
-- **Persistence [current]:** Cloud Firestore through the Firebase Admin SDK in `app.repository`. Without credentials the backend logs a warning and uses an in-memory demo fallback that resets on restart and is reported as `demo-memory-fallback` by `/api/health`. Firestore operation failures raise `DataStoreUnavailable` → HTTP 503.
+- **Persistence [current]:** Cloud Firestore through the Firebase Admin SDK in `app.repository` is the default. `OBLIGOT_DEMO_MODE=true` explicitly selects a separate fictional in-memory dataset; it performs no Firestore reads or writes, is reported as `demo-memory-fallback` by `/api/health`, and resets on backend restart. Firestore initialization/operation failures in live mode raise `DataStoreUnavailable` → HTTP 503 unless the explicitly opt-in `OBLIGOT_AUTO_DEMO_FALLBACK=true` setting is enabled; then the process switches one way to synthetic data until restart. The UI observes the selected mode through the `X-Obligot-Storage-Mode` response header.
 - **Authentication [current, partial]:** the frontend requires a Firebase user (email/password or Google) for the workspace (`RequireAuth`); Firebase ID-token middleware (`REQUIRE_FIREBASE_AUTH`, on in local setup since F1) using `app.auth.verify_token`; credentials from `FIREBASE_CREDENTIALS_FILE` or Application Default Credentials; the Firebase Admin app is created once in `app.firebase_app` and shared with Firestore. Invalid token → 401; auth service unavailable → 503. **[planned]** role checks (admin / manager / viewer) via FastAPI dependencies, roles stored in `users`.
-- **AI [current, partial]:** server-side Gemini via the async `google-genai` client with a timeout; failures return `ai_used=false` plus `ai_error` and are logged without request details. **[planned]** structured, validated, fact-grounded output and human review.
+- **AI [current, partial]:** server-side Groq chat completions for grounded contextual analysis and document extraction; API keys remain in the backend environment and failures return a reason without inventing output.
 - **Import [current]:** CSV/XLSX/JSON preview only; never writes data.
 
 ## Request flow
 ```
 React page → api client (adds Firebase ID token) → FastAPI route
   → services (rules.py, priority, intelligence.py)
-  → repository.py (Firestore | labelled in-memory fallback)
+  → repository.py (Firestore by default | isolated memory store only with explicit demo mode)
   → typed JSON → page state (loading / empty / error / success)
 ```
-The browser never reads Firestore directly: `firestore.rules` denies all client access. Authorization is enforced in FastAPI, never only by hiding UI. Gemini keys stay server-side.
+The browser never reads Firestore directly: `firestore.rules` denies all client access. Authorization is enforced in FastAPI, never only by hiding UI. Groq keys stay server-side.
 
 ## Data model
 Existing collection names and fields are preserved; new fields are optional for backward compatibility.
@@ -38,12 +38,12 @@ Existing collection names and fields are preserved; new fields are optional for 
 | `activities` | current (Step 7b) | entity_type, entity_id, partner_id, event, actor, timestamp, details (audit trail) |
 | `users` | planned | uid, email, name, role |
 | `config/rules` | current (Step 7a) | rule thresholds |
-| `documents` | current (P2a) | `SourceDocument`: filename, kind (mou / addendum), partner_id, agreement_id, uploaded_at/by, page_count, pages[] (text status), status, storage_ref (private; file bytes never in Firestore), warnings, error, approval |
-| `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope` | current (P3a, proposals only) | models in `app/documents.py`; each with evidence and review state |
-| `agreement_changes` | planned (P4) | addendum changes: prior / proposed value, amendment and effective dates, evidence, status, reviewer |
-| `review_issues` | current (P3a) | validation and review issues per document |
+| `documents` | current (P2a/P6) | `SourceDocument`: filename, kind (mou / addendum), optional partner/agreement links, uploaded_at/by, page_count, pages[] (text status), extraction status/progress, private storage_ref, warnings and error |
+| `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope`, `tables` | current (P3a/P6) | document-scoped extraction output in `app/documents.py`; each value carries evidence and warnings and is exported to an editable workbook |
+| `agreement_changes` | current (P4/P6) | addendum comparison output: prior / extracted value, amendment/effective dates, evidence; stays document-scoped and is not applied to operational agreements |
+| `review_issues` | current (P3a/P6) | extraction notes and validation findings per document; not a workflow approval queue |
 
-Every record carries `source_label` (`demo` or `user`). Demo records are fictional.
+Every record carries `source_label` (`demo` or `user`). Demo records and document examples are fictional; sample document records have no source PDF or source-page evidence. Authentication and Firestore deny-all client rules remain in force in both modes. The configured data mode is fixed at backend startup; an enabled automatic fallback is a one-way transition and requires a restart to select a data source again.
 
 ## Deterministic rules engine [current — Step 7a, `app/engine.py`]
 `evaluate(records, config, today) → list[Alert]` — pure functions in `app/rules.py`; `today` computed in Asia/Kolkata.
@@ -63,11 +63,11 @@ Every record carries `source_label` (`demo` or `user`). Demo records are fiction
 ## AI [planned]
 `POST /api/intelligence/analyze` keeps its contract and gains optional `alert_id` and `mode` (summary / recommendation / message draft).
 1. Build a fact pack of relevant records and alerts, each fact with an id.
-2. Gemini returns schema-constrained JSON: summary, observations with cited fact ids, suggested action, suggested priority, message draft, missing information.
+2. Groq returns analysis grounded in the supplied partner facts.
 3. Validate; reject citations to fact ids not supplied.
 4. Run off the event loop with a timeout. Failure → `ai_used=false` plus reason; deterministic alerts unaffected.
 5. Save as `pending` in `ai_recommendations`; human approves / edits / rejects; decision logged in `activities`.
-Gemini never computes dates, scores, or amounts.
+Groq never computes dates, scores, or amounts.
 
 ## Roles [planned]
 Viewer: read. Manager: create/update, review recommendations, tasks. Admin: plus config, import, delete, roles. `REQUIRE_FIREBASE_AUTH=false` is local-only with a visible demo banner.
@@ -80,31 +80,32 @@ Viewer: read. Manager: create/update, review recommendations, tasks. Admin: plus
 ## Frontend [planned]
 Typed API client per resource, `useResource` hook, shared `StatusBadge`, `DataTable`, `Dialog`, `EvidencePanel`, `AlertRow`, `PriorityBreakdown`. Pages: Dashboard (management overview + Today's 5), Action center (team workspace), Partners, Partner 360 (tabbed), Pipeline, Agreements, Projects, Finance, Reports, Import, Sign-in. Recharts and `motion` only when approved (Step 11).
 
-## Document-to-data pipeline [contract current — P1a; upload and page inspection current — P2a; extraction to proposals — P3a; review and approval gate — P3b; export — P3c; addenda — P4a (synthetic fixtures only)]
+## Document-to-data pipeline [current — upload/page inspection P2a; extraction P3a; editable document export P6; addendum comparison P4a]
 ```
-Upload PDF (staff) → FastAPI validates type/size → private storage (Firebase Storage or local folder outside git)
-  → PyMuPDF: page count, text per page, low-text pages flagged (OCR/manual review; never silently skipped)
-  → Gemini (structured output, page-aware chunks): proposed fields, clauses, obligations, financial terms, addendum changes
+Upload PDF (staff) → FastAPI validates type/size → unique document record per upload (identical bytes may be uploaded again) → private storage (Firebase Storage or local folder outside git)
+  → PyMuPDF: page count, text per page, low-text pages flagged for retry/source inspection (never silently skipped)
+  → Groq vision (scanned pages) and structured output (page-aware chunks): fields, clauses, obligations, financial terms, addendum changes
   → Pydantic + deterministic checks: types, dates, amounts, page in range, quote found on the cited page (`verify_evidence`)
-  → human review: confirm / correct / defer / reject; addendum target chosen by a human when unsure
-  → approved values → operational records (agreements, projects, milestones, reports, finance) + workbook export
-  → rules engine (approved records only) → alerts → Gemini explanation from verified facts
+  → document-scoped extraction output → editable per-document XLSX (values, evidence, source page readings, tables, notes)
+  → staff may edit the downloaded workbook; edits are not written back to ObliGOT
+  → no automatic writes from Groq output into operational collections; operational records remain managed through their own workflows
+  → rules engine evaluates operational records → alerts → Groq explanation from verified facts
 ```
 | Stage | Owner |
 |---|---|
-| Upload, status, review, export, alerts UI | React |
+| Upload, extraction, evidence display, document workbook download, alerts UI | React |
 | Orchestration, upload validation, lifecycle, errors | FastAPI |
 | Page text and low-text detection | PyMuPDF |
-| Interpreting contract language; proposing values | Gemini (advisory) |
+| Interpreting contract language; proposing values | Groq (advisory) |
 | Types, page bounds, quotes, dates, amounts, IDs, state transitions | Pydantic + Python |
-| Confirming values and amendments | Human reviewer |
-| Multi-sheet XLSX | openpyxl, contract in `app/workbook.py` (`docs/WORKBOOK_SCHEMA.md`) |
+| Document-scoped extraction XLSX | openpyxl (`app/document_workbook.py`), editable export with source evidence |
+| Operational multi-sheet XLSX | openpyxl, contract in `app/workbook.py` (`docs/WORKBOOK_SCHEMA.md`) |
 | Deadlines, comparisons, alert triggers and scores | Rules engine |
 
-- **Evidence:** every significant value keeps verbatim text, the normalized value, warnings, and the approved value separately, plus document, page, and quote. Evidence is shown as verified only when `verify_evidence` finds the quote on the cited page.
-- **Amendments:** originals are never overwritten. Each addendum change stores prior and proposed values with evidence; it is applied to the effective view only after approval, in effective-date order. Conflicting or unclear changes stay `unresolved` and do not affect alerts.
+- **Evidence:** every significant value keeps text as written, extracted value, warnings, and source document/page/quote. Evidence is marked as found only when `verify_evidence` finds the quote on the cited page; scanned-page evidence is explicitly based on an AI transcript. Legacy review fields remain readable for previously stored records but are not part of the new workflow.
+- **Amendments:** linking an addendum to an agreement is explicit. Each addendum comparison can include prior and extracted values with evidence in the document workbook; it never updates the operational agreement or alerts.
 - **Keep distinct:** budget vs invoice, estimated vs confirmed commitment, ceiling vs spent, funds received vs owed, signing vs effective vs programme start date.
-- Without a Gemini key, upload, page inspection, manual review, export from approved data, and deterministic alerts still work; the UI states that AI was not used.
+- Without a Groq key, upload, page inspection, deterministic text extraction where possible, workbook export, and deterministic alerts still work; the UI states that AI was not used.
 
 ## Routing
 `backend/app/main.py` mounts `app.routes.router` at `/api`. `app.openapi()` is exercised in tests to detect missing or malformed route registration. Detail routes return 404 for missing IDs. The full route inventory is in `docs/API_ENDPOINTS.md`. Legacy SQLite modules were removed in Step 4f.

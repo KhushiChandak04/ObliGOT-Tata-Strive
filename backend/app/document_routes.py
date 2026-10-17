@@ -1,7 +1,4 @@
-"""Document intake: upload MOU/addendum PDFs, inspect them page by page, and track their status.
-
-Upload never extracts or approves anything. A document becomes operational only after review (later phases).
-"""
+"""Document intake and extraction: upload private MOU/addendum PDFs and export document-scoped results."""
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
@@ -14,8 +11,9 @@ from fastapi.concurrency import run_in_threadpool
 from app import deterministic, document_storage, ocr
 from app.config import settings
 from app.documents import DocumentStatus, ExtractionRun, PageReading, SourceDocument
-from app.extraction import ExtractionFailed, Generate, build_prompt, build_proposals, chunk_pages, gemini_generate, parse_chunk
-from app.page_reading import batches, gemini_read_pages, parse_batch, render_page
+from app.document_workbook import build_document_workbook
+from app.extraction import ExtractionFailed, Generate, build_prompt, build_proposals, chunk_pages, groq_generate, parse_chunk
+from app.page_reading import batches, groq_read_pages, parse_batch, render_page
 from app.pdf_inspect import PdfInspectionError, inspect_pdf, looks_like_pdf
 from app.repository import delete_record, get_record, list_records, patch_record, put_record
 from app.reviews import actor, log_activity, now_iso
@@ -48,11 +46,10 @@ def _resolve_links(partner_id: str | None, agreement_id: str | None) -> tuple[st
 
 
 @router.post("/documents", response_model=SourceDocument, status_code=201,
-             responses={409: {"description": "The same file was already uploaded"},
-                        413: {"description": "File too large"},
+             responses={413: {"description": "File too large"},
                         415: {"description": "Not a PDF"}})
 async def upload_document(request: Request) -> dict:
-    """Upload a PDF (multipart: file, kind = mou | addendum, optional partner_id, agreement_id) and inspect it."""
+    """Upload and inspect a PDF; every accepted upload gets a new document record."""
     if "multipart/form-data" not in request.headers.get("content-type", "").lower():
         raise HTTPException(status_code=415, detail="Send the PDF as multipart/form-data")
     form = await request.form()
@@ -73,12 +70,6 @@ async def upload_document(request: Request) -> dict:
         raise HTTPException(status_code=415, detail="Only PDF files are accepted")
 
     digest = hashlib.sha256(raw).hexdigest()
-    duplicate = next((d for d in list_records("documents")
-                      if d.get("sha256") == digest and d.get("status") != "failed"), None)
-    if duplicate:
-        raise HTTPException(status_code=409, detail={
-            "message": "This file was already uploaded", "document_id": duplicate["id"]})
-
     document_id = f"doc-{uuid4().hex[:12]}"
     who = actor(request)
     record = {
@@ -96,18 +87,18 @@ async def upload_document(request: Request) -> dict:
         record["storage_ref"] = await run_in_threadpool(document_storage.save_pdf, document_id, raw)
         record.update(page_count=inspection.page_count, pages=[p.model_dump() for p in inspection.pages])
         low = inspection.low_text_pages
-        if low and (settings.gemini_api_key or ocr.ocr_available()):
+        if low and (settings.groq_available or ocr.ocr_available()):
             # Scanned pages are read from page images during extraction (AI transcription, reviewed by a person).
             record["status"] = "uploaded"
             scope = "All pages are" if len(low) == inspection.page_count else f"Page{'s' if len(low) > 1 else ''} {', '.join(map(str, low))} {'are' if len(low) > 1 else 'is'}"
             record["warnings"].append(
                 f"{scope} scanned images without a text layer. During extraction "
-                + ("Gemini reads them from the page images (an AI transcription)" if settings.gemini_api_key else "local OCR reads them (plain text)")
-                + ", so compare extracted values with the page images when reviewing.")
+                + ("Groq reads them from the page images (an AI transcription)" if settings.groq_available else "local OCR reads them (plain text)")
+                + ", so compare extracted values with the page images.")
         elif len(low) == inspection.page_count:
             record["status"] = "blocked"
             record["warnings"].append(
-                "No page has embedded text (likely a scanned PDF). Gemini is not configured to read page images; the document needs manual review.")
+                "No page has embedded text (likely a scanned PDF). Configure Groq vision or install Tesseract OCR to extract text from the page images.")
         else:
             record["status"] = "uploaded"
             if low:
@@ -117,7 +108,7 @@ async def upload_document(request: Request) -> dict:
                     f"text (scanned, blank, or image-only). Review {'them' if many else 'it'} manually; "
                     f"{'they are' if many else 'it is'} not extracted.")
         if kind == "addendum" and not agreement_id:
-            record["warnings"].append("Choose the agreement this addendum amends before its changes can be reviewed.")
+            record["warnings"].append("Choose the agreement this addendum amends before comparing its changes.")
     SourceDocument(id=document_id, **record)  # validate before saving
     saved = put_record("documents", record, document_id)
     outcome = "could not be read" if record["status"] == "failed" else f"inspected ({record.get('page_count')} pages)"
@@ -171,12 +162,12 @@ def _check_can_extract(document: dict) -> None:
         raise HTTPException(status_code=409, detail="The document is approved; its values can no longer be re-extracted")
     if not document.get("storage_ref"):
         raise HTTPException(status_code=409, detail="The file could not be read when uploaded; upload a readable copy")
-    if all(p["text_status"] == "low_text" for p in document.get("pages", [])) and not settings.gemini_api_key \
+    if all(p["text_status"] == "low_text" for p in document.get("pages", [])) and not settings.groq_available \
             and not ocr.ocr_available() and not _pages_for(document["id"]):
-        raise HTTPException(status_code=409, detail="No page has embedded text, Gemini is not configured, and OCR (Tesseract) is not installed; enter the values manually or configure one of them")
+        raise HTTPException(status_code=409, detail="No page has embedded text, Groq is not configured, and OCR (Tesseract) is not installed; enter the values manually or configure one of them")
     proposals = _proposals_for(document["id"])
     if any(r.get("review_state") in ("approved", "rejected") for c, rows in proposals.items() if c != "review_issues" for r in rows):
-        raise HTTPException(status_code=409, detail="Some extracted values were already reviewed; re-extracting would discard that review")
+        raise HTTPException(status_code=409, detail="Legacy reviewed values exist; re-extracting would replace them")
 
 
 def _page_id(document_id: str, number: int) -> str:
@@ -190,9 +181,9 @@ def _pages_for(document_id: str) -> dict[int, dict]:
 
 
 async def _read_pages(document: dict, raw: bytes, inspection, run: dict, use_vision: bool) -> tuple[dict[int, dict], ExtractionFailed | None]:
-    """Every page gets a PageReading: text-layer pages from the PDF; scanned pages from Gemini vision when
+    """Every page gets a PageReading: text-layer pages from the PDF; scanned pages from Groq vision when
     available. Readings are saved per batch and reused, so a retry never re-reads (or re-sends) finished pages.
-    Returns the readings and, if Gemini failed part-way, that failure (completed batches are kept)."""
+    Returns the readings and, if Groq failed part-way, that failure (completed batches are kept)."""
     readings = _pages_for(document["id"])
     for page in inspection.pages:
         n = page.page_number
@@ -204,16 +195,16 @@ async def _read_pages(document: dict, raw: bytes, inspection, run: dict, use_vis
         return readings, None
     to_read = [p.page_number for p in inspection.pages if p.text_status == "low_text"
                and (p.page_number not in readings or readings[p.page_number].get("method") == "ocr")]
-    for batch in batches(to_read, max(1, settings.vision_batch_pages)):
+    for batch in batches(to_read, min(3, max(1, settings.vision_batch_pages))):
         try:
             images = [(n, await run_in_threadpool(render_page, raw, n)) for n in batch]
-            items = parse_batch(await gemini_read_pages(images), batch)
+            items = parse_batch(await groq_read_pages(images), batch)
         except ExtractionFailed as exc:
             return readings, exc
         for item in items:
             record = PageReading(
                 id=_page_id(document["id"], item.page), document_id=document["id"], page_number=item.page,
-                method="gemini_vision", model=settings.gemini_model, read_at=now_iso(),
+                method="groq_vision", model=settings.groq_vision_model, read_at=now_iso(),
                 **item.model_dump(exclude={"page"})).model_dump(mode="json")
             readings[item.page] = put_record("document_pages", record, record["id"])
         run["pages_read"] += len(batch)
@@ -253,18 +244,18 @@ def _ranges(pages: list[int]) -> str:
 
 
 async def run_extraction(document_id: str, who: str, generate: Generate | None = None) -> None:
-    """Background job. Stages: read pages (text layer; Gemini vision for scanned pages) → extract with Gemini in
-    page-aware parts (each finished part cached) → deterministic fallback for whatever Gemini could not do →
-    validate → save proposals for review. Nothing is approved here."""
-    generate = generate or gemini_generate
+    """Background job. Stages: read pages (text layer; Groq vision for scanned pages) → extract with Groq in
+    page-aware parts (each finished part cached) → deterministic fallback for whatever Groq could not do →
+    validate → save document-scoped extraction output."""
+    generate = generate or groq_generate
     document = get_record("documents", document_id)
     run = dict(document["extraction"])
-    use_gemini = run.get("mode") == "gemini"
+    use_groq = run.get("mode") in {"groq", "gemini"}
     try:
         raw = await run_in_threadpool(document_storage.load_pdf, document["storage_ref"])
         inspection = await run_in_threadpool(inspect_pdf, raw, settings.max_document_pages)
-        readings, failure = await _read_pages(document, raw, inspection, run, use_vision=use_gemini)
-        # Optional local OCR for scanned pages still without text (Gemini unavailable or stopped).
+        readings, failure = await _read_pages(document, raw, inspection, run, use_vision=use_groq)
+        # Optional local OCR for scanned pages still without text (Groq unavailable or stopped).
         unread = [p.page_number for p in inspection.pages if p.text_status == "low_text" and p.page_number not in readings]
         ocr_note = None
         if unread and ocr.ocr_available():
@@ -282,13 +273,13 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
             ocr_note = ocr_note or f"OCR read {done} scanned page{'s' if done != 1 else ''} (plain text; tables may be flattened)."
         total = inspection.page_count
         texts = [readings[n]["transcript"] if n in readings else "" for n in range(1, total + 1)]
-        bases = [{"gemini_vision": "ai_transcript", "ocr": "ocr_text"}.get(readings.get(n, {}).get("method"), "text_layer")
+        bases = [{"groq_vision": "ai_transcript", "gemini_vision": "ai_transcript", "ocr": "ocr_text"}.get(readings.get(n, {}).get("method"), "text_layer")
                  for n in range(1, total + 1)]
         lengths = {n: len(texts[n - 1]) for n in range(1, total + 1) if texts[n - 1].strip()}
         no_text = [n for n in range(1, total + 1) if n not in lengths]
         run.update(pages_sent=sorted(lengths), pages_skipped_low_text=no_text)
         results, covered = [], set()
-        if use_gemini and failure is None:
+        if use_groq and failure is None:
             continuing = {n for n, r in readings.items() if r.get("table_continues_from_previous")} | \
                          {n + 1 for n, r in readings.items() if r.get("table_continues_to_next")}
             plan = chunk_pages(lengths, settings.extraction_chunk_chars, continuing)
@@ -319,17 +310,17 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
             notes.append(("warning", "SEMANTIC_EXTRACTION_PENDING",
                           f"Pages {_ranges(remaining)} were processed by pattern matching only (dates, references, amounts with a "
                           "currency). Clauses, obligations, deadlines, and tables on them were not extracted — re-run extraction "
-                          "when Gemini is available, or enter them manually."))
+                          "when Groq is available, or use the source pages to enter missing values in the workbook."))
         if no_text:
-            why = ("Gemini could not read them" if use_gemini else "Gemini is not configured") + (
+            why = ("Groq could not read them" if use_groq else "Groq is not configured") + (
                 " and OCR could not read them" if ocr.ocr_available() else " and OCR (Tesseract) is not installed")
             notes.append(("error", "PAGES_NOT_READ",
                           f"Pages {_ranges(no_text)} have no text available ({why}); nothing on them was extracted. "
-                          "Re-run extraction later or review them manually from the page images."))
+                          "Re-run extraction later or use the page images to check the exported workbook."))
         if not lengths:
             # Nothing usable at all: keep what finished (page readings) and ask for a retry.
             code = failure.code if failure else "no_text"
-            run.update(finished_at=now_iso(), ai_error=code, retryable=True, mode="gemini" if use_gemini else "deterministic",
+            run.update(finished_at=now_iso(), ai_error=code, retryable=True, mode="groq" if use_groq else "deterministic",
                        note=f"No page has text yet ({len(readings)} of {total} pages read). Re-run extraction later.")
             patch_record("documents", document_id, {"status": "retry_required", "error": f"Extraction incomplete: {failure or 'no readable text'}",
                                                     "extraction": run})
@@ -353,25 +344,25 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
             delete_record(collection, old["id"])
         for record in proposals[collection]:
             put_record(collection, record, record["id"])
-    gemini_part = f"Gemini read {run['pages_read']} scanned pages and extracted {run['chunks_done']} of {run['chunks_total']} parts" if use_gemini else "Gemini not used"
+    groq_part = f"Groq read {run['pages_read']} scanned pages and extracted {run['chunks_done']} of {run['chunks_total']} parts" if use_groq else "Groq not used"
     if ocr_note:
-        gemini_part = f"{gemini_part}. {ocr_note}"
+        groq_part = f"{groq_part}. {ocr_note}"
     if failure is not None:
-        stage = f"{gemini_part}; then stopped ({failure.code}: {failure}). Pattern matching covered the rest."
+        stage = f"{groq_part}; then stopped ({failure.code}: {failure}). Pattern matching covered the rest."
     elif remaining:
-        stage = f"{gemini_part}. Pattern matching only (no Gemini)."
+        stage = f"{groq_part}. Pattern matching only (no Groq)."
     else:
-        stage = f"{gemini_part}."
+        stage = f"{groq_part}."
     run.update(finished_at=now_iso(), counts={c: len(rows) for c, rows in proposals.items()},
-               mode="gemini" if use_gemini and not remaining else ("partial" if covered else "deterministic"),
+               mode="groq" if use_groq and not remaining else ("partial" if covered else "deterministic"),
                ai_error=failure.code if failure else None,
-               retryable=bool(remaining or no_text) and (failure is None or failure.retryable or failure.code == "quota_exhausted" or not use_gemini),
+               retryable=bool(remaining or no_text) and (failure is None or failure.retryable or not use_groq),
                note=stage)
-    patch_record("documents", document_id, {"status": "needs_review", "error": None, "extraction": run})
+    patch_record("documents", document_id, {"status": "extracted", "error": None, "extraction": run})
     found = sum(n for c, n in run["counts"].items() if c != "review_issues")
     log_activity(actor_name=who, event="extraction_completed",
-                 summary=f"Extracted {found} proposed values from “{document['filename']}” — {run['counts']['review_issues']} issues to review"
-                         + ("" if run["mode"] == "gemini" else f" ({run['mode']} extraction)"),
+                 summary=f"Extracted {found} values from “{document['filename']}” — {run['counts']['review_issues']} extraction notes"
+                         + ("" if run["mode"] in {"groq", "gemini"} else f" ({run['mode']} extraction)"),
                  entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"), details=run["counts"])
 
 
@@ -379,23 +370,29 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
              responses={409: {"description": "Extraction not possible in the document's current state"}})
 async def start_extraction(document_id: str, request: Request, background: BackgroundTasks) -> dict:
     """Start extraction in the background; poll GET /documents/{id} for `status` and `extraction` progress.
-    With Gemini configured: Gemini first, pattern matching for anything it cannot finish. Without Gemini:
+    With Groq configured: Groq first, pattern matching for anything it cannot finish. Without Groq:
     pattern matching on available text only, clearly marked as such."""
     document = get_record("documents", document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     _check_can_extract(document)
     already_read = _pages_for(document_id)
-    use_gemini = bool(settings.gemini_api_key)
+    use_groq = settings.groq_available
     run = ExtractionRun(
-        started_at=now_iso(), model=settings.gemini_model if use_gemini else "none",
-        mode="gemini" if use_gemini else "deterministic",
-        pages_to_read=sum(1 for p in document["pages"] if p["text_status"] == "low_text" and p["page_number"] not in already_read) if use_gemini else 0,
+        started_at=now_iso(), model=settings.groq_model if use_groq else "none",
+        mode="groq" if use_groq else "deterministic",
+        pages_to_read=sum(1 for p in document["pages"] if p["text_status"] == "low_text" and p["page_number"] not in already_read) if use_groq else 0,
     ).model_dump(mode="json")
     who = actor(request)
-    updated = patch_record("documents", document_id, {"status": "extracting", "error": None, "extraction": run})
+    warnings = [
+        warning for warning in document.get("warnings", [])
+        if not warning.startswith("No page has embedded text (likely a scanned PDF). Configure")
+    ]
+    updated = patch_record("documents", document_id, {
+        "status": "extracting", "error": None, "extraction": run, "warnings": warnings,
+    })
     log_activity(actor_name=who, event="extraction_started",
-                 summary=f"Started extraction of “{document['filename']}”" + ("" if use_gemini else " (pattern matching only; Gemini not configured)"),
+                 summary=f"Started extraction of “{document['filename']}”" + ("" if use_groq else " (pattern matching only; Groq not configured)"),
                  entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"),
                  details={"mode": run["mode"]})
     background.add_task(run_extraction, document_id, who)
@@ -404,11 +401,30 @@ async def start_extraction(document_id: str, request: Request, background: Backg
 
 @router.get("/documents/{document_id}/extraction")
 def get_extraction(document_id: str) -> dict:
-    """Proposed values, clauses, terms, obligations, scope and review issues for one document (none are approved)."""
+    """Extracted values, clauses, terms, obligations, scope and extraction issues for one document."""
     document = get_record("documents", document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"document": SourceDocument(**document).model_dump(mode="json"), **_proposals_for(document_id)}
+
+
+@router.get("/documents/{document_id}/export/workbook", response_class=Response)
+def export_document_workbook(document_id: str, request: Request) -> Response:
+    document = get_record("documents", document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    content = build_document_workbook(document, _proposals_for(document_id))
+    log_activity(actor_name=actor(request), event="document_workbook_exported",
+                 summary=f"Downloaded extraction workbook for “{document['filename']}”",
+                 entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"))
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="obligot-{document_id}-extraction.xlsx"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.get("/documents/{document_id}/pages", response_model=list[PageReading])
@@ -420,9 +436,9 @@ def list_pages(document_id: str) -> list[dict]:
 
 
 @router.get("/documents/{document_id}/pages/{page_number}/image", response_class=Response,
-            responses={200: {"content": {"image/jpeg": {}}, "description": "Page image for side-by-side review"}})
+            responses={200: {"content": {"image/jpeg": {}}, "description": "Source page image"}})
 async def page_image(document_id: str, page_number: int, dpi: int = Query(default=110, ge=50, le=200)) -> Response:
-    """One page as an image, for reviewers. Same authentication as every other route; never cached publicly."""
+    """One page as an image for source comparison. Same authentication as every other route; never cached publicly."""
     document = get_record("documents", document_id)
     if not document or not document.get("storage_ref"):
         raise HTTPException(status_code=404, detail="Document not found")

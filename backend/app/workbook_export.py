@@ -1,8 +1,8 @@
-"""Build the standard multi-sheet workbook from approved, persisted records (contract: app/workbook.py).
+"""Build the standard multi-sheet operational workbook (contract: app/workbook.py).
 
-Only operational records (staff-entered or approved from a document) and approved document proposals are
-exported; pending, rejected, and deferred proposals never appear. Values are written as stored: nothing is
-inferred, missing cells stay empty, and amounts are never summed. No storage paths, hashes, or secrets.
+This workbook includes operational records and legacy document values that were approved before the document
+workflow changed. New extraction output is available only in its document-scoped workbook. Values are written
+as stored: nothing is inferred, missing cells stay empty, and amounts are never summed. No private file metadata.
 """
 import io
 from datetime import date, datetime
@@ -13,7 +13,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from app.amendments import current_terms
-from app.repository import list_records
+from app.repository import is_demo_mode, list_records
 from app.rules import business_today
 from app.workbook import SHEETS, Column
 
@@ -157,7 +157,9 @@ def build_workbook(today: date | None = None) -> bytes:
     about["A1"].font = Font(bold=True, size=13)
     for line in (
         f"Business date (IST): {today.isoformat()}",
-        "Contains operational records and document values approved by a reviewer. Pending, rejected, and deferred values are excluded.",
+        "DATA SOURCE: SYNTHETIC DEMO — NOT CONNECTED TO LIVE FIRESTORE RECORDS." if is_demo_mode()
+        else "Data source: live Firestore records.",
+        "Contains operational records and legacy document values previously approved. New document extraction output is exported separately.",
         "Empty cells mean the value is not recorded; nothing was inferred. Amounts are per record in their own currency and never summed.",
         "Rows with source_label = demo are fictional demonstration data.",
         "Column definitions: docs/WORKBOOK_SCHEMA.md.",
