@@ -8,8 +8,8 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 1 | Repository and API audit | Done — approved |
 | 2 | Architecture proposal | Done — approved |
 | 3 | Project instructions and custom skills | Done — approved |
-| 4 | Existing API route repairs (groups 4a–4f) | 4a–4e approved; 4f done — awaiting review |
-| 5 | Application foundation | Not started |
+| 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
+| 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
 | 6 | Core partnership workflows | Not started |
 | 7 | Deadline engine and action center | Not started |
 | 8 | Funding and compliance | Not started |
@@ -68,6 +68,18 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 5a notes — frontend foundation
+- `npm install` (npm 11.16, Node 26.3); `package-lock.json` committed. npm 11 skipped install scripts for esbuild, @firebase/util, protobufjs (not approved); build works without them.
+- Build was failing (verified): untyped `import.meta.env` and `replaceAll` vs ES2020 lib. Added `src/vite-env.d.ts`; tsconfig target/lib → ES2021. `npm run build` now passes.
+- Typed API client per resource (`api.partners|actions|agreements|projects|finance|reports|followups`, `dashboard`, `health`, `analyze`) with `ApiError(status)`; status 0 = backend unreachable. JSON `Content-Type` only on requests with a body. FastAPI validation errors are flattened to readable messages.
+- `useResource` hook (ignores superseded responses; clears data on error so stale values never sit next to an error). `StatusBadge`; `StateMessage` gains `action` and ARIA roles.
+- Dashboard reads `/api/dashboard` metrics and findings (no client-side metric derivation); shows `as_of`, the in-memory storage warning, and evidence per finding. Removed a misleading "partners in pipeline" (total − active) card and the raw finance count.
+- Partner detail uses `GET /api/partners/{id}` with distinct 404 vs error states and Retry.
+- `formatDate` parses date-only strings in local time (no day shift west of UTC).
+- CSS fixes found in the browser: mobile nav forced 280 px horizontal page scroll (flex `min-width:auto`, pre-existing); dashboard grid overflowed at all widths (grid children `min-width:auto`); hidden table label escaped its scroll container.
+- Verification (headless Chrome via Python Playwright against live uvicorn + Vite): dashboard, partners, partner detail, missing partner render API data; 0 px horizontal overflow at 375/390/768/1280/1440 on all three pages; backend stopped → "API connection unavailable" + Retry, all metrics "—", badge "AI STATUS UNKNOWN"; restart + Retry recovers; no page errors. Remaining console 404s are the expected API 404 for a missing partner (twice in dev due to React StrictMode) and a missing favicon.
+- `npm audit`: 8 advisories (5 high, 3 moderate) in firebase→@grpc/grpc-js, vite/esbuild (dev server), react-router; every fix is a major upgrade (Vite 8, React Router 7) — awaiting team decision.
 
 ## Step 4f notes — cleanup
 - Removed (verified unreferenced with `git grep`): `backend/app/models.py.bak`, `routes.py.bak`, `routes.routes-fix.bak`, legacy SQLite `domain_store.py` and `domain_routes.py` (never mounted).

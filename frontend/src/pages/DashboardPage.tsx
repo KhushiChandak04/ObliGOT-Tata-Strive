@@ -1,32 +1,63 @@
-import {useEffect,useState,type ReactNode} from "react";
-import {CalendarClock,CircleAlert,FileClock,Handshake,RefreshCw,Sparkles} from "lucide-react";
+import {type ReactNode} from "react";
+import {CalendarClock,CircleAlert,Database,FileCheck2,FileClock,FolderKanban,Handshake,ListTodo,RefreshCw,Sparkles} from "lucide-react";
 import {Link} from "react-router-dom";
 import PageHeader from "../components/ui/PageHeader";
 import StateMessage from "../components/ui/StateMessage";
+import StatusBadge from "../components/ui/StatusBadge";
 import {api} from "../services/functions.service";
-import type {ActionItem,HealthResponse,Partner} from "../types";
-import {formatDate,titleCase} from "../lib/utils";
+import {useResource} from "../lib/useResource";
+import type {ActionItem,DeadlineFinding,Priority} from "../types";
+import {describeDays,formatDate} from "../lib/utils";
+
+const PRIORITY_RANK:Record<Priority,number>={high:0,medium:1,low:2};
+const OPEN_ACTION_STATUSES=new Set(["open","in_review"]);
+
+function byPriorityThenDate<T extends {priority:Priority}>(dateOf:(item:T)=>string|number|null|undefined){
+ return (a:T,b:T)=>PRIORITY_RANK[a.priority]-PRIORITY_RANK[b.priority]||compareNullableLast(dateOf(a),dateOf(b));
+}
+function compareNullableLast(a:string|number|null|undefined,b:string|number|null|undefined){
+ if(a===b)return 0; if(a===null||a===undefined)return 1; if(b===null||b===undefined)return -1; return a<b?-1:1;
+}
+
 export default function DashboardPage(){
- const [partners,setPartners]=useState<Partner[]>([]);const [actions,setActions]=useState<ActionItem[]>([]);
- const [health,setHealth]=useState<HealthResponse|null>(null);const [error,setError]=useState("");const [loading,setLoading]=useState(true);
- async function load(){setLoading(true);setError("");try{const [p,a,h]=await Promise.all([api.partners(),api.actions(),api.health()]);setPartners(p);setActions(a);setHealth(h);}catch(e){setError(e instanceof Error?e.message:"Could not load API data.");}finally{setLoading(false);}}
- useEffect(()=>{void load();},[]);
- const active=partners.filter(p=>p.status==="active").length;const open=actions.filter(a=>a.status!=="done").length;const high=actions.filter(a=>a.priority==="high"&&a.status!=="done").length;
+ const {data,error,loading,reload}=useResource(async()=>{
+  const [dashboard,actions,partners,health]=await Promise.all([api.dashboard(),api.actions.list(),api.partners.list(),api.health()]);
+  return {dashboard,actions,partners,health};
+ },[]);
+ const m=data?.dashboard.metrics;
+ const findings=[...(data?.dashboard.findings??[])].sort(byPriorityThenDate<DeadlineFinding>(f=>f.days_remaining));
+ const highFindings=findings.filter(f=>f.priority==="high").length;
+ const openActions=(data?.actions??[]).filter(a=>OPEN_ACTION_STATUSES.has(a.status)).sort(byPriorityThenDate<ActionItem>(a=>a.due_date));
+ const partnerName=new Map((data?.partners??[]).map(p=>[p.id,p.name]));
+ const value=(n?:number)=>loading||n===undefined?"—":String(n);
  return <>
-  <PageHeader eyebrow="MANAGEMENT OVERVIEW" title="Partnership overview" description="A consolidated view of relationships, commitments, and the next actions that need attention." action={<button className="button button-secondary" onClick={()=>void load()}><RefreshCw size={15}/> Refresh</button>}/>
-  {error&&<StateMessage kind="error" title="API connection unavailable" detail={`${error} Start the FastAPI backend and retry.`}/>}
-  <div className="notice"><Sparkles size={17}/><div><strong>Evidence first. AI second.</strong><p>Deadline findings come from rules. AI interpretations should be reviewed before action.</p></div><span className="notice-tag">{health?.ai_configured?"AI CONFIGURED":"RULES-FIRST MODE"}</span></div>
-  <div className="metric-grid"><Metric icon={<Handshake size={19}/>} label="Partners tracked" value={loading?"—":String(partners.length)} note="Records currently available"/><Metric icon={<CalendarClock size={19}/>} label="Active partnerships" value={loading?"—":String(active)} note="Based on stored status"/><Metric icon={<CircleAlert size={19}/>} label="Open actions" value={loading?"—":String(open)} note="Not marked complete"/><Metric icon={<FileClock size={19}/>} label="High-priority actions" value={loading?"—":String(high)} note="Review recommended"/></div>
+  <PageHeader eyebrow="MANAGEMENT OVERVIEW" title="Partnership overview" description={data?`Consolidated view of relationships, commitments, and next actions. Deadlines evaluated as of ${formatDate(data.dashboard.as_of)} (IST).`:"A consolidated view of relationships, commitments, and the next actions that need attention."} action={<button className="button button-secondary" onClick={reload} disabled={loading}><RefreshCw size={15} aria-hidden/> Refresh</button>}/>
+  {error&&<StateMessage kind="error" title="API connection unavailable" detail={`${error.message} Start the FastAPI backend and retry.`} action={<button className="button button-secondary" onClick={reload}>Retry</button>}/>}
+  {data?.dashboard.storage_mode==="demo-memory-fallback"&&<div className="notice notice-warning"><Database size={17} aria-hidden/><div><strong>In-memory demo data.</strong><p>Firestore is not configured on the backend, so records are illustrative and are lost when the backend restarts.</p></div><span className="notice-tag">NOT PERSISTENT</span></div>}
+  <div className="notice"><Sparkles size={17} aria-hidden/><div><strong>Evidence first. AI second.</strong><p>Deadline findings come from deterministic rules. AI interpretations must be reviewed before action.</p></div><span className="notice-tag">{!data?"AI STATUS UNKNOWN":data.health.ai_configured?"AI CONFIGURED":"RULES-FIRST MODE"}</span></div>
+  <div className="metric-grid metric-grid-three">
+   <Metric icon={<Handshake size={19}/>} label="Partners tracked" value={value(m?.partners_total)} note={m?`${m.partners_active} active`:"Stored partner records"}/>
+   <Metric icon={<FileCheck2 size={19}/>} label="Active agreements" value={value(m?.agreements_active)} note="Agreements with status Active"/>
+   <Metric icon={<FolderKanban size={19}/>} label="Active projects" value={value(m?.projects_active)} note="Projects with status Active"/>
+   <Metric icon={<FileClock size={19}/>} label="Reports pending" value={value(m?.reports_pending)} note="Not submitted or accepted"/>
+   <Metric icon={<CalendarClock size={19}/>} label="Deadline findings" value={value(data?findings.length:undefined)} note={`${!loading&&data?highFindings:"—"} high priority`}/>
+   <Metric icon={<ListTodo size={19}/>} label="Open actions" value={value(m?.actions_open)} note="Not done or deferred"/>
+  </div>
   <div className="content-grid">
-   <section className="panel"><div className="panel-heading"><div><h2>Priority action queue</h2><p>Review the evidence and decide what happens next.</p></div><Link to="/actions" className="text-link">View all →</Link></div>
-    {loading?<StateMessage kind="loading" title="Loading actions…"/>:actions.length?<div className="action-list">{actions.slice(0,5).map(item=><div className="action-row" key={item.id}><span className={`priority-dot ${item.priority}`}/><div className="action-copy"><strong>{item.title}</strong><span>{item.evidence[0]||"No supporting evidence supplied"}</span></div><div className="action-meta"><span className={`status-pill ${item.priority}`}>{titleCase(item.priority)}</span><small>{formatDate(item.due_date)}</small></div></div>)}</div>:<StateMessage title="No actions returned" detail="Connect records and rules to populate this queue."/>}
+   <section className="panel" aria-labelledby="findings-heading"><div className="panel-heading"><div><h2 id="findings-heading">Deadline findings</h2><p>Rule-generated from stored dates and statuses. Resolved records are excluded.</p></div></div>
+    {loading?<StateMessage kind="loading" title="Evaluating deadlines…"/>:findings.length?<div className="action-list">{findings.slice(0,6).map(f=><div className="action-row" key={f.id}><span className={`priority-dot ${f.priority}`} aria-hidden/><div className="action-copy"><strong>{f.issue}</strong><span>{[f.partner_id?partnerName.get(f.partner_id)??f.partner_id:null,...f.evidence].filter(Boolean).join(" · ")}</span></div><div className="action-meta"><StatusBadge value={f.priority} label={`${f.priority[0].toUpperCase()}${f.priority.slice(1)} priority`}/><small>{f.due_date?describeDays(f.days_remaining,f.record_type==="agreements"):"No date recorded"}</small></div></div>)}{findings.length>6&&<p className="muted panel-footnote">{findings.length-6} more findings not shown.</p>}</div>:!error&&<StateMessage title="No deadline findings" detail="No unresolved agreement, report, invoice, or UC is overdue, due within 30 days, or missing its date."/>}
    </section>
-   <section className="panel"><div className="panel-heading"><div><h2>Partner directory</h2><p>Illustrative records from the API.</p></div><Link to="/partners" className="text-link">Open directory →</Link></div>
-    {loading?<StateMessage kind="loading" title="Loading partners…"/>:partners.slice(0,5).map(p=><Link to={`/partners/${p.id}`} className="partner-row" key={p.id}><div className="partner-avatar">{p.name.slice(0,1).toUpperCase()}</div><div className="partner-copy"><strong>{p.name}</strong><span>{p.category} · {p.owner}</span></div><span className={`status-pill ${p.status}`}>{titleCase(p.status)}</span></Link>)}
-    {!loading&&!partners.length&&<StateMessage title="No partner records" detail="The backend currently has no partner records."/>}
+   <section className="panel" aria-labelledby="actions-heading"><div className="panel-heading"><div><h2 id="actions-heading">Open action queue</h2><p>Highest priority first, then earliest due date.</p></div><Link to="/actions" className="text-link">View all →</Link></div>
+    {loading?<StateMessage kind="loading" title="Loading actions…"/>:openActions.length?<div className="action-list">{openActions.slice(0,5).map(item=><div className="action-row" key={item.id}><span className={`priority-dot ${item.priority}`} aria-hidden/><div className="action-copy"><strong>{item.title}</strong><span>{[item.owner,item.evidence[0]||"No supporting evidence supplied"].filter(Boolean).join(" · ")}</span></div><div className="action-meta"><StatusBadge value={item.priority} label={`${item.priority[0].toUpperCase()}${item.priority.slice(1)} priority`}/><small>{formatDate(item.due_date)}</small></div></div>)}</div>:!error&&<StateMessage title="No open actions" detail="Actions that are open or in review will appear here."/>}
    </section>
   </div>
-  <div className="bottom-grid"><div className="info-card"><div className="info-icon"><CircleAlert size={19}/></div><div><strong>Keep risk explainable</strong><p>Every flag should show the record, triggering rule, and recommended owner action.</p></div></div><div className="info-card"><div className="info-icon"><Sparkles size={19}/></div><div><strong>Human review stays in control</strong><p>Recommendations are drafts until a team member reviews and records a decision.</p></div></div></div>
+  <div className="bottom-grid">
+   <section className="panel" aria-labelledby="partners-heading"><div className="panel-heading"><div><h2 id="partners-heading">Partner directory</h2><p>Most recent records from the API.</p></div><Link to="/partners" className="text-link">Open directory →</Link></div>
+    {loading?<StateMessage kind="loading" title="Loading partners…"/>:(data?.partners??[]).slice(0,5).map(p=><Link to={`/partners/${p.id}`} className="partner-row" key={p.id}><div className="partner-avatar" aria-hidden>{p.name.slice(0,1).toUpperCase()}</div><div className="partner-copy"><strong>{p.name}</strong><span>{p.category} · {p.owner}{p.source_label==="demo"?" · demo":""}</span></div><StatusBadge value={p.status}/></Link>)}
+    {!loading&&!error&&!data?.partners.length&&<StateMessage title="No partner records" detail="The backend currently has no partner records."/>}
+   </section>
+   <div className="info-stack"><div className="info-card"><div className="info-icon"><CircleAlert size={19} aria-hidden/></div><div><strong>Keep risk explainable</strong><p>Every flag shows the record, the triggering rule, and the evidence it is based on.</p></div></div><div className="info-card"><div className="info-icon"><Sparkles size={19} aria-hidden/></div><div><strong>Human review stays in control</strong><p>Recommendations are drafts until a team member reviews and records a decision.</p></div></div></div>
+  </div>
  </>;
 }
-function Metric({icon,label,value,note}:{icon:ReactNode;label:string;value:string;note:string}){return <div className="metric-card"><div className="metric-top"><span>{label}</span><span className="metric-icon">{icon}</span></div><div className="metric-value">{value}</div><div className="metric-note">{note}</div></div>;}
+function Metric({icon,label,value,note}:{icon:ReactNode;label:string;value:string;note:string}){return <div className="metric-card"><div className="metric-top"><span>{label}</span><span className="metric-icon" aria-hidden>{icon}</span></div><div className="metric-value">{value}</div><div className="metric-note">{note}</div></div>;}
