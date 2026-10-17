@@ -39,7 +39,8 @@ export interface Milestone {
 }
 export interface FinanceRecord {
   id: string; partner_id: string; project_id?: string | null; record_type: FinanceType; title: string;
-  amount?: number | null; currency: string; due_date?: string | null; status: string;
+  amount?: number | null; currency: string; issue_date?: string | null; due_date?: string | null;
+  received_date?: string | null; status: string;
   reference_number?: string | null; source_label?: SourceLabel;
 }
 export interface ReportRecord {
