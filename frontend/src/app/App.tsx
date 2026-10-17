@@ -14,18 +14,12 @@ import PartnerForm from "../features/partners/PartnerForm";
 import OpportunityForm from "../features/pipeline/OpportunityForm";
 import MilestoneForm from "../features/projects/MilestoneForm";
 import ProjectForm from "../features/projects/ProjectForm";
-import {
-  AGREEMENT_STATUSES,
-  RENEWAL,
-  SIGNED_COPY,
-  isWebLink,
-  labelOf,
-} from "../lib/agreements";
-import { STAGES, nextStage, stageLabel } from "../lib/pipeline";
-import { MILESTONE_STATUSES } from "../lib/projects";
+import { isWebLink } from "../lib/agreements";
+import { nextStage } from "../lib/pipeline";
+import { EnumLabel, EnumOptions, OptionsProvider, useEnum, useLabel } from "../lib/options";
 import { api } from "../services/functions.service";
 import { useResource } from "../lib/useResource";
-import { CATEGORY_LABELS, todaysAlerts } from "../lib/alerts";
+import { todaysAlerts } from "../lib/alerts";
 import {
   createUserWithEmailAndPassword,
   getRedirectResult,
@@ -91,6 +85,7 @@ type Alert = {
 const toViewAlert = (
   alert: ApiAlert,
   partnerName: (id: string) => string | undefined,
+  categoryLabel: (category: string) => string,
 ): Alert => ({
   id: alert.id,
   rule: alert.rule_id,
@@ -113,7 +108,7 @@ const toViewAlert = (
   impact: alert.priority.impact,
   days: alert.days_remaining ?? null,
   owner: alert.owner,
-  category: CATEGORY_LABELS[alert.category] ?? alert.category,
+  category: categoryLabel(alert.category),
   facts: alert.evidence.filter((e) => e.source === "record"),
   computed: alert.evidence.filter((e) => e.source === "computed"),
   why: alert.why_it_matters,
@@ -145,14 +140,15 @@ function Logo({ light = false }: { light?: boolean }) {
 function Landing() {
   const navigate = useNavigate();
   const [trace, setTrace] = useState(0);
+  // How the pipeline works, step by step (an illustration, not live data).
   const lines = [
-    "▸ Evaluating stored records…",
-    "✓ Rule MOU-EXP-01 fired",
-    "  agreement.endDate = today+14d ISO",
-    "  renewalStatus = (empty)",
-    "⚠ Rule RPT-OVD-01 fired",
-    "✓ Priority: HIGH (deterministic)",
-    "▸ Gemini drafting follow-up…",
+    "▸ Reading each MOU page (text layer or scan)…",
+    "✓ Values extracted with page and quote",
+    "  dates, amounts, deadlines, schedules",
+    "▸ Checking quotes, dates, and totals…",
+    "⚠ Unclear values flagged for review",
+    "✓ Rules run on approved records only",
+    "▸ Gemini explains the alert…",
     "⏸ Waiting for human approval",
   ];
   useEffect(() => {
@@ -205,7 +201,7 @@ function Landing() {
         <div className="agent">
           <div className="agent-bar">
             <span>● ● ●</span>
-            <b>obligot-agent · live trace</b>
+            <b>how ObliGOT works</b>
           </div>
           <div className="trace mono">
             {lines.slice(0, trace).map((line, index) => (
@@ -572,16 +568,17 @@ function AppShell() {
   // Live records only. While loading or when the API fails, pages show loading/error states — never sample data.
   const live = workspace.data;
   const livePartners = live?.partners ?? [];
+  const label = useLabel();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [params] = useSearchParams();
   const names = new Map(livePartners.map((p) => [p.id, p.name]));
   const apiAlerts = live?.alerts.alerts ?? [];
   const sorted = apiAlerts.map((alert) =>
-    toViewAlert(alert, (id) => names.get(id)),
+    toViewAlert(alert, (id) => names.get(id), (c) => label("alert_category", c)),
   ); // already ordered by priority score
   const today = todaysAlerts(apiAlerts).map((alert) =>
-    toViewAlert(alert, (id) => names.get(id)),
+    toViewAlert(alert, (id) => names.get(id), (c) => label("alert_category", c)),
   );
   const open = sorted;
   const tasks = (live?.tasks ?? []).filter(isOpenTask);
@@ -800,13 +797,14 @@ function Dashboard({
   summary: DashboardSummary;
 }) {
   // Every figure below is computed by the backend from current records (GET /api/dashboard/summary).
+  const label = useLabel();
   const families = Object.entries(summary.alerts.by_category).map(
-    ([name, count]) => [CATEGORY_LABELS[name as keyof typeof CATEGORY_LABELS] ?? name, count] as const,
+    ([name, count]) => [label("alert_category", name), count] as const,
   );
   const max = Math.max(1, ...families.map(([, count]) => count));
   const money = (rows: CurrencyAmount[]) =>
     rows.map((r) =>
-      `${new Intl.NumberFormat("en-IN", { style: "currency", currency: r.currency.length === 3 ? r.currency : "INR", maximumFractionDigits: 0 }).format(r.amount)} (${r.count})`,
+      `${formatAmount(r.amount, r.currency)} (${r.count})`,
     ).join(" · ");
   const coverage = summary.coverage.state.length ? summary.coverage.state : summary.coverage.location;
   return (
@@ -1168,11 +1166,11 @@ function Partner360({
                 </div>
                 <div className="detail-row">
                   <span>Renewal</span>
-                  <span>{labelOf(RENEWAL, mou.renewal_status)}</span>
+                  <span><EnumLabel group="renewal_status" value={mou.renewal_status} /></span>
                 </div>
                 <div className="detail-row">
                   <span>Signed copy</span>
-                  <span>{labelOf(SIGNED_COPY, mou.signed_copy)}</span>
+                  <span><EnumLabel group="signed_copy" value={mou.signed_copy} /></span>
                 </div>
               </>
             ) : (
@@ -1266,16 +1264,6 @@ function Partner360({
   );
 }
 
-/** Labels from the reference design mapped onto the API's lifecycle stages. */
-const STAGE_LABELS: Record<string, string> = {
-  identified: "Opportunity",
-  agreement: "MOU",
-  active: "Implementation",
-  closed: "Closure",
-};
-const stageName = (stage: Opportunity["stage"]) =>
-  STAGE_LABELS[stage] ?? stageLabel(stage);
-
 const formatDate = (value: string | null): string =>
   value
     ? new Intl.DateTimeFormat("en-IN", {
@@ -1284,12 +1272,6 @@ const formatDate = (value: string | null): string =>
         year: "numeric",
       }).format(new Date(value))
     : "Not recorded";
-const money = (value: number): string =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(value);
 function TableState({ message }: { message: string }) {
   return <p className="table-state">{message}</p>;
 }
@@ -1307,6 +1289,9 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
+  const label = useLabel();
+  const stages = useEnum("opportunity_stage");
+  const stageName = (stage: string) => label("opportunity_stage", stage);
   const refresh = (text: string) => {
     setDialog(null);
     setMessage(text);
@@ -1314,7 +1299,7 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
     onChanged();
   };
   const move = async (item: Opportunity) => {
-    const next = nextStage(item.stage);
+    const next = nextStage(stages, item.stage) as Opportunity["stage"] | null;
     if (!next) return;
     setBusy(item.id);
     setMessage("");
@@ -1347,7 +1332,7 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
       />
       {data.data && (
         <div className="pipeline-grid">
-          {STAGES.map(({ id: stage }) => {
+          {stages.map((stage) => {
             const column = data.data!.opportunities.filter(
               (item) => item.stage === stage,
             );
@@ -1378,7 +1363,7 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
                         >
                           {busy === item.id
                             ? "Moving…"
-                            : `Move to ${stageName(nextStage(stage)!)}`}
+                            : `Move to ${stageName(nextStage(stages, stage) ?? stage)}`}
                         </button>
                       )}
                       <button
@@ -1539,11 +1524,7 @@ function AgreementsPage({ onChanged }: { onChanged: () => void }) {
                 aria-label="Filter by status"
               >
                 <option value="all">All statuses</option>
-                {AGREEMENT_STATUSES.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
+                <EnumOptions group="agreement_status" />
               </select>
               <button className="btn small-btn" onClick={() => setDialog({})}>
                 Add agreement
@@ -1569,13 +1550,13 @@ function AgreementsPage({ onChanged }: { onChanged: () => void }) {
                   <small> · {a.reference_number ?? "No reference"}</small>
                 </span>,
                 <span className="pill" key="status">
-                  {labelOf(AGREEMENT_STATUSES, a.status)}
+                  <EnumLabel group="agreement_status" value={a.status} />
                 </span>,
                 formatDate(a.start_date ?? null),
                 formatDate(a.expiry_date ?? null),
-                labelOf(SIGNED_COPY, a.signed_copy),
+                <EnumLabel key="signed" group="signed_copy" value={a.signed_copy} />,
                 a.owner,
-                labelOf(RENEWAL, a.renewal_status),
+                <EnumLabel key="renewal" group="renewal_status" value={a.renewal_status} />,
                 isWebLink(a.document_url) ? (
                   <a
                     key="doc"
@@ -1658,8 +1639,9 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
     data.reload();
     onChanged();
   };
+  const label = useLabel();
   const milestoneStatus = (status: Milestone["status"]) =>
-    MILESTONE_STATUSES.find((s) => s.id === status)?.label ?? status;
+    label("milestone_status", status);
   const title = !dialog
     ? ""
     : dialog.kind === "project"
@@ -1867,18 +1849,17 @@ function FinanceSection({
     </section>
   );
 }
-const FINANCE_SECTIONS: { type: FinanceRecord["record_type"]; title: string }[] = [
-  { type: "budget", title: "Budgets" },
-  { type: "fund_received", title: "Funds received" },
-  { type: "invoice", title: "Invoices" },
-  { type: "utilization_certificate", title: "Utilization certificates" },
-];
-
 /** Amount in the record's own currency; amounts are never added across records, types, or currencies. */
 const recordAmount = (record: FinanceRecord): string =>
-  record.amount == null
-    ? "Amount not recorded"
-    : new Intl.NumberFormat("en-IN", { style: "currency", currency: record.currency || "INR", maximumFractionDigits: 0 }).format(record.amount);
+  record.amount == null ? "Amount not recorded" : formatAmount(record.amount, record.currency);
+
+/** An amount in its own currency; without a valid currency code the number is shown with a note, never as rupees. */
+function formatAmount(amount: number, currency?: string | null): string {
+  if (currency && /^[A-Z]{3}$/.test(currency)) {
+    return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
+  }
+  return `${new Intl.NumberFormat("en-IN").format(amount)} (currency not recorded)`;
+}
 
 function FinancePage() {
   const data = useResource(async () => {
@@ -1886,6 +1867,8 @@ function FinancePage() {
     return { records, partners, alerts, options };
   }, []);
   const [message, setMessage] = useState("");
+  const label = useLabel();
+  const recordTypes = useEnum("finance_record_type");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
   // Ageing and overdue wording come from the rules engine (alerts), not from date maths in the browser.
   const alertFor = new Map((data.data?.alerts.alerts ?? []).filter((a) => a.record_type === "finance").map((a) => [a.record_id, a]));
@@ -1904,7 +1887,8 @@ function FinancePage() {
       <RegisterState resource={data} label="finance records" message={message} />
       {data.data && (
         <div className="finance-sections">
-          {FINANCE_SECTIONS.map(({ type, title }) => {
+          {recordTypes.map((type) => {
+            const title = label("finance_record_type", type);
             const records = data.data!.records.filter((r) => r.record_type === type);
             return (
               <FinanceSection title={title} key={type}>
@@ -2094,8 +2078,7 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
               setKind(event.target.value as "mou" | "addendum")
             }
           >
-            <option value="mou">MOU</option>
-            <option value="addendum">Addendum</option>
+            <EnumOptions group="document_kind" current={kind} />
           </select>
         </label>
         <label>
@@ -3198,7 +3181,9 @@ export default function App() {
         path="*"
         element={
           <RequireAuth>
-            <AppShell />
+            <OptionsProvider>
+              <AppShell />
+            </OptionsProvider>
           </RequireAuth>
         }
       />

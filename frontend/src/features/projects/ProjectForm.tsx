@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import FormField from "../../components/ui/FormField";
 import { api } from "../../services/functions.service";
-import { PROJECT_STATUSES } from "../../lib/projects";
+import { EnumOptions } from "../../lib/options";
 import type { Partner, Project, RecordStatus } from "../../types";
 
 type FormState = { partner_id: string; name: string; status: RecordStatus; owner: string; start_date: string; end_date: string; milestone_summary: string };
@@ -63,7 +63,7 @@ export default function ProjectForm({ project, partners, defaultPartnerId, onSav
   return <form className="form-grid" onSubmit={(e) => void submit(e)} noValidate>
     <div className="form-wide">{field("name", "Project name *", <input value={form.name} onChange={(e) => set("name")(e.target.value)} maxLength={200} autoFocus />)}</div>
     {field("partner_id", "Partner", <select value={form.partner_id} onChange={(e) => set("partner_id")(e.target.value)} disabled={Boolean(defaultPartnerId) && !project}><option value="">No partner</option>{partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>, project ? "Cannot be changed while milestones or other records are linked." : undefined)}
-    {field("status", "Status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}>{PROJECT_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select>)}
+    {field("status", "Status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}><EnumOptions group="project_status" current={form.status} /></select>)}
     {field("start_date", "Start date", <input type="date" value={form.start_date} onChange={(e) => set("start_date")(e.target.value)} />)}
     {field("end_date", "End date", <input type="date" value={form.end_date} onChange={(e) => set("end_date")(e.target.value)} />)}
     {field("owner", "Responsible owner", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} placeholder="Unassigned" />)}

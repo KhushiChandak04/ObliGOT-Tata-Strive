@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import FormField from "../../components/ui/FormField";
 import { api } from "../../services/functions.service";
-import { AGREEMENT_STATUSES, RENEWAL, SIGNED_COPY, isWebLink } from "../../lib/agreements";
+import { isWebLink } from "../../lib/agreements";
+import { EnumOptions } from "../../lib/options";
 import type { Agreement, AgreementStatus, Opportunity, Partner, Project, RenewalStatus, SignedCopyStatus } from "../../types";
 
 type FormState = {
@@ -76,17 +77,16 @@ export default function AgreementForm({ agreement, partners, projects, opportuni
   const field = (name: keyof FormState, label: string, input: JSX.Element, hint?: string) => (
     <FormField id={`agr-${name}`} label={label} error={errors[name]} hint={hint}>{input}</FormField>
   );
-  const options = <T extends string>(list: { id: T; label: string }[]) => list.map((o) => <option key={o.id} value={o.id}>{o.label}</option>);
 
   return <form className="form-grid" onSubmit={(e) => void submit(e)} noValidate>
     {field("partner_id", "Partner *", <select value={form.partner_id} onChange={(e) => set("partner_id")(e.target.value)} disabled={Boolean(defaultPartnerId) && !agreement}><option value="">Select a partner…</option>{partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>)}
     {field("title", "Agreement title *", <input value={form.title} onChange={(e) => set("title")(e.target.value)} maxLength={200} autoFocus />)}
     {field("reference_number", "Reference number", <input value={form.reference_number} onChange={(e) => set("reference_number")(e.target.value)} maxLength={100} />)}
-    {field("status", "Status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}>{options(AGREEMENT_STATUSES)}</select>, "Record “Active” only for a signed, effective agreement.")}
+    {field("status", "Status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}><EnumOptions group="agreement_status" current={form.status} /></select>, "Record “Active” only for a signed, effective agreement.")}
     {field("start_date", "Start date", <input type="date" value={form.start_date} onChange={(e) => set("start_date")(e.target.value)} />)}
     {field("expiry_date", "Expiry date", <input type="date" value={form.expiry_date} onChange={(e) => set("expiry_date")(e.target.value)} />)}
-    {field("signed_copy", "Signed copy", <select value={form.signed_copy} onChange={(e) => set("signed_copy")(e.target.value)}>{options(SIGNED_COPY)}</select>)}
-    {field("renewal_status", "Renewal", <select value={form.renewal_status} onChange={(e) => set("renewal_status")(e.target.value)}>{options(RENEWAL)}</select>)}
+    {field("signed_copy", "Signed copy", <select value={form.signed_copy} onChange={(e) => set("signed_copy")(e.target.value)}><EnumOptions group="signed_copy" current={form.signed_copy} /></select>)}
+    {field("renewal_status", "Renewal", <select value={form.renewal_status} onChange={(e) => set("renewal_status")(e.target.value)}><EnumOptions group="renewal_status" current={form.renewal_status} /></select>)}
     {field("owner", "Responsible owner", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} placeholder="Unassigned" />)}
     {field("project_id", "Linked project", <select value={form.project_id} onChange={(e) => set("project_id")(e.target.value)} disabled={!form.partner_id}><option value="">None</option>{partnerProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>, form.partner_id && !partnerProjects.length ? "This partner has no projects." : undefined)}
     <div className="form-wide">{field("opportunity_id", "Originating opportunity", <select value={form.opportunity_id} onChange={(e) => set("opportunity_id")(e.target.value)} disabled={!form.partner_id}><option value="">None</option>{partnerOpportunities.map((o) => <option key={o.id} value={o.id}>{o.title}</option>)}</select>)}</div>

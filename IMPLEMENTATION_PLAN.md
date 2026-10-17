@@ -141,6 +141,13 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Sending real sample pages to Gemini awaits team confirmation of the API project's data terms (the key behaves like a free-tier key: Pro models return quota errors).
 - Gemini model: `gemini-2.5-flash` returns 404 for this key (no longer offered to new projects); default changed to `gemini-3.5-flash` (verified to answer).
 
+## Step R5 notes — no static business lists in the frontend
+- Audit (17 Oct 2026): no business records, amounts, partner names, or metrics remained in the frontend, and no MOU content exists in application code. Remaining static items were option lists with labels duplicated from the backend (agreement/signed-copy/renewal/project/milestone/partner statuses, pipeline stages and board names, finance record types, document kinds, alert category/severity/decision labels), a rupee-only amount formatter, and a fabricated "live trace" on the landing page (invented rule names and dates).
+- Backend `app/labels.py`: display labels for every enumerated value; `GET /api/options` returns `enums` (from the models and rules, in their defined order) and `labels`. A test checks every enum value has exactly one label and no label is stale.
+- Frontend `lib/options.tsx`: `OptionsProvider` (loads `/api/options` once; never blocks pages), `EnumOptions` / `EnumLabel` components and `useLabel` / `useEnum` hooks. All forms, filters, the pipeline board (stage order and names), finance sections, document kinds, and alert categories use them; `lib/projects.ts` and the static lists in `lib/agreements.ts`, `lib/pipeline.ts`, `lib/alerts.ts`, and `PartnerForm` were removed. Amounts are formatted in their own currency; without a valid currency the number is shown with "(currency not recorded)" — never as rupees. The landing page shows how the pipeline works instead of a fake live trace.
+- Remaining static UI configuration (by design): "Today's 5" count, review-section order, the "All statuses" filter option, API base URL.
+- Verification: `npx tsc -b` clean; build passes; `pytest` 320 passed, 1 skipped; browser drives (document flow 12 steps, Finance/Reports) pass.
+
 ## Step R4 notes — Tata STRIVE defaults, currency/number reading, optional OCR
 - Team decisions (17 Oct 2026): the product is for Tata STRIVE only (Indian agreements); add Tesseract as an optional OCR fallback with Gemini first.
 - No sample-MOU values exist in application code (checked: names, amounts, places, courses appear only in test fixtures). Regional assumptions are now settings with Indian defaults: `DEFAULT_CURRENCY=INR`, `DATE_ORDER=dmy`, `NUMBER_DECIMAL_SEPARATOR=.`; business time zone IST as before.

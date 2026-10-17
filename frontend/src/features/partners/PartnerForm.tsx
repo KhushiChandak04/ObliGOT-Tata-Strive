@@ -1,10 +1,9 @@
 import { useState, type FormEvent } from "react";
 import FormField from "../../components/ui/FormField";
 import { api } from "../../services/functions.service";
+import { EnumOptions } from "../../lib/options";
 import type { Partner, PartnerStatus } from "../../types";
 
-const STATUSES: PartnerStatus[] = ["prospect", "qualification", "active", "on_hold", "closed"];
-const STATUS_LABELS: Record<PartnerStatus, string> = { prospect: "Prospect", qualification: "Qualification", active: "Active", on_hold: "On hold", closed: "Closed" };
 
 type FormState = { name: string; category: string; status: PartnerStatus; owner: string; contact_name: string; contact_email: string; summary: string };
 
@@ -65,7 +64,7 @@ export default function PartnerForm({ partner, onSaved, onCancel }: { partner?: 
   return <form className="form-grid" onSubmit={(e) => void submit(e)} noValidate>
     {field("name", "Partner name *", <input value={form.name} onChange={(e) => set("name")(e.target.value)} maxLength={160} autoFocus />)}
     {field("category", "Category *", <input value={form.category} onChange={(e) => set("category")(e.target.value)} maxLength={100} placeholder="e.g. Training & curriculum" />)}
-    {field("status", "Relationship status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}>{STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}</select>)}
+    {field("status", "Relationship status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}><EnumOptions group="partner_status" current={form.status} /></select>)}
     {field("owner", "Responsible owner *", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} />)}
     {field("contact_name", "Contact name", <input value={form.contact_name} onChange={(e) => set("contact_name")(e.target.value)} maxLength={120} />)}
     {field("contact_email", "Contact email", <input type="email" value={form.contact_email} onChange={(e) => set("contact_email")(e.target.value)} maxLength={254} />)}

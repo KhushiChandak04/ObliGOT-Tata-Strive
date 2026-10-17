@@ -5,15 +5,11 @@ summed only within one currency and one financial concept (e.g. unpaid invoices)
 """
 from collections import Counter, defaultdict
 from datetime import date
-from typing import get_args
 
 from fastapi import APIRouter
 
-from app.documents import DocumentKind, ScopeDimension
-from app.models import (
-    FINANCE_STATUSES, OPPORTUNITY_STAGES, AgreementStatus, FinanceType, MilestoneStatus, PartnerStatus, RecordStatus,
-    RenewalStatus, SignedCopyStatus,
-)
+from app.labels import LABELS, enums
+from app.models import FINANCE_STATUSES
 from app.repository import list_records
 from app.routes import IMPORT_ENTITY_TYPES, _current_alerts
 
@@ -91,19 +87,11 @@ def options() -> dict:
     scope = [s for s in list_records("programme_scope") if s.get("review_state") == "approved"]
     return {
         "enums": {
-            "partner_status": list(get_args(PartnerStatus)),
-            "agreement_status": list(get_args(AgreementStatus)),
-            "signed_copy": list(get_args(SignedCopyStatus)),
-            "renewal_status": list(get_args(RenewalStatus)),
-            "project_status": list(get_args(RecordStatus)),
-            "milestone_status": list(get_args(MilestoneStatus)),
-            "opportunity_stage": list(OPPORTUNITY_STAGES),
-            "finance_record_type": list(get_args(FinanceType)),
+            **enums(),
             "finance_status": {k: list(v) for k, v in FINANCE_STATUSES.items()},
-            "document_kind": list(get_args(DocumentKind)),
-            "scope_dimension": list(get_args(ScopeDimension)),
             "import_entity_type": sorted(IMPORT_ENTITY_TYPES),
         },
+        "labels": LABELS,
         "partners": sorted(({"id": p["id"], "name": p["name"]} for p in list_records("partners")), key=lambda p: p["name"].lower()),
         "projects": sorted(({"id": p["id"], "name": p["name"], "partner_id": p.get("partner_id")} for p in list_records("projects")),
                            key=lambda p: p["name"].lower()),

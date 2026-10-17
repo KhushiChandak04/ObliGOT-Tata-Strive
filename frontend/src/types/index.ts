@@ -203,8 +203,13 @@ export interface AppOptions {
   enums: {
     partner_status: string[]; agreement_status: string[]; signed_copy: string[]; renewal_status: string[]; project_status: string[];
     milestone_status: string[]; opportunity_stage: string[]; finance_record_type: string[]; finance_status: Record<string, string[]>;
-    document_kind: string[]; scope_dimension: string[]; import_entity_type: string[];
+    document_kind: string[]; scope_dimension: string[]; import_entity_type: string[]; report_type: string[]; report_status: string[];
+    alert_category: string[]; alert_severity: string[]; review_decision: string[];
   };
+  /** Display labels per enum group, from the backend. */
+  labels: Record<"partner_status" | "agreement_status" | "signed_copy" | "renewal_status" | "project_status" | "milestone_status" |
+    "opportunity_stage" | "finance_record_type" | "document_kind" | "report_type" | "report_status" | "alert_category" |
+    "alert_severity" | "review_decision", Record<string, string>>;
   partners: { id: string; name: string }[];
   projects: { id: string; name: string; partner_id?: string | null }[];
   agreements: { id: string; title: string; partner_id?: string | null }[];

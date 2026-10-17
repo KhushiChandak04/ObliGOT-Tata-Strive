@@ -65,3 +65,12 @@ def test_options_come_from_the_schema_and_current_records():
     assert o["enums"]["finance_status"] == {k: list(v) for k, v in FINANCE_STATUSES.items()}
     assert [p["id"] for p in o["partners"]] and {p["id"] for p in o["partners"]} == {p["id"] for p in repository.list_records("partners")}
     assert o["states"] == ["State A (synthetic)"]  # only approved data
+
+
+def test_every_option_has_a_label_and_labels_match_the_schema():
+    o = client.get("/api/options").json()
+    for group, labels in o["labels"].items():
+        assert group in o["enums"], group
+        assert set(labels) == set(o["enums"][group]), group  # no stale or missing labels
+    assert o["enums"]["opportunity_stage"][0] == "identified" and o["labels"]["opportunity_stage"]["agreement"] == "MOU"
+    assert "data_quality" in o["enums"]["alert_category"] and "task_created" in o["enums"]["review_decision"]

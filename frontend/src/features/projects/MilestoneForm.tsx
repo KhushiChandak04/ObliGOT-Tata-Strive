@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import FormField from "../../components/ui/FormField";
 import { api } from "../../services/functions.service";
-import { MILESTONE_STATUSES } from "../../lib/projects";
+import { EnumOptions } from "../../lib/options";
 import type { Milestone, MilestoneStatus } from "../../types";
 
 type FormState = { title: string; due_date: string; status: MilestoneStatus; completed_date: string; owner: string };
@@ -67,7 +67,7 @@ export default function MilestoneForm({ projectId, milestone, markComplete, onSa
   return <form className="form-grid" onSubmit={(e) => void submit(e)} noValidate>
     <div className="form-wide">{field("title", "Milestone *", <input value={form.title} onChange={(e) => set("title")(e.target.value)} maxLength={200} autoFocus={!markComplete} />)}</div>
     {field("due_date", "Due date", <input type="date" value={form.due_date} onChange={(e) => set("due_date")(e.target.value)} />)}
-    {field("status", "Status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}>{MILESTONE_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select>)}
+    {field("status", "Status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}><EnumOptions group="milestone_status" current={form.status} /></select>)}
     {completed && field("completed_date", "Completed on *", <input type="date" value={form.completed_date} onChange={(e) => set("completed_date")(e.target.value)} autoFocus={markComplete} />, "The actual completion date, as recorded by the team.")}
     {field("owner", "Responsible owner", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} placeholder="Unassigned" />)}
     {submitError && <p className="form-wide form-error" role="alert">{submitError}</p>}

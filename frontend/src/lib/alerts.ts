@@ -1,15 +1,4 @@
-import type { Alert, AlertCategory, AlertSeverity, ReviewDecision } from "../types";
-
-export const CATEGORY_LABELS: Record<AlertCategory, string> = {
-  agreements: "Agreements", pipeline: "Pipeline", projects: "Projects & milestones", reporting: "Reporting",
-  finance: "Finance", tasks: "Tasks", data_quality: "Data quality",
-};
-export const SEVERITY_LABELS: Record<AlertSeverity, string> = {
-  overdue: "Overdue", risk: "Risk", due_soon: "Due soon", missing_data: "Missing data",
-};
-export const DECISION_LABELS: Record<ReviewDecision, string> = {
-  acknowledged: "Acknowledged", deferred: "Deferred", dismissed: "Dismissed", task_created: "Task created",
-};
+import type { Alert } from "../types";
 
 /** Plain-language timing from the backend's days_remaining (the browser does no date arithmetic). */
 export function alertTiming(alert: Alert): string {

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import FormField from "../../components/ui/FormField";
 import { api } from "../../services/functions.service";
-import { STAGES } from "../../lib/pipeline";
+import { EnumOptions } from "../../lib/options";
 import type { Opportunity, OpportunityStage, Partner } from "../../types";
 
 type FormState = { partner_id: string; title: string; stage: OpportunityStage; owner: string; next_step: string; next_step_date: string };
@@ -66,7 +66,7 @@ export default function OpportunityForm({ opportunity, partners, defaultPartnerI
   return <form className="form-grid" onSubmit={(e) => void submit(e)} noValidate>
     <div className="form-wide">{field("partner_id", "Partner *", <select value={form.partner_id} onChange={(e) => set("partner_id")(e.target.value)}><option value="">Select a partner…</option>{partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>)}</div>
     <div className="form-wide">{field("title", "Opportunity title *", <input value={form.title} onChange={(e) => set("title")(e.target.value)} maxLength={200} autoFocus />)}</div>
-    {field("stage", "Stage", <select value={form.stage} onChange={(e) => set("stage")(e.target.value)}>{STAGES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select>, "Stages record status only; they never imply a signed agreement.")}
+    {field("stage", "Stage", <select value={form.stage} onChange={(e) => set("stage")(e.target.value)}><EnumOptions group="opportunity_stage" current={form.stage} /></select>, "Stages record status only; they never imply a signed agreement.")}
     {field("owner", "Responsible owner *", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} />)}
     {field("next_step", "Next step", <input value={form.next_step} onChange={(e) => set("next_step")(e.target.value)} maxLength={500} />)}
     {field("next_step_date", "Next step date", <input type="date" value={form.next_step_date} onChange={(e) => set("next_step_date")(e.target.value)} />)}
