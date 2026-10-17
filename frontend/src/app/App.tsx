@@ -13,6 +13,8 @@ import { MILESTONE_STATUSES } from "../lib/projects";
 import { api } from "../services/functions.service";
 import { useResource } from "../lib/useResource";
 import { CATEGORY_LABELS, todaysAlerts } from "../lib/alerts";
+import { getRedirectResult, signInWithPopup, signInWithRedirect } from "firebase/auth";
+import { firebaseAuth, googleProvider } from "../lib/firebase";
 import type { ActionItem, Agreement, Alert as ApiAlert, AnalyzeResponse, AlertEvidence, ImportPreview, Milestone, Opportunity, Partner, Project } from "../types";
 
 /** View model for the reference UI, built from a rules-engine alert (GET /api/alerts). */
@@ -82,7 +84,45 @@ function Auth() {
   const navigate = useNavigate();
   const mode = new URLSearchParams(useLocation().search).get("mode") === "up";
   const [signup, setSignup] = useState(mode);
-  return <div className="auth-page"><div className="auth-left"><Link to="/"><Logo light /></Link><h2>From commitments to accountability.</h2><span className="mono">Prototype screen. Production build uses Firebase Authentication.</span></div><div className="auth-right"><form className="auth-form" onSubmit={(event) => { event.preventDefault(); navigate("/dashboard"); }}><h2>{signup ? "Join the team" : "Welcome back"}</h2><p>Sign in to your partnership workspace.</p><div className="tabs"><button type="button" className={!signup ? "active" : ""} onClick={() => setSignup(false)}>Sign in</button><button type="button" className={signup ? "active" : ""} onClick={() => setSignup(true)}>Sign up</button></div>{signup && <label>Full name<input placeholder="Your name" /></label>}<label>Work email<input type="email" placeholder="you@tatastrive.org" required /></label><label>Password<input type="password" placeholder="••••••••" required /></label>{signup && <label>Role<input value="Manager" readOnly /></label>}<button className="btn submit" type="submit">{signup ? "Create account" : "Sign in"}</button></form></div></div>;
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState("");
+  useEffect(() => {
+    if (!firebaseAuth) return;
+    void getRedirectResult(firebaseAuth).then((result) => {
+      if (result) navigate("/dashboard");
+    }).catch(() => setGoogleError("Google sign-in failed. Please try again."));
+  }, [navigate]);
+  async function continueWithGoogle(): Promise<void> {
+    if (!firebaseAuth) {
+      setGoogleError("Google sign-in failed. Please try again.");
+      return;
+    }
+    setGoogleLoading(true);
+    setGoogleError("");
+    try {
+      await signInWithPopup(firebaseAuth, googleProvider);
+      navigate("/dashboard");
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+      if (code === "auth/popup-closed-by-user") return;
+      if (code === "auth/popup-blocked") {
+        try {
+          await signInWithRedirect(firebaseAuth, googleProvider);
+        } catch {
+          setGoogleError("Google sign-in failed. Please try again.");
+        }
+        return;
+      }
+      if (code === "auth/unauthorized-domain") {
+        setGoogleError("This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.");
+        return;
+      }
+      setGoogleError("Google sign-in failed. Please try again.");
+    } finally {
+      setGoogleLoading(false);
+    }
+  }
+  return <div className="auth-page"><div className="auth-left"><Link to="/"><Logo light /></Link><h2>From commitments to accountability.</h2><span className="mono">Prototype screen. Production build uses Firebase Authentication.</span></div><div className="auth-right"><form className="auth-form" onSubmit={(event) => { event.preventDefault(); navigate("/dashboard"); }}><h2>{signup ? "Join the team" : "Welcome back"}</h2><p>Sign in to your partnership workspace.</p><div className="tabs"><button type="button" className={!signup ? "active" : ""} onClick={() => setSignup(false)}>Sign in</button><button type="button" className={signup ? "active" : ""} onClick={() => setSignup(true)}>Sign up</button></div>{signup && <label>Full name<input placeholder="Your name" /></label>}<label>Work email<input type="email" placeholder="you@tatastrive.org" required /></label><label>Password<input type="password" placeholder="••••••••" required /></label>{signup && <label>Role<input value="Manager" readOnly /></label>}<button className="btn submit" type="submit">{signup ? "Create account" : "Sign in"}</button><div style={{ marginTop: 16 }}><div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--muted)", fontSize: 13 }}><span style={{ height: 1.5, flex: 1, background: "var(--line)" }} />or<span style={{ height: 1.5, flex: 1, background: "var(--line)" }} /></div><button className="btn outline" type="button" disabled={googleLoading} onClick={() => void continueWithGoogle()} style={{ width: "100%", marginTop: 12, gap: 10 }}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 3.5c1.45 0 2.43.63 2.99 1.16l2.18-2.13C12.84 1.2 11.14.5 9 .5 5.9.5 3.22 2.28 1.91 4.86l2.51 1.95C5.05 5.15 6.84 3.5 9 3.5Z" fill="currentColor"/><path d="M17.5 9.18c0-.61-.05-1.06-.16-1.53H9v2.9h4.88c-.1.72-.75 1.8-2.16 2.53l2.64 2.05c1.54-1.42 3.14-3.55 3.14-5.95Z" fill="currentColor"/><path d="M4.42 10.81A5.5 5.5 0 0 1 4.12 9c0-.63.11-1.24.3-1.81L1.91 5.24A8.5 8.5 0 0 0 .5 9c0 1.35.32 2.63.89 3.76l3.03-1.95Z" fill="currentColor"/><path d="M9 17.5c2.43 0 4.47-.8 5.96-2.17l-2.64-2.05c-.71.5-1.67.85-3.32.85-2.16 0-3.95-1.65-4.58-3.31l-3.03 1.95C2.7 15.72 5.9 17.5 9 17.5Z" fill="currentColor"/></svg>{googleLoading ? "Connecting…" : "Continue with Google"}</button>{googleError && <div role="alert" style={{ color: "var(--bordo)", font: "13px 'DM Sans', sans-serif", marginTop: 8 }}>{googleError}</div>}</div></form></div></div>;
 }
 
 function AppShell() {
