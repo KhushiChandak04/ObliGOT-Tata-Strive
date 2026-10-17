@@ -226,10 +226,13 @@ async def gemini_structured(contents, schema: type[BaseModel]) -> str:
     client = genai.Client(api_key=settings.gemini_api_key)
     config = types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema, temperature=0)
     delays = list(settings.gemini_retry_delays)
+    # On "overloaded" (503), try the fallback models immediately before waiting and retrying.
+    models = [settings.gemini_model, *[m for m in settings.gemini_fallback_models if m != settings.gemini_model]]
+    current = 0
     while True:
         try:
             response = await asyncio.wait_for(
-                client.aio.models.generate_content(model=settings.gemini_model, contents=contents, config=config),
+                client.aio.models.generate_content(model=models[current], contents=contents, config=config),
                 timeout=settings.gemini_extraction_timeout_seconds,
             )
             return response.text or ""
@@ -237,6 +240,10 @@ async def gemini_structured(contents, schema: type[BaseModel]) -> str:
             raise ExtractionFailed("timeout", f"Gemini did not respond within {settings.gemini_extraction_timeout_seconds:g} seconds") from exc
         except Exception as exc:
             code = getattr(exc, "code", None)
+            if code == 503 and current + 1 < len(models):
+                current += 1
+                logger.warning("Gemini model overloaded; switching to %s", models[current])
+                continue
             if code in (429, 503) and delays:  # rate limit or temporarily overloaded: wait and retry
                 logger.warning("Gemini returned %s; retrying in %ss", code, delays[0])
                 await asyncio.sleep(delays.pop(0))

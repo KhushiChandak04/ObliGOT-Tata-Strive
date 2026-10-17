@@ -200,7 +200,8 @@ async def _read_pages(document: dict, raw: bytes, inspection, run: dict) -> dict
                 id=_page_id(document["id"], item.page), document_id=document["id"], page_number=item.page,
                 method="gemini_vision", model=settings.gemini_model, read_at=now_iso(),
                 **item.model_dump(exclude={"page"})).model_dump(mode="json")
-            readings[item.page] = record  # saved together with the proposals, after the whole run succeeds
+            # Saved per batch: if extraction fails later, a retry reuses these readings instead of re-reading the pages.
+            readings[item.page] = put_record("document_pages", record, record["id"])
         run["pages_read"] += len(batch)
         run["ai_used"] = True
         patch_record("documents", document["id"], {"extraction": run})

@@ -27,7 +27,8 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | P4a (backend) done — approved. Validated on synthetic addenda only; no real addendum sample yet |
 | S1 | Scan-aware page reading (Gemini vision for scanned pages, document map, page images) | Done — approved |
 | S2 | Tables, relative deadlines, section-aware extraction (sample-driven) | Done — approved (synthetic fixtures; real samples not sent to Gemini) |
-| A1 | Align the teammate's document screens (merged 9da70ea) with the backend API | Done — awaiting review |
+| A1 | Align the teammate's document screens (merged 9da70ea) with the backend API | Done — approved |
+| A2 | Finance and Reports & UCs on live data (old 8d); faster Gemini (fallback model, saved page readings) | Done — awaiting review |
 | S3 | Arithmetic consistency checks and workbook sheets for budgets/tranches/targets | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
 | P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
@@ -136,6 +137,13 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Three real MOUs are kept locally in `samples/` (git-ignored with `*.pdf`; never committed). Local inspection with PyMuPDF only (no content printed, nothing sent to Gemini): `MoU 1.pdf` 9 pages, `MoU 2.pdf` 27, `mou_3.pdf` 28 — every page is a single scanned image with no text layer. Before S1 the app would have blocked all three.
 - Sending real sample pages to Gemini awaits team confirmation of the API project's data terms (the key behaves like a free-tier key: Pro models return quota errors).
 - Gemini model: `gemini-2.5-flash` returns 404 for this key (no longer offered to new projects); default changed to `gemini-3.5-flash` (verified to answer).
+
+## Step A2 notes — Finance and Reports live; faster Gemini
+- Finance page: budgets, funds received, invoices, and utilization certificates from `/api/finance`; each record shows its own amount and currency (no totals across records, types, or currencies — the synthetic page summed them); dates as recorded; ageing/due-soon wording from the rules engine's alerts; status changed through a selector limited to the record type's allowed statuses.
+- Reports & UCs page: reports from `/api/reports` plus UC finance records; tabs All / Pending / Overdue / Submitted with counts; "Overdue" comes from `REPORT_OVERDUE` / `UC_OVERDUE` alerts (no browser date maths); "Mark submitted" asks for the actual submission date for reports. `src/data/repository.ts` is no longer used by any page.
+- Gemini: when the main model answers 503 (overloaded), the next model in `GEMINI_FALLBACK_MODELS` (default `gemini-flash-latest`) is tried at once before waiting; page readings are saved per batch, so a later extraction failure does not force re-reading (and re-sending) pages.
+- Verification: `pytest` 268 passed (new fallback test). Headless Chrome (temporary Firebase user, in-memory backend with demo data): four finance sections, no KPI totals; invoice set to paid → saved and its ageing alert cleared; reports tabs All 3 / Pending 1 / Overdue 1 / Submitted 1 → marking the overdue report submitted with a date → Overdue 0 / Submitted 2; 0 px overflow at 390 px on both pages; no console errors.
+- Real MoU 1 run (team-approved, free tier): the first attempt read all 9 pages, then extraction failed after repeated 503s from Google; rerun with the fallback model.
 
 ## Step A1 notes — document screens aligned with the API
 - Context: a teammate's commit (9da70ea, merged in ceff5a5) added Documents and Document review screens. Its API client called routes that do not exist (`/documents/{id}/review`, `/documents/{id}/fields/{id}`, `/documents/{id}/pdf`, `/agreements/{id}/amendments`) and sent `{status}` where the backend expects `{decision}`; nothing started extraction; the PDF link could not carry the sign-in token.

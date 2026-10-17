@@ -8,7 +8,6 @@ import {
   useNavigate,
   useSearchParams,
 } from "react-router-dom";
-import { repository } from "../data/repository";
 import Dialog from "../components/ui/Dialog";
 import AgreementForm from "../features/agreements/AgreementForm";
 import PartnerForm from "../features/partners/PartnerForm";
@@ -48,6 +47,7 @@ import type {
   ClauseProposal,
   DocumentEvidence,
   DocumentReview,
+  FinanceRecord,
   FinancialTermProposal,
   ImportPreview,
   Milestone,
@@ -1828,71 +1828,6 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
   );
 }
 
-function FinancePage() {
-  const budgetTotal = repository.budgets.reduce(
-    (sum, item) => sum + item.amount,
-    0,
-  );
-  const receivedTotal = repository.fundsReceived
-    .filter((item) => item.status === "Received")
-    .reduce((sum, item) => sum + item.amount, 0);
-  const invoiceTotal = repository.invoices.reduce(
-    (sum, item) => sum + item.amount,
-    0,
-  );
-  return (
-    <>
-      <div className="kpis">
-        <Kpi value={budgetTotal} label="Budgeted (INR)" />
-        <Kpi value={receivedTotal} label="Funds received (INR)" />
-        <Kpi value={invoiceTotal} label="Invoices (INR)" />
-      </div>
-      <div className="finance-sections">
-        <FinanceSection title="Budgets">
-          {repository.budgets.map((item) => (
-            <FinanceRow
-              key={item.id}
-              label={`${item.partner} · ${item.project}`}
-              value={money(item.amount)}
-              detail={item.status}
-            />
-          ))}
-        </FinanceSection>
-        <FinanceSection title="Funds received">
-          {repository.fundsReceived.map((item) => (
-            <FinanceRow
-              key={item.id}
-              label={`${item.partner} · ${item.project}`}
-              value={money(item.amount)}
-              detail={`${item.status} · ${formatDate(item.receivedDate)}`}
-            />
-          ))}
-        </FinanceSection>
-        <FinanceSection title="Invoices">
-          <DataTable
-            headers={[
-              "Partner",
-              "Invoice date",
-              "Due date",
-              "Amount",
-              "Status",
-            ]}
-            rows={repository.invoices.map((item) => [
-              item.partner,
-              formatDate(item.invoiceDate),
-              item.dueDate ? formatDate(item.dueDate) : "Due date not recorded",
-              money(item.amount),
-              <span className="pill" key="status">
-                {item.status}
-              </span>,
-            ])}
-            empty="No invoices recorded."
-          />
-        </FinanceSection>
-      </div>
-    </>
-  );
-}
 function FinanceSection({
   title,
   children,
@@ -1907,61 +1842,187 @@ function FinanceSection({
     </section>
   );
 }
-function FinanceRow({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-}) {
+// Allowed statuses per finance record type (mirrors FINANCE_STATUSES in backend/app/models.py).
+const FINANCE_STATUS_OPTIONS: Record<FinanceRecord["record_type"], string[]> = {
+  budget: ["planned", "approved", "revised", "closed"],
+  fund_received: ["expected", "received", "cancelled"],
+  invoice: ["raised", "draft", "sent", "paid", "cancelled"],
+  utilization_certificate: ["pending", "submitted", "accepted", "rejected"],
+};
+const FINANCE_SECTIONS: { type: FinanceRecord["record_type"]; title: string }[] = [
+  { type: "budget", title: "Budgets" },
+  { type: "fund_received", title: "Funds received" },
+  { type: "invoice", title: "Invoices" },
+  { type: "utilization_certificate", title: "Utilization certificates" },
+];
+
+/** Amount in the record's own currency; amounts are never added across records, types, or currencies. */
+const recordAmount = (record: FinanceRecord): string =>
+  record.amount == null
+    ? "Amount not recorded"
+    : new Intl.NumberFormat("en-IN", { style: "currency", currency: record.currency || "INR", maximumFractionDigits: 0 }).format(record.amount);
+
+function FinancePage() {
+  const data = useResource(async () => {
+    const [records, partners, alerts] = await Promise.all([api.finance.list(), api.partners.list(), api.alerts.list()]);
+    return { records, partners, alerts };
+  }, []);
+  const [message, setMessage] = useState("");
+  const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
+  // Ageing and overdue wording come from the rules engine (alerts), not from date maths in the browser.
+  const alertFor = new Map((data.data?.alerts.alerts ?? []).filter((a) => a.record_type === "finance").map((a) => [a.record_id, a]));
+  const setStatus = async (record: FinanceRecord, status: string) => {
+    setMessage("");
+    try {
+      await api.finance.update(record.id, { status });
+      setMessage(`“${record.title}” is now ${status.replace("_", " ")}.`);
+      data.reload();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not update the record.");
+    }
+  };
   return (
-    <div className="finance-row">
-      <span>
-        <b>{label}</b>
-        <small>{detail}</small>
-      </span>
-      <strong className="mono">{value}</strong>
-    </div>
+    <>
+      <RegisterState resource={data} label="finance records" message={message} />
+      {data.data && (
+        <div className="finance-sections">
+          {FINANCE_SECTIONS.map(({ type, title }) => {
+            const records = data.data!.records.filter((r) => r.record_type === type);
+            return (
+              <FinanceSection title={title} key={type}>
+                {records.length ? (
+                  records.map((record) => {
+                    const alert = alertFor.get(record.id);
+                    const dates = [
+                      record.issue_date && `issued ${formatDate(record.issue_date)}`,
+                      record.due_date ? `due ${formatDate(record.due_date)}` : type === "invoice" || type === "utilization_certificate" ? "due date not recorded" : "",
+                      record.received_date && `received ${formatDate(record.received_date)}`,
+                    ].filter(Boolean);
+                    return (
+                      <div className="finance-row" key={record.id}>
+                        <span>
+                          <b>{`${names.get(record.partner_id) ?? record.partner_id} · ${record.title}`}</b>
+                          <small>
+                            {dates.join(" · ")}
+                            {alert ? ` · ⚠ ${alert.rule_title}` : ""}
+                            {record.source_label === "demo" ? " · fictional demo record" : ""}
+                          </small>
+                          <select
+                            aria-label={`Status of ${record.title}`}
+                            value={record.status}
+                            onChange={(event) => void setStatus(record, event.target.value)}
+                          >
+                            {(FINANCE_STATUS_OPTIONS[record.record_type] ?? [record.status]).map((s) => (
+                              <option key={s} value={s}>
+                                {s.replace("_", " ")}
+                              </option>
+                            ))}
+                          </select>
+                        </span>
+                        <strong className="mono">{recordAmount(record)}</strong>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p>No {title.toLowerCase()} recorded.</p>
+                )}
+              </FinanceSection>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }
 
+type ObligationRow = {
+  id: string; kind: "report" | "uc"; type: string; title: string; partnerId: string; dueDate?: string | null;
+  status: string; owner: string; overdue: boolean; done: boolean; demo: boolean;
+};
+
 function ReportsPage() {
+  const data = useResource(async () => {
+    const [reports, finance, partners, alerts] = await Promise.all([
+      api.reports.list(), api.finance.list(undefined, { record_type: "utilization_certificate" }), api.partners.list(), api.alerts.list(),
+    ]);
+    return { reports, finance, partners, alerts };
+  }, []);
   const [tab, setTab] = useState("All");
-  const filtered = repository.reports.filter(
-    (report) => tab === "All" || report.status === tab,
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [submittedOn, setSubmittedOn] = useState("");
+  const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
+  const overdueIds = new Set((data.data?.alerts.alerts ?? []).filter((a) => a.rule_id === "REPORT_OVERDUE" || a.rule_id === "UC_OVERDUE").map((a) => a.record_id));
+  const rows: ObligationRow[] = [
+    ...(data.data?.reports ?? []).map((r) => ({
+      id: r.id, kind: "report" as const, type: `${r.report_type} report`, title: r.title, partnerId: r.partner_id, dueDate: r.due_date,
+      status: r.status, owner: r.owner, overdue: overdueIds.has(r.id), done: r.status === "submitted" || r.status === "accepted", demo: r.source_label === "demo",
+    })),
+    ...(data.data?.finance ?? []).map((f) => ({
+      id: f.id, kind: "uc" as const, type: "Utilization certificate", title: f.title, partnerId: f.partner_id, dueDate: f.due_date,
+      status: f.status, owner: "—", overdue: overdueIds.has(f.id), done: ["submitted", "accepted"].includes(f.status), demo: f.source_label === "demo",
+    })),
+  ];
+  const filtered = rows.filter((r) =>
+    tab === "All" ? true : tab === "Overdue" ? r.overdue : tab === "Submitted" ? r.done : !r.done && !r.overdue,
   );
+  const markSubmitted = async (row: ObligationRow) => {
+    setMessage("");
+    try {
+      if (row.kind === "report") await api.reports.update(row.id, { status: "submitted", submitted_date: submittedOn });
+      else await api.finance.update(row.id, { status: "submitted" });
+      setMessage(`Marked “${row.title}” submitted.`);
+      setSubmitting(null);
+      setSubmittedOn("");
+      data.reload();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not update the record.");
+    }
+  };
   return (
     <section className="box">
+      <RegisterState resource={data} label="reports and utilization certificates" message={message} />
       <div className="tabs report-tabs">
         {["All", "Pending", "Overdue", "Submitted"].map((item) => (
-          <button
-            className={tab === item ? "active" : ""}
-            key={item}
-            onClick={() => setTab(item)}
-          >
-            {item}
+          <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>
+            {item} ({item === "All" ? rows.length : rows.filter((r) => (item === "Overdue" ? r.overdue : item === "Submitted" ? r.done : !r.done && !r.overdue)).length})
           </button>
         ))}
       </div>
-      <DataTable
-        headers={["Type", "Partner", "Project", "Due", "Status", "Owner"]}
-        rows={filtered.map((report) => [
-          report.type,
-          report.partner,
-          report.project,
-          formatDate(report.dueDate),
-          <span
-            className={`pill ${report.status === "Overdue" ? "high" : ""}`}
-            key="status"
-          >
-            {report.status}
-          </span>,
-          report.owner,
-        ])}
-        empty="No reports match this tab."
-      />
+      {data.data && (
+        <DataTable
+          headers={["Type", "Title", "Partner", "Due", "Status", "Owner", ""]}
+          rows={filtered.map((row) => [
+            row.type,
+            row.title,
+            names.get(row.partnerId) ?? row.partnerId,
+            row.dueDate ? formatDate(row.dueDate) : "Due date not recorded",
+            <span className={`pill ${row.overdue ? "high" : ""}`} key="status">
+              {row.overdue ? "Overdue" : row.status.replace("_", " ")}
+            </span>,
+            row.owner,
+            row.done ? (
+              ""
+            ) : submitting === row.id && row.kind === "report" ? (
+              <span className="button-row" key="submit">
+                <input type="date" aria-label="Submitted on" value={submittedOn} onChange={(e) => setSubmittedOn(e.target.value)} />
+                <button className="btn small-btn" disabled={!submittedOn} onClick={() => void markSubmitted(row)}>
+                  Save
+                </button>
+              </span>
+            ) : (
+              <button
+                className="btn outline small-btn"
+                key="submit"
+                onClick={() => (row.kind === "report" ? setSubmitting(row.id) : void markSubmitted(row))}
+              >
+                Mark submitted
+              </button>
+            ),
+          ])}
+          empty="No reports or utilization certificates match this tab."
+        />
+      )}
     </section>
   );
 }

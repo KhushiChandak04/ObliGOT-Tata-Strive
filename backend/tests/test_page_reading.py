@@ -219,3 +219,26 @@ def test_sample_mous_are_detected_as_scanned_and_accepted(name, pages):
     assert doc["page_count"] == pages and all(p["text_status"] == "low_text" for p in doc["pages"])
     assert doc["status"] == "uploaded" and "All pages are scanned images" in doc["warnings"][0]
     assert render_page(data, pages)[:2] == b"\xff\xd8"  # the last page (where schedules may be) renders
+
+
+def test_overloaded_model_falls_back_to_the_next_model(monkeypatch):
+    used = []
+
+    class Overloaded(Exception):
+        code = 503
+
+    class FakeModels:
+        async def generate_content(self, model, contents, config):
+            used.append(model)
+            if model == "primary-model":
+                raise Overloaded()
+            return SimpleNamespace(text="{}")
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.aio = SimpleNamespace(models=FakeModels())
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    monkeypatch.setattr(settings, "gemini_model", "primary-model")
+    monkeypatch.setattr(settings, "gemini_fallback_models", ["fallback-model"])
+    assert asyncio.run(gemini_structured("prompt", ChunkExtraction)) == "{}"
+    assert used == ["primary-model", "fallback-model"]  # switched at once, no waiting
