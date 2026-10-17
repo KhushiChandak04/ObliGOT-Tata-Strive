@@ -15,6 +15,7 @@ from app.models import (
 from app.repository import (
     firestore_enabled, get_record, list_records, patch_record, put_record, delete_record,
 )
+from app.engine import RuleConfig, evaluate, rule_catalog
 from app.rules import build_deadline_finding, business_today, scan_deadlines
 
 router = APIRouter()
@@ -465,6 +466,52 @@ def update_followup(followup_id: str, payload: FollowupUpdate) -> dict:
     if not record:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     return record
+
+ALERT_SOURCES = ("agreements", "opportunities", "milestones", "reports", "finance", "actions")
+
+def load_rule_config() -> RuleConfig:
+    stored = get_record("config", "rules")
+    return RuleConfig.model_validate({k: v for k, v in stored.items() if k != "id"}) if stored else RuleConfig()
+
+@router.get("/alerts", tags=["rules"])
+def list_alerts(partner_id: str | None = None, level: str | None = Query(default=None, pattern="^(high|medium|low)$"),
+                category: str | None = None) -> dict:
+    """Deterministic alerts computed from current records (nothing is stored). Sorted by priority score."""
+    config = load_rule_config()
+    today = business_today()
+    alerts = evaluate({name: list_records(name) for name in ALERT_SOURCES}, today, config)
+    shown = [a for a in alerts
+             if (not partner_id or a["partner_id"] == partner_id)
+             and (not level or a["priority"]["level"] == level)
+             and (not category or a["category"] == category)]
+    return {
+        "as_of": today.isoformat(),
+        "config": config.model_dump(),
+        "counts": {"total": len(shown), "by_level": {lvl: sum(a["priority"]["level"] == lvl for a in shown) for lvl in ("high", "medium", "low")}},
+        "alerts": shown,
+        "note": "Priority scores are an illustrative, transparent business rule, not a predictive model.",
+    }
+
+@router.get("/rules", tags=["rules"])
+def list_rules() -> list[dict]:
+    return rule_catalog()
+
+@router.get("/rules/config", response_model=RuleConfig, tags=["rules"])
+def get_rule_config() -> RuleConfig:
+    return load_rule_config()
+
+@router.patch("/rules/config", response_model=RuleConfig, tags=["rules"])
+async def update_rule_config(request: Request) -> RuleConfig:
+    changes = await _read_json_object(request)
+    unknown = set(changes) - set(RuleConfig.model_fields)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown rule settings: {', '.join(sorted(unknown))}")
+    try:
+        config = RuleConfig.model_validate({**load_rule_config().model_dump(), **changes})
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    put_record("config", config.model_dump(), "rules")
+    return config
 
 @router.get("/rules/deadline-preview", tags=["rules"])
 def deadline_preview(record_id: str = "demo-record", record_type: str = "report", label: str = "Quarterly report", due_date: date | None = None) -> dict:

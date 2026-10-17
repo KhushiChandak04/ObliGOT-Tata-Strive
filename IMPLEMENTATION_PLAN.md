@@ -10,8 +10,8 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 3 | Project instructions and custom skills | Done — approved |
 | 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
 | 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
-| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | 6a–6c approved; 6d done — awaiting review |
-| 7 | Deadline engine and action center | Not started |
+| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | Done — approved |
+| 7 | Deadline engine and action center (7a engine, 7b review loop, 7c UI) | 7a done — awaiting review |
 | 8 | Funding and compliance | Not started |
 | 9 | Gemini AI integration | Not started |
 | 10 | Spreadsheet import | Not started |
@@ -68,6 +68,15 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 7a notes — deterministic rules engine
+- New `app/engine.py`: 19 rules with stable ids, descriptions, why-it-matters text, and recommended actions; alerts computed on read with id `{rule_id}:{record_type}:{record_id}`; evidence lists stored values (`source: record`) and derived values (`source: computed`); `related_alert_ids` link alerts for the same partner; transparent priority breakdown; deterministic ordering.
+- Renewal-aware: `renewed`/`not_renewing` suppress expiry alerts; `in_progress` keeps the alert with −10 priority.
+- Invoices without a due date are reported as missing data (age cannot be determined without an issue date); never called overdue.
+- Routes: `GET /api/alerts` (filters partner, level, category), `GET /api/rules`, `GET|PATCH /api/rules/config` (stored as `config/rules`).
+- Dashboard `findings` intentionally unchanged (still `rules.scan_deadlines`) so the current UI keeps working; 7c moves the UI to `/api/alerts`, after which retiring `findings` will be proposed as a contract change.
+- Demo data yields 8 alerts (2 high, 3 medium, 3 low).
+- Verification: `pytest` → 132 passed (55 new in `tests/test_engine.py`: every rule's boundaries and non-firing statuses, config thresholds, score arithmetic and levels, cross-record threshold, evidence shape, determinism, API filters, resolve-clears-alert, config validation); also passes run alone and in reverse file order.
 
 ## Step 6d notes — projects and milestones
 - New `milestones` collection and routes. `partner_id` is always derived server-side from the milestone's project (client value ignored), so milestones cannot drift from their project's partner. Status `planned`/`in_progress`/`completed`/`missed`/`cancelled`; `completed_date` is required for and only allowed on `completed`.

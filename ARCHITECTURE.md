@@ -41,13 +41,13 @@ Existing collection names and fields are preserved; new fields are optional for 
 
 Every record carries `source_label` (`demo` or `user`). Demo records are fictional.
 
-## Deterministic rules engine [planned]
+## Deterministic rules engine [current — Step 7a, `app/engine.py`]
 `evaluate(records, config, today) → list[Alert]` — pure functions in `app/rules.py`; `today` computed in Asia/Kolkata.
 
 - Alerts are **computed on read**, never stored. Stable id: `{rule_id}:{record_type}:{record_id}`. Only human decisions are persisted (`alert_reviews`). Fixing the underlying record makes the alert disappear.
 - Each alert: rule_id, rule description, severity, record ref, partner, owner, due date, days remaining/overdue, evidence (field → value), why it matters, template action, priority score with breakdown.
-- Rules: `MOU_EXPIRING`, `MOU_EXPIRED_NO_RENEWAL`, `MOU_SIGNED_COPY_MISSING`, `APPROVED_NO_MOU`, `MILESTONE_OVERDUE`/`_DUE_SOON`, `REPORT_OVERDUE`/`_DUE_SOON`, `UC_PENDING`, `INVOICE_OVERDUE` (due date present), `INVOICE_AGING` (no due date — described by age only), `TASK_OVERDUE`, `FOLLOWUP_STALE`, `DATA_MISSING` (material fields only).
-- Priority score (illustrative business rule, not a prediction): rule base (overdue 50 / due soon 30 / data 15) + urgency (≤ 30) + cross-record (+10 when partner has ≥ 2 other open alerts) + recorded amount (+5).
+- Rules (implemented): `MOU_EXPIRING`, `MOU_EXPIRED_NO_RENEWAL`, `MOU_SIGNED_COPY_MISSING`, `AGREEMENT_EXPIRY_MISSING`, `APPROVED_NO_AGREEMENT`, `OPPORTUNITY_NEXT_STEP_OVERDUE`, `OPPORTUNITY_STALE`, `MILESTONE_OVERDUE`/`_DUE_SOON`, `REPORT_OVERDUE`/`_DUE_SOON`/`_DUE_DATE_MISSING`, `UC_OVERDUE`/`_DUE_SOON`/`_DUE_DATE_MISSING`, `INVOICE_OVERDUE`/`_DUE_SOON`/`_DUE_DATE_MISSING`, `TASK_OVERDUE`. Planned for Step 8: `INVOICE_AGING` once invoices have an `issue_date` (until then an invoice without a due date is reported as missing data, never as overdue).
+- Priority score (illustrative business rule, not a prediction): base by severity (overdue 50, risk 30, due soon 25, missing data 15) + days overdue (1 point per day, max 30) or due-soon urgency (+20 within 7 days, +10 within 14) + cross-record (+10 when the partner has ≥ 2 other open alerts) + recorded amount at stake (+5) − 10 when an expiring MOU's renewal is already in progress. Levels: high ≥ 60, medium ≥ 35, low otherwise. Ties are ordered by nearest date, then alert id.
 - **Today's 5** = top five by score excluding deferred/dismissed; the full list is always available.
 
 ## AI [planned]

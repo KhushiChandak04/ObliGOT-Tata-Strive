@@ -1,0 +1,291 @@
+"""Deterministic partnership rules engine.
+
+Alerts are computed from the current records on every call; nothing here is stored. The same records,
+configuration, and date always produce the same alerts, in the same order. Each alert carries the rule
+that fired, the record values it is based on (evidence), and a transparent priority breakdown.
+
+The priority score is an illustrative business rule, not a trained or validated prediction model.
+"""
+from collections import defaultdict
+from datetime import date
+from typing import Any, Callable
+
+from pydantic import BaseModel, Field
+
+from app.rules import _parse_date
+
+
+class RuleConfig(BaseModel):
+    """Configurable thresholds (days). Stored as the `config/rules` record."""
+    mou_expiry_warning_days: int = Field(default=60, ge=1, le=365)
+    deadline_warning_days: int = Field(default=30, ge=1, le=180)
+    stale_opportunity_days: int = Field(default=30, ge=7, le=365)
+
+
+# Base points per severity. Overdue items outrank upcoming ones; data gaps rank lowest.
+SEVERITY_POINTS = {"overdue": 50, "risk": 30, "due_soon": 25, "missing_data": 15}
+RELATED_ALERTS_THRESHOLD = 2  # other open alerts for the same partner that trigger the cross-record bump
+
+RULES: dict[str, dict[str, str]] = {
+    "MOU_EXPIRING": {"title": "MOU expiring soon", "category": "agreements", "severity": "due_soon",
+        "description": "An active agreement expires within the MOU warning window and renewal is not recorded as renewed or not renewing.",
+        "why": "If the agreement lapses, programme delivery and fund releases tied to it may lose their contractual basis.",
+        "action": "Confirm the renewal decision with the partner and record the renewal status."},
+    "MOU_EXPIRED_NO_RENEWAL": {"title": "Agreement expired without recorded renewal", "category": "agreements", "severity": "overdue",
+        "description": "An active or expired agreement is past its expiry date and renewal is not recorded as renewed or not renewing.",
+        "why": "Work may be continuing without a valid agreement, or the record may be out of date.",
+        "action": "Confirm whether the agreement was renewed or ended, then update its status and renewal fields."},
+    "MOU_SIGNED_COPY_MISSING": {"title": "Signed copy not on file", "category": "agreements", "severity": "risk",
+        "description": "An agreement recorded as active does not have its signed copy recorded as received.",
+        "why": "An active agreement without a signed copy on file cannot be verified if questioned.",
+        "action": "Obtain the signed copy, store it, and update the signed-copy status and document link."},
+    "AGREEMENT_EXPIRY_MISSING": {"title": "Active agreement has no expiry date", "category": "data_quality", "severity": "missing_data",
+        "description": "An agreement recorded as active has no expiry date, so expiry cannot be monitored.",
+        "why": "Without an expiry date, ObliGOT cannot warn before the agreement lapses.",
+        "action": "Enter the expiry date from the signed agreement."},
+    "APPROVED_NO_AGREEMENT": {"title": "Approved opportunity without an agreement record", "category": "pipeline", "severity": "risk",
+        "description": "An opportunity at the approval or agreement stage has no agreement linked to it.",
+        "why": "Approved work may start before an agreement exists, or the agreement may not be recorded.",
+        "action": "Create the agreement record (draft if unsigned) and link it to this opportunity."},
+    "OPPORTUNITY_NEXT_STEP_OVERDUE": {"title": "Pipeline next step overdue", "category": "pipeline", "severity": "overdue",
+        "description": "An open opportunity's next-step date has passed.",
+        "why": "Missed follow-ups slow partnerships down and can lose partner interest.",
+        "action": "Complete or reschedule the next step and record the new date."},
+    "OPPORTUNITY_STALE": {"title": "Opportunity not updated recently", "category": "pipeline", "severity": "risk",
+        "description": "An open opportunity has no next-step date and has not been updated within the stale-opportunity window.",
+        "why": "Opportunities without a next step tend to stall unnoticed.",
+        "action": "Review the opportunity, record a next step with a date, or close it."},
+    "MILESTONE_OVERDUE": {"title": "Milestone overdue", "category": "projects", "severity": "overdue",
+        "description": "A planned or in-progress milestone is past its due date.",
+        "why": "Late milestones can delay dependent reporting, fund releases, and outcomes.",
+        "action": "Confirm progress with the owner; mark it complete or record a revised plan."},
+    "MILESTONE_DUE_SOON": {"title": "Milestone due soon", "category": "projects", "severity": "due_soon",
+        "description": "A planned or in-progress milestone is due within the deadline warning window.",
+        "why": "Early attention reduces the risk of a missed milestone.",
+        "action": "Check with the owner that the milestone is on track."},
+    "REPORT_OVERDUE": {"title": "Report overdue", "category": "reporting", "severity": "overdue",
+        "description": "A report not marked submitted or accepted is past its due date.",
+        "why": "Late reports can breach agreement terms and delay fund releases.",
+        "action": "Confirm the submission plan with the owner and record the submission when done."},
+    "REPORT_DUE_SOON": {"title": "Report due soon", "category": "reporting", "severity": "due_soon",
+        "description": "A report not marked submitted or accepted is due within the deadline warning window.",
+        "why": "Preparing reports early avoids last-minute delays.",
+        "action": "Confirm the owner has the information needed to submit on time."},
+    "REPORT_DUE_DATE_MISSING": {"title": "Report has no due date", "category": "data_quality", "severity": "missing_data",
+        "description": "A report that is not submitted or accepted has no due date.",
+        "why": "Without a due date, the report cannot be tracked against its commitment.",
+        "action": "Enter the due date from the agreement or reporting schedule."},
+    "UC_OVERDUE": {"title": "Utilization certificate overdue", "category": "finance", "severity": "overdue",
+        "description": "A utilization certificate that is pending or rejected is past its due date.",
+        "why": "Outstanding UCs can hold up later fund releases.",
+        "action": "Follow up with the owner to submit (or resubmit) the UC and record it."},
+    "UC_DUE_SOON": {"title": "Utilization certificate due soon", "category": "finance", "severity": "due_soon",
+        "description": "A utilization certificate that is pending or rejected is due within the deadline warning window.",
+        "why": "Preparing UCs early avoids delays to later fund releases.",
+        "action": "Confirm the UC is being prepared and who will submit it."},
+    "UC_DUE_DATE_MISSING": {"title": "Utilization certificate has no due date", "category": "data_quality", "severity": "missing_data",
+        "description": "A pending or rejected utilization certificate has no due date.",
+        "why": "Without a due date, the UC cannot be tracked.",
+        "action": "Enter the UC due date from the agreement or funding terms."},
+    "INVOICE_OVERDUE": {"title": "Invoice payment overdue", "category": "finance", "severity": "overdue",
+        "description": "An invoice that is raised or sent (not paid or cancelled) is past its due date.",
+        "why": "Unpaid invoices affect programme cash flow.",
+        "action": "Follow up on payment with the partner and record receipt when paid."},
+    "INVOICE_DUE_SOON": {"title": "Invoice payment due soon", "category": "finance", "severity": "due_soon",
+        "description": "An invoice that is raised or sent is due within the deadline warning window.",
+        "why": "A reminder before the due date reduces late payments.",
+        "action": "Confirm the partner has received the invoice."},
+    "INVOICE_DUE_DATE_MISSING": {"title": "Invoice has no due date", "category": "data_quality", "severity": "missing_data",
+        "description": "An invoice that is raised or sent has no due date, so it cannot be called overdue and its age cannot be determined.",
+        "why": "Payment follow-up cannot be scheduled without a due date.",
+        "action": "Enter the due date from the invoice terms."},
+    "TASK_OVERDUE": {"title": "Action overdue", "category": "tasks", "severity": "overdue",
+        "description": "An open or in-review action is past its due date.",
+        "why": "Overdue actions often hide the follow-ups that prevent other deadlines from slipping.",
+        "action": "Complete the action, reassign it, or record a new due date."},
+}
+
+OPEN_PIPELINE_STAGES = {"identified", "qualification", "proposal", "approval", "agreement", "renewal"}
+FINAL_RENEWAL = {"renewed", "not_renewing"}
+UNRESOLVED_REPORT = lambda status: status not in {"submitted", "accepted"}
+
+
+def _ev(label: str, value: Any, source: str = "record") -> dict[str, Any]:
+    """Evidence item. `source` is "record" for stored values and "computed" for values derived by the rule."""
+    if isinstance(value, date):
+        value = value.isoformat()
+    return {"label": label, "value": "Not recorded" if value in (None, "") else value, "source": source}
+
+
+def _days(target: date, today: date) -> int:
+    return (target - today).days
+
+
+class _Builder:
+    def __init__(self, today: date, config: RuleConfig):
+        self.today, self.config, self.alerts = today, config, []
+
+    def add(self, rule_id: str, record_type: str, record: dict, title: str, *, partner_id: str | None, owner: str | None,
+            due: date | None = None, evidence: list[dict] | None = None, adjustments: list[tuple[str, int]] | None = None,
+            amount_recorded: bool = False) -> None:
+        rule = RULES[rule_id]
+        days_remaining = _days(due, self.today) if due else None
+        self.alerts.append({
+            "id": f"{rule_id}:{record_type}:{record['id']}",
+            "rule_id": rule_id, "rule_title": rule["title"], "rule_description": rule["description"],
+            "category": rule["category"], "severity": rule["severity"],
+            "record_type": record_type, "record_id": record["id"], "record_title": title,
+            "partner_id": partner_id, "project_id": record.get("project_id"),
+            "owner": owner or "Unassigned", "due_date": due.isoformat() if due else None, "days_remaining": days_remaining,
+            "evidence": evidence or [], "why_it_matters": rule["why"], "recommended_action": rule["action"],
+            "source_label": record.get("source_label", "user"),
+            "_adjustments": adjustments or [], "_amount_recorded": amount_recorded,
+        })
+
+    def deadline(self, rule_overdue: str, rule_soon: str | None, record_type: str, record: dict, title: str, due: date, *,
+                 window: int, partner_id: str | None, owner: str | None, evidence: list[dict], amount_recorded: bool = False) -> None:
+        remaining = _days(due, self.today)
+        if remaining < 0:
+            evidence = evidence + [_ev("Days overdue", -remaining, "computed")]
+            self.add(rule_overdue, record_type, record, title, partner_id=partner_id, owner=owner, due=due, evidence=evidence, amount_recorded=amount_recorded)
+        elif rule_soon and remaining <= window:
+            evidence = evidence + [_ev("Days remaining", remaining, "computed")]
+            self.add(rule_soon, record_type, record, title, partner_id=partner_id, owner=owner, due=due, evidence=evidence, amount_recorded=amount_recorded)
+
+
+def _agreement_rules(b: _Builder, agreements: list[dict]) -> None:
+    for a in agreements:
+        status, renewal = a.get("status"), a.get("renewal_status") or "none"
+        expiry, title = _parse_date(a.get("expiry_date")), a.get("title", a["id"])
+        base = [_ev("Status", status), _ev("Expiry date", expiry), _ev("Renewal status", renewal)]
+        common = {"partner_id": a.get("partner_id"), "owner": a.get("owner")}
+        if status in {"active", "expired"} and expiry and renewal not in FINAL_RENEWAL:
+            remaining = _days(expiry, b.today)
+            if remaining < 0:
+                b.add("MOU_EXPIRED_NO_RENEWAL", "agreements", a, title, due=expiry, evidence=base + [_ev("Days since expiry", -remaining, "computed")], **common)
+            elif remaining <= b.config.mou_expiry_warning_days and status == "active":
+                adjustments = [("Renewal already in progress", -10)] if renewal == "in_progress" else []
+                b.add("MOU_EXPIRING", "agreements", a, title, due=expiry, adjustments=adjustments,
+                      evidence=base + [_ev("Days remaining", remaining, "computed"), _ev("Warning window (days)", b.config.mou_expiry_warning_days, "computed")], **common)
+        if status == "active" and (a.get("signed_copy") or "unknown") != "received":
+            b.add("MOU_SIGNED_COPY_MISSING", "agreements", a, title, evidence=[_ev("Status", status), _ev("Signed copy", a.get("signed_copy") or "unknown"), _ev("Document link", a.get("document_url"))], **common)
+        if status == "active" and not expiry:
+            b.add("AGREEMENT_EXPIRY_MISSING", "agreements", a, title, evidence=[_ev("Status", status), _ev("Expiry date", None)], **common)
+
+
+def _pipeline_rules(b: _Builder, opportunities: list[dict], agreements: list[dict]) -> None:
+    linked = {a.get("opportunity_id") for a in agreements if a.get("opportunity_id")}
+    for o in opportunities:
+        stage, title = o.get("stage"), o.get("title", o["id"])
+        common = {"partner_id": o.get("partner_id"), "owner": o.get("owner")}
+        if stage in {"approval", "agreement"} and o["id"] not in linked:
+            b.add("APPROVED_NO_AGREEMENT", "opportunities", o, title, evidence=[_ev("Stage", stage), _ev("Linked agreements", 0, "computed")], **common)
+        if stage not in OPEN_PIPELINE_STAGES:
+            continue
+        next_date = _parse_date(o.get("next_step_date"))
+        if next_date and next_date < b.today:
+            b.add("OPPORTUNITY_NEXT_STEP_OVERDUE", "opportunities", o, title, due=next_date,
+                  evidence=[_ev("Stage", stage), _ev("Next step", o.get("next_step")), _ev("Next step date", next_date), _ev("Days overdue", _days(b.today, next_date), "computed")], **common)
+        elif not next_date:
+            updated = _parse_date(o.get("updated_at"))
+            if updated and _days(b.today, updated) > b.config.stale_opportunity_days:
+                b.add("OPPORTUNITY_STALE", "opportunities", o, title,
+                      evidence=[_ev("Stage", stage), _ev("Next step date", None), _ev("Last updated", updated), _ev("Days since update", _days(b.today, updated), "computed")], **common)
+
+
+def _milestone_rules(b: _Builder, milestones: list[dict]) -> None:
+    for m in milestones:
+        due = _parse_date(m.get("due_date"))
+        if m.get("status") in {"planned", "in_progress"} and due:
+            b.deadline("MILESTONE_OVERDUE", "MILESTONE_DUE_SOON", "milestones", m, m.get("title", m["id"]), due,
+                       window=b.config.deadline_warning_days, partner_id=m.get("partner_id"), owner=m.get("owner"),
+                       evidence=[_ev("Status", m.get("status")), _ev("Due date", due)])
+
+
+def _report_rules(b: _Builder, reports: list[dict]) -> None:
+    for r in reports:
+        if not UNRESOLVED_REPORT(r.get("status")):
+            continue
+        due, title = _parse_date(r.get("due_date")), r.get("title", r["id"])
+        evidence = [_ev("Report type", r.get("report_type")), _ev("Status", r.get("status")), _ev("Due date", due)]
+        common = {"partner_id": r.get("partner_id"), "owner": r.get("owner")}
+        if due:
+            b.deadline("REPORT_OVERDUE", "REPORT_DUE_SOON", "reports", r, title, due, window=b.config.deadline_warning_days, evidence=evidence, **common)
+        else:
+            b.add("REPORT_DUE_DATE_MISSING", "reports", r, title, evidence=evidence, **common)
+
+
+def _finance_rules(b: _Builder, finance: list[dict]) -> None:
+    for f in finance:
+        kind, status, due, title = f.get("record_type"), f.get("status"), _parse_date(f.get("due_date")), f.get("title", f["id"])
+        has_amount = f.get("amount") is not None
+        evidence = [_ev("Type", kind), _ev("Status", status), _ev("Due date", due),
+                    _ev("Amount", f"{f['amount']:,.2f} {f.get('currency', '')}".strip() if has_amount else None), _ev("Reference", f.get("reference_number"))]
+        common = {"partner_id": f.get("partner_id"), "owner": None, "amount_recorded": has_amount}
+        if kind == "utilization_certificate" and status in {"pending", "rejected"}:
+            if due:
+                b.deadline("UC_OVERDUE", "UC_DUE_SOON", "finance", f, title, due, window=b.config.deadline_warning_days, evidence=evidence, **common)
+            else:
+                b.add("UC_DUE_DATE_MISSING", "finance", f, title, evidence=evidence, partner_id=f.get("partner_id"), owner=None)
+        elif kind == "invoice" and status in {"raised", "sent"}:
+            if due:
+                b.deadline("INVOICE_OVERDUE", "INVOICE_DUE_SOON", "finance", f, title, due, window=b.config.deadline_warning_days, evidence=evidence, **common)
+            else:
+                b.add("INVOICE_DUE_DATE_MISSING", "finance", f, title, evidence=evidence, partner_id=f.get("partner_id"), owner=None)
+
+
+def _task_rules(b: _Builder, actions: list[dict]) -> None:
+    for t in actions:
+        due = _parse_date(t.get("due_date"))
+        if t.get("status") in {"open", "in_review"} and due and due < b.today:
+            b.add("TASK_OVERDUE", "actions", t, t.get("title", t["id"]), due=due, partner_id=t.get("related_partner_id"), owner=t.get("owner"),
+                  evidence=[_ev("Status", t.get("status")), _ev("Due date", due), _ev("Days overdue", _days(b.today, due), "computed")])
+
+
+def _score(alert: dict, related_count: int) -> dict[str, Any]:
+    factors = [{"label": f"Base: {alert['severity'].replace('_', ' ')}", "points": SEVERITY_POINTS[alert["severity"]]}]
+    days = alert["days_remaining"]
+    if days is not None and days < 0:
+        factors.append({"label": f"{-days} days overdue (max 30)", "points": min(30, -days)})
+    elif days is not None and alert["severity"] == "due_soon":
+        if days <= 7:
+            factors.append({"label": "Due within 7 days", "points": 20})
+        elif days <= 14:
+            factors.append({"label": "Due within 14 days", "points": 10})
+    if related_count >= RELATED_ALERTS_THRESHOLD:
+        factors.append({"label": f"Partner has {related_count} other open alerts", "points": 10})
+    if alert["_amount_recorded"]:
+        factors.append({"label": "Recorded amount at stake", "points": 5})
+    factors += [{"label": label, "points": points} for label, points in alert["_adjustments"]]
+    score = max(0, sum(f["points"] for f in factors))
+    level = "high" if score >= 60 else "medium" if score >= 35 else "low"
+    return {"score": score, "level": level, "factors": factors}
+
+
+def evaluate(records: dict[str, list[dict]], today: date, config: RuleConfig | None = None) -> list[dict[str, Any]]:
+    """Run every rule over `records` (collection name -> list of records) and return prioritised alerts."""
+    config = config or RuleConfig()
+    b = _Builder(today, config)
+    get: Callable[[str], list[dict]] = lambda name: records.get(name, [])
+    _agreement_rules(b, get("agreements"))
+    _pipeline_rules(b, get("opportunities"), get("agreements"))
+    _milestone_rules(b, get("milestones"))
+    _report_rules(b, get("reports"))
+    _finance_rules(b, get("finance"))
+    _task_rules(b, get("actions"))
+
+    by_partner: dict[str | None, list[str]] = defaultdict(list)
+    for alert in b.alerts:
+        by_partner[alert["partner_id"]].append(alert["id"])
+    for alert in b.alerts:
+        related = [i for i in by_partner[alert["partner_id"]] if i != alert["id"]] if alert["partner_id"] else []
+        alert["related_alert_ids"] = related
+        alert["priority"] = _score(alert, len(related))
+        del alert["_adjustments"], alert["_amount_recorded"]
+    # Highest score first; then the most urgent date; then a stable id so ordering is deterministic.
+    return sorted(b.alerts, key=lambda a: (-a["priority"]["score"], a["days_remaining"] if a["days_remaining"] is not None else 10**6, a["id"]))
+
+
+def rule_catalog() -> list[dict[str, str]]:
+    return [{"rule_id": rule_id, "title": r["title"], "description": r["description"], "category": r["category"],
+             "severity": r["severity"], "why_it_matters": r["why"], "recommended_action": r["action"]} for rule_id, r in RULES.items()]

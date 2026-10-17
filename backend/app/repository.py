@@ -23,6 +23,7 @@ _COLLECTIONS = {
     "reports": REPORTS,
     "opportunities": OPPORTUNITIES,
     "milestones": MILESTONES,
+    "config": {},
 }
 _firestore_client = None
 _firestore_attempted = False

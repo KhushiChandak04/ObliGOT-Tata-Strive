@@ -10,6 +10,9 @@ Status legend: **tested** = covered by backend pytest in in-memory mode; live Fi
 | GET | `/` | Service pointer to docs and health | Public |
 | GET | `/api/health` | Status, storage mode (`firestore` / `demo-memory-fallback`), `ai_configured`, `auth_required` | Public even when auth is required |
 | GET | `/api/dashboard` | Record-derived metrics, deterministic deadline `findings`, `as_of` (IST business date), storage mode | Findings skip resolved records (Step 4a) |
+| GET | `/api/alerts?partner_id=&level=&category=` | Deterministic alerts from the rules engine (`app/engine.py`), computed on every call and sorted by priority score; each has `rule_id`, evidence (record vs computed values), why it matters, recommended action, owner, due date, `related_alert_ids`, and a priority breakdown | `level` must be `high`, `medium`, or `low` (422 otherwise) |
+| GET | `/api/rules` | Rule catalogue: id, title, description, category, severity, why it matters, recommended action | |
+| GET / PATCH | `/api/rules/config` | Thresholds: `mou_expiry_warning_days` (1–365, default 60), `deadline_warning_days` (1–180, default 30), `stale_opportunity_days` (7–365, default 30) | Unknown keys or out-of-range values → 422 |
 | GET | `/api/rules/deadline-preview` | Preview one deadline finding for `record_id`, `record_type`, `label`, `due_date` | Preview only |
 
 ## Partners
