@@ -1869,3 +1869,19 @@ td small {
   margin-top: 0;
   flex: none;
 }
+
+/* Document review: page images, tables, and inputs (alignment step) */
+.page-viewer img { display: block; width: 100%; height: auto; margin-top: 10px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; }
+.page-viewer .toolbar { flex-wrap: wrap; gap: 8px; }
+.evidence-panel { align-self: start; position: sticky; top: 16px; }
+.review-field input { display: block; width: 100%; margin-top: 6px; padding: 6px 8px; border: 1.5px solid var(--line); border-radius: 8px; font: inherit; font-size: 13px; background: var(--card); }
+.review-field .button-row { flex-wrap: wrap; }
+ul.api-state { display: block; padding-left: 32px; }
+ul.api-state li { margin: 2px 0; }
+.review-field > div { min-width: 0; } /* lets wide tables scroll inside the row instead of widening the page */
+.review-field .mono { overflow-wrap: anywhere; }
+.table-scroll { overflow-x: auto; margin: 8px 0; max-width: 100%; }
+.table-scroll table { border-collapse: collapse; font-size: 12px; }
+.table-scroll th, .table-scroll td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; white-space: nowrap; }
+.table-scroll .row-unverified td { background: #fff3e6; }
+@media (max-width: 700px) { .evidence-panel { position: static; } }

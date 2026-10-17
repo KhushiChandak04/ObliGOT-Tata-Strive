@@ -42,16 +42,23 @@ import type {
   ActionItem,
   Agreement,
   Alert as ApiAlert,
-  AnalyzeResponse,
   AlertEvidence,
   AlertsResponse,
+  AnalyzeResponse,
+  ClauseProposal,
+  DocumentEvidence,
   DocumentReview,
+  FinancialTermProposal,
   ImportPreview,
   Milestone,
+  ObligationProposal,
   Opportunity,
   Partner,
   Project,
+  ProposalCollection,
+  ScopeProposal,
   SourceDocument,
+  TableProposal,
 } from "../types";
 
 /** View model for the reference UI, built from a rules-engine alert (GET /api/alerts). */
@@ -120,113 +127,6 @@ const timing = (alert: Alert) =>
         : `in ${alert.days}d`;
 const isOpenTask = (task: ActionItem) =>
   task.status === "open" || task.status === "in_review";
-
-const demoPartner: Partner = {
-  id: "demo-partner-kaveri",
-  name: "Kaveri Retail Academy",
-  category: "Training partner",
-  contribution_types: ["implementation", "reporting"],
-  status: "active",
-  owner: "Rahul S.",
-  updated_at: new Date().toISOString(),
-  summary:
-    "Synthetic partner record used to demonstrate the connected Partner 360 workspace.",
-  contact_name: "Priya Menon",
-  contact_email: "priya@example.invalid",
-  source_label: "demo",
-};
-
-const demoAlert: ApiAlert = {
-  id: "demo:MOU_EXPIRING:agreement-demo-001",
-  rule_id: "MOU_EXPIRING",
-  rule_title: "MOU expiring soon",
-  rule_description: "An agreement is approaching its expiry date.",
-  category: "agreements",
-  severity: "due_soon",
-  record_type: "agreement",
-  record_id: "agreement-demo-001",
-  record_title: "Retail Readiness Partnership MOU",
-  partner_id: demoPartner.id,
-  project_id: null,
-  owner: demoPartner.owner,
-  due_date: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
-  days_remaining: 14,
-  evidence: [
-    {
-      label: "agreement.expiry_date",
-      value: "Synthetic date: 14 days from today",
-      source: "record",
-    },
-    {
-      label: "agreement.renewal_status",
-      value: "Not recorded",
-      source: "record",
-    },
-  ],
-  why_it_matters:
-    "A renewal decision is needed before the current synthetic agreement term ends.",
-  recommended_action:
-    "Confirm the renewal owner and schedule a partner review.",
-  source_label: "demo",
-  related_alert_ids: [],
-  priority: {
-    score: 58,
-    level: "medium",
-    factors: [
-      { label: "Due soon", points: 25 },
-      { label: "Renewal not recorded", points: 15 },
-    ],
-  },
-  review: null,
-  hidden_by_review: false,
-};
-
-const demoTask: ActionItem = {
-  id: "demo-task-renewal",
-  title: "Schedule renewal review with Kaveri Retail Academy",
-  priority: "high",
-  status: "open",
-  due_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
-  evidence: ["Synthetic MOU expiry date is 14 days away"],
-  recommended_action:
-    "Confirm renewal decision and update the agreement record.",
-  owner: "Rahul S.",
-  related_partner_id: demoPartner.id,
-  source_alert_id: demoAlert.id,
-  source_label: "demo",
-};
-
-const demoAlertsResponse: AlertsResponse = {
-  as_of: new Date().toISOString().slice(0, 10),
-  config: {},
-  note: "Synthetic demo data — not connected to operational records.",
-  alerts: [demoAlert],
-  counts: {
-    total: 1,
-    by_level: { high: 0, medium: 1, low: 0 },
-    hidden_by_review: 0,
-  },
-};
-
-const demoDashboard = {
-  metrics: {
-    partners_total: 1,
-    partners_active: 1,
-    actions_open: 1,
-    agreements_active: 1,
-    projects_active: 1,
-    reports_pending: 1,
-    finance_records: 2,
-    documents_awaiting_review: 0,
-    document_extraction_failures: 0,
-    pending_addendum_approvals: 0,
-  },
-  findings: [],
-  as_of: demoAlertsResponse.as_of,
-  storage_mode: "demo-memory-fallback" as const,
-  demo_data_notice:
-    "Synthetic demo data — not connected to operational records.",
-};
 
 function Logo({ light = false }: { light?: boolean }) {
   return (
@@ -654,32 +554,22 @@ function AppShell() {
     navigate("/");
   };
   const workspace = useResource(async () => {
-    const [alerts, tasks, partners, dashboard] = await Promise.all([
+    const [alerts, tasks, partners, documents] = await Promise.all([
       api.alerts.list(),
       api.actions.list(),
       api.partners.list(),
-      api.dashboard(),
+      api.documents.list(),
     ]);
-    return { alerts, tasks, partners, dashboard };
+    return { alerts, tasks, partners, documents };
   }, []);
-  const demoWorkspace = {
-    alerts: demoAlertsResponse,
-    tasks: [demoTask],
-    partners: [demoPartner],
-    dashboard: demoDashboard,
-  };
-  const workspaceData = workspace.data ?? demoWorkspace;
+  // Live records only. While loading or when the API fails, pages show loading/error states — never sample data.
+  const live = workspace.data;
+  const livePartners = live?.partners ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [params] = useSearchParams();
-  const hasLiveWorkspace = Boolean(
-    workspace.data?.partners.length ||
-    workspace.data?.alerts.alerts.length ||
-    workspace.data?.tasks.length,
-  );
-  const displayWorkspace = hasLiveWorkspace ? workspaceData : demoWorkspace;
-  const names = new Map(displayWorkspace.partners.map((p) => [p.id, p.name]));
-  const apiAlerts = displayWorkspace.alerts.alerts;
+  const names = new Map(livePartners.map((p) => [p.id, p.name]));
+  const apiAlerts = live?.alerts.alerts ?? [];
   const sorted = apiAlerts.map((alert) =>
     toViewAlert(alert, (id) => names.get(id)),
   ); // already ordered by priority score
@@ -687,7 +577,7 @@ function AppShell() {
     toViewAlert(alert, (id) => names.get(id)),
   );
   const open = sorted;
-  const tasks = displayWorkspace.tasks.filter(isOpenTask);
+  const tasks = (live?.tasks ?? []).filter(isOpenTask);
   const selected = sorted.find((alert) => alert.id === selectedId) ?? null;
   const select = (alert: Alert) => {
     setNotice("");
@@ -707,7 +597,7 @@ function AppShell() {
         ? "Action Center"
         : page === "/partner-360"
           ? (names.get(params.get("id") ?? "") ??
-            displayWorkspace.partners[0]?.name ??
+            livePartners[0]?.name ??
             "Partner 360")
           : page === "/dashboard"
             ? "Good day, team."
@@ -768,7 +658,12 @@ function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <button className="logout" onClick={() => navigate("/")}>
+        {user && (
+          <small title={user.email ?? ""}>
+            Signed in as {user.displayName || user.email}
+          </small>
+        )}
+        <button className="logout" onClick={() => void logOut()}>
           ↩ Log out
         </button>
         <small>
@@ -803,44 +698,39 @@ function AppShell() {
             {notice}
           </p>
         )}
-        {!hasLiveWorkspace &&
-          (page === "/action-center" || page === "/partner-360") && (
-            <p className="api-state demo-notice" role="status">
-              Showing synthetic demo data because no live workspace records are
-              available.
-            </p>
-          )}
-        {page === "/dashboard" && (
+        {page === "/dashboard" && live && (
           <Dashboard
             open={open}
             sorted={today}
             tasks={tasks}
             onSelect={select}
-            metrics={displayWorkspace.dashboard}
+            documents={live.documents}
           />
         )}
-        {page === "/action-center" && (
+        {page === "/action-center" && live && (
           <ActionCenter
             open={open}
             sorted={sorted}
             tasks={tasks}
-            hidden={displayWorkspace.alerts.counts.hidden_by_review}
+            hidden={live.alerts.counts.hidden_by_review}
             onSelect={select}
             onChanged={changed}
           />
         )}
-        {page === "/partner-360" && (
+        {page === "/partner-360" && live && (
           <Partner360
-            partners={displayWorkspace.partners}
+            partners={live.partners}
             open={open}
             onSelect={select}
             onChanged={workspace.reload}
           />
         )}
         {page === "/documents" && (
-          <DocumentsPage partners={displayWorkspace.partners} />
+          <DocumentsPage partners={livePartners} />
         )}
-        {page.startsWith("/documents/") && <DocumentReviewPage />}{" "}
+        {page.startsWith("/documents/") && (
+          <DocumentReviewPage partners={livePartners} onApproved={workspace.reload} />
+        )}
         {page === "/pipeline" && <PipelinePage onChanged={workspace.reload} />}
         {page === "/agreements" && (
           <AgreementsPage onChanged={workspace.reload} />
@@ -850,10 +740,10 @@ function AppShell() {
         {page === "/reports" && <ReportsPage />}
         {page === "/import" && <ImportPage />}
       </main>
-      {selected && (
+      {selected && live && (
         <Drawer
           alert={selected}
-          asOf={displayWorkspace.alerts.as_of}
+          asOf={live.alerts.as_of}
           onClose={() => setSelectedId(null)}
           onChanged={changed}
         />
@@ -900,19 +790,13 @@ function Dashboard({
   sorted,
   tasks,
   onSelect,
-  metrics,
+  documents,
 }: {
   open: Alert[];
   sorted: Alert[];
   tasks: ActionItem[];
   onSelect: (alert: Alert) => void;
-  metrics: {
-    metrics: {
-      documents_awaiting_review?: number;
-      document_extraction_failures?: number;
-      pending_addendum_approvals?: number;
-    };
-  };
+  documents: SourceDocument[];
 }) {
   const overdue = open.filter(
     (alert) => alert.days !== null && alert.days < 0,
@@ -939,15 +823,15 @@ function Dashboard({
       </div>
       <div className="document-strip">
         <span>
-          <b>{metrics.metrics.documents_awaiting_review ?? 0}</b> Documents
+          <b>{documents.filter((d) => d.status === "needs_review").length}</b> Documents
           awaiting review
         </span>
         <span>
-          <b>{metrics.metrics.document_extraction_failures ?? 0}</b> Extraction
+          <b>{documents.filter((d) => d.status === "failed" || d.status === "blocked").length}</b> Extraction
           failures / OCR
         </span>
         <span>
-          <b>{metrics.metrics.pending_addendum_approvals ?? 0}</b> Pending
+          <b>{documents.filter((d) => d.kind === "addendum" && d.status === "needs_review").length}</b> Pending
           addendum approvals
         </span>
       </div>
@@ -1144,100 +1028,7 @@ function Partner360({
         <p>Partner records added through the API appear here.</p>
       </section>
     );
-  const selectedPartner =
-    partners.find((partner) => partner.id === partnerId) ?? demoPartner;
-  const demoDetails = {
-    partner: selectedPartner,
-    agreements: [
-      {
-        id: "agreement-demo-001",
-        partner_id: selectedPartner.id,
-        title: "Retail Readiness Partnership MOU",
-        reference_number: "MOU/KRA/DEMO/001",
-        status: "active" as const,
-        start_date: new Date(Date.now() - 350 * 86400000)
-          .toISOString()
-          .slice(0, 10),
-        expiry_date: new Date(Date.now() + 14 * 86400000)
-          .toISOString()
-          .slice(0, 10),
-        owner: selectedPartner.owner,
-        document_url: null,
-        signed_copy: "received" as const,
-        renewal_status: "none" as const,
-        project_id: "project-demo-001",
-        opportunity_id: null,
-        source_label: "demo",
-      },
-    ],
-    projects: [
-      {
-        id: "project-demo-001",
-        partner_id: selectedPartner.id,
-        name: "Retail Readiness Cohort 4",
-        status: "active" as const,
-        owner: selectedPartner.owner,
-        start_date: new Date(Date.now() - 120 * 86400000)
-          .toISOString()
-          .slice(0, 10),
-        end_date: new Date(Date.now() + 80 * 86400000)
-          .toISOString()
-          .slice(0, 10),
-        milestone_summary: "2 milestones · 1 complete · 1 in progress",
-        source_label: "demo",
-      },
-    ],
-    milestones: [
-      {
-        id: "milestone-demo-001",
-        project_id: "project-demo-001",
-        partner_id: selectedPartner.id,
-        title: "Mobilization",
-        due_date: new Date(Date.now() - 60 * 86400000)
-          .toISOString()
-          .slice(0, 10),
-        completed_date: new Date(Date.now() - 65 * 86400000)
-          .toISOString()
-          .slice(0, 10),
-        status: "completed" as const,
-        owner: selectedPartner.owner,
-        source_label: "demo",
-      },
-      {
-        id: "milestone-demo-002",
-        project_id: "project-demo-001",
-        partner_id: selectedPartner.id,
-        title: "Cohort 4 placements",
-        due_date: new Date(Date.now() + 18 * 86400000)
-          .toISOString()
-          .slice(0, 10),
-        completed_date: null,
-        status: "in_progress" as const,
-        owner: selectedPartner.owner,
-        source_label: "demo",
-      },
-    ],
-    finance: [],
-    reports: [],
-    opportunities: [
-      {
-        id: "opportunity-demo-001",
-        partner_id: selectedPartner.id,
-        title: "FY27 retail skilling renewal",
-        stage: "renewal" as const,
-        owner: selectedPartner.owner,
-        next_step: "Schedule renewal review",
-        next_step_date: new Date(Date.now() + 7 * 86400000)
-          .toISOString()
-          .slice(0, 10),
-        updated_at: new Date().toISOString(),
-        source_label: "demo",
-      },
-    ],
-    activities: [],
-    asOf: demoAlertsResponse.as_of,
-  };
-  const d = data.data ?? demoDetails;
+  const d = data.data;
   // The MOU shown on the timeline: the active agreement with the nearest expiry, else the most recent one with dates.
   const mou = d
     ? [...d.agreements]
@@ -2185,33 +1976,6 @@ function documentStatus(document: SourceDocument): string {
     : document.status[0].toUpperCase() + document.status.slice(1);
 }
 
-function downloadDemoWorkbook(sourceDocument: SourceDocument): void {
-  const rows = [
-    ["ObliGOT demo workbook", "Not extracted from document"],
-    ["Source filename", sourceDocument.filename],
-    ["Document type", sourceDocument.kind.toUpperCase()],
-    ["Document status", documentStatus(sourceDocument)],
-    ["Uploaded at", sourceDocument.uploaded_at],
-    [
-      "Notice",
-      "Demo-only metadata export. No MOU/addendum fields were extracted or verified.",
-    ],
-  ];
-  const csv = rows
-    .map((row) =>
-      row.map((value) => `"${value.replaceAll('"', '""')}"`).join(","),
-    )
-    .join("\r\n");
-  const url = URL.createObjectURL(
-    new Blob([csv], { type: "text/csv;charset=utf-8" }),
-  );
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${sourceDocument.filename.replace(/\.pdf$/i, "")}-demo-workbook.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
 function DocumentsPage({ partners }: { partners: Partner[] }) {
   const data = useResource(() => api.documents.list(), []);
   const [kind, setKind] = useState<"mou" | "addendum">("mou");
@@ -2289,15 +2053,12 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
       {uploaded && (
         <div className="api-state success" role="status">
           <span>
-            PDF upload confirmed. Demo export contains metadata only; no
-            contractual fields were extracted.
+            Uploaded “{uploaded.filename}” ({uploaded.page_count ?? "?"} pages,{" "}
+            {documentStatus(uploaded)}). Nothing has been extracted yet.
           </span>
-          <button
-            className="btn small-btn"
-            onClick={() => downloadDemoWorkbook(uploaded)}
-          >
-            Download demo Excel sheet
-          </button>
+          <Link className="btn small-btn" to={`/documents/${uploaded.id}`}>
+            Open to extract and review
+          </Link>
         </div>
       )}
       {data.error && (
@@ -2350,14 +2111,139 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
   );
 }
 
-function DocumentReviewPage() {
-  const documentId = window.location.pathname.split("/")[2] ?? "";
-  const data = useResource<DocumentReview>(
-    () => api.documents.review(documentId),
-    [documentId],
+const DECIDABLE: { key: Exclude<ProposalCollection, "extracted_fields">; label: string }[] = [
+  { key: "tables", label: "Tables" },
+  { key: "obligations", label: "Obligations and deadlines" },
+  { key: "financial_terms", label: "Financial terms" },
+  { key: "clauses", label: "Clauses" },
+  { key: "programme_scope", label: "Programme scope" },
+];
+
+const PENDING_STATES = ["proposed", "needs_review"];
+
+function deadlineText(o: ObligationProposal): string {
+  if (o.due_date) return `due ${formatDate(o.due_date)}`;
+  const d = o.deadline;
+  if (!d || d.deadline_type === "unspecified") return "no deadline stated";
+  if (d.text) return `“${d.text}”`;
+  return d.recurrence ? `${d.recurrence} (recurring)` : d.deadline_type;
+}
+
+function proposalSummary(collection: string, item: Record<string, unknown>): string {
+  const r = item as unknown as ClauseProposal & FinancialTermProposal & ObligationProposal & ScopeProposal & TableProposal;
+  switch (collection) {
+    case "clauses":
+      return `${r.clause_type.replaceAll("_", " ")}: ${r.summary}`;
+    case "financial_terms":
+      return `${r.term_type.replaceAll("_", " ")}: ${r.description} — ${r.amount != null && r.currency ? `${r.currency} ${r.amount.toLocaleString("en-IN")} (${r.basis})` : "amount not stated"}`;
+    case "obligations":
+      return `${r.obligation_type.replaceAll("_", " ")}: ${r.title} — ${deadlineText(r as ObligationProposal)}`;
+    case "programme_scope":
+      return `${r.dimension.replaceAll("_", " ")}: ${r.value}${r.location ? ` · ${r.location}` : ""}${r.target_value != null ? ` · ${r.target_value} ${r.target_unit ?? ""}` : ""}`;
+    case "tables":
+      return `${r.title} (${r.kind}${r.section ? ` · ${r.section}` : ""}) — ${r.rows.length} rows, pages ${r.pages.join(", ")}`;
+    default:
+      return "";
+  }
+}
+
+function EvidenceLine({ evidence, onShow }: { evidence?: DocumentEvidence | null; onShow: (page: number) => void }) {
+  if (!evidence) return <span className="mono">Evidence not recorded</span>;
+  return (
+    <span className="mono">
+      <button className="text-button" type="button" onClick={() => onShow(evidence.page)}>
+        Page {evidence.page}
+        {evidence.printed_page ? ` (printed ${evidence.printed_page})` : ""}
+        {evidence.section ? ` · ${evidence.section}` : ""}
+      </button>
+      : “{evidence.quote}” ·{" "}
+      {evidence.verified
+        ? evidence.basis === "ai_transcript"
+          ? "found in the AI reading of a scanned page — compare with the image"
+          : "found in the PDF text"
+        : "not found on that page"}
+    </span>
+  );
+}
+
+function PageViewer({ documentId, pageCount, page, onPage }: { documentId: string; pageCount: number; page: number; onPage: (page: number) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    setError("");
+    setUrl(null);
+    api.documents
+      .pageImage(documentId, page)
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch((err) => active && setError(err instanceof Error ? err.message : "Could not load the page."));
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [documentId, page]);
+  return (
+    <div className="page-viewer">
+      <div className="toolbar">
+        <button className="btn small-btn" type="button" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+          ‹ Previous
+        </button>
+        <label>
+          Page{" "}
+          <select value={page} onChange={(event) => onPage(Number(event.target.value))}>
+            {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>{" "}
+          of {pageCount}
+        </label>
+        <button className="btn small-btn" type="button" disabled={page >= pageCount} onClick={() => onPage(page + 1)}>
+          Next ›
+        </button>
+      </div>
+      {error && (
+        <p className="api-state error" role="alert">
+          {error}
+        </p>
+      )}
+      {!url && !error && (
+        <p className="api-state" role="status">
+          Loading page {page}…
+        </p>
+      )}
+      {url && <img src={url} alt={`Page ${page} of the source document`} />}
+    </div>
+  );
+}
+
+function DocumentReviewPage({ partners, onApproved }: { partners: Partner[]; onApproved: () => void }) {
+  const location = useLocation();
+  const documentId = location.pathname.split("/")[2] ?? "";
+  const data = useResource<DocumentReview>(() => api.documents.review(documentId), [documentId]);
+  const [partnerId, setPartnerId] = useState("");
+  const [createPartner, setCreatePartner] = useState(false);
+  const check = useResource(
+    () => api.documents.approvalCheck(documentId, { partnerId: partnerId || undefined, createPartner }),
+    [documentId, partnerId, createPartner, data.data],
   );
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(1);
+  const status = data.data?.document.status;
+  // While extraction runs in the background, refresh every few seconds to show progress.
+  useEffect(() => {
+    if (status !== "extracting") return;
+    const timer = window.setTimeout(data.reload, 3000);
+    return () => window.clearTimeout(timer);
+  }, [status, data.data, data.reload]);
   if (data.loading && !data.data)
     return (
       <p className="api-state" role="status">
@@ -2375,52 +2261,94 @@ function DocumentReviewPage() {
     );
   const review = data.data;
   if (!review) return <p className="api-state">No review data available.</p>;
-  const confirm = async (
-    fieldId: string,
-    value: string | number | boolean | null,
-  ) => {
+  const doc = review.document;
+  const locked = doc.status !== "needs_review";
+  const run = async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
     setMessage("");
     try {
-      await api.documents.reviewField(documentId, fieldId, {
-        review_state: "approved",
-        approved_value: value,
-      });
-      setMessage("Field review saved.");
+      await action();
+      setMessage(success);
       data.reload();
     } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : "Could not save the field review.",
-      );
+      setMessage(err instanceof Error ? err.message : "The request failed.");
     } finally {
       setBusy(false);
     }
   };
-  const approve = async () => {
-    setBusy(true);
-    setMessage("");
-    try {
-      await api.documents.approve(documentId);
-      setMessage("Document approval confirmed by the backend.");
-      data.reload();
-    } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : "Document approval failed.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-  const confirmed = review.fields.filter(
-    (field) => field.review_state === "approved",
-  ).length;
-  const blockers = review.fields.filter(
-    (field) =>
-      field.review_state === "proposed" ||
-      field.review_state === "needs_review",
+  const decide = (collection: ProposalCollection, item: { id: string }, decision: "approve" | "reject" | "defer", value?: string | number | boolean | null) =>
+    void run(
+      () => api.documents.decide(documentId, collection, item.id, { decision, value, note: notes[item.id] || undefined }),
+      `Saved: ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "deferred"}.`,
+    );
+  const noteInput = (id: string, label: string) => (
+    <input
+      aria-label={label}
+      placeholder="Note (needed to defer, or to approve an unverified quote)"
+      value={notes[id] ?? ""}
+      onChange={(event) => setNotes({ ...notes, [id]: event.target.value })}
+      disabled={busy || locked}
+    />
+  );
+  const decisionButtons = (collection: ProposalCollection, item: { id: string; review_state: string }, value?: string | number | boolean | null, canApprove = true) => (
+    <span className="button-row">
+      <button className="btn small-btn" disabled={busy || locked || !canApprove} onClick={() => decide(collection, item, "approve", value)}>
+        {item.review_state === "approved" ? "Approved" : "Approve"}
+      </button>
+      <button className="btn outline small-btn" disabled={busy || locked} onClick={() => decide(collection, item, "reject")}>
+        Reject
+      </button>
+      <button className="btn outline small-btn" disabled={busy || locked} onClick={() => decide(collection, item, "defer")}>
+        Defer
+      </button>
+    </span>
+  );
+  const extraction = doc.extraction;
+  const canExtract = ["uploaded", "failed", "blocked", "needs_review"].includes(doc.status);
+  const pending = [...review.fields, ...DECIDABLE.flatMap(({ key }) => review[key] as { review_state: string }[])].filter((i) =>
+    PENDING_STATES.includes(i.review_state),
   ).length;
   return (
     <>
+      <section className="box">
+        <h3>
+          {doc.filename}{" "}
+          <span className={`pill ${doc.status === "failed" || doc.status === "blocked" ? "high" : ""}`}>{documentStatus(doc)}</span>
+        </h3>
+        <p>
+          {doc.kind.toUpperCase()} · {doc.page_count ?? "?"} pages · uploaded {formatDate(doc.uploaded_at)} by {doc.uploaded_by}
+          {doc.partner_id ? ` · ${partners.find((p) => p.id === doc.partner_id)?.name ?? doc.partner_id}` : " · no partner linked"}
+        </p>
+        {doc.warnings.map((warning) => (
+          <p className="api-state" key={warning}>
+            {warning}
+          </p>
+        ))}
+        {doc.error && (
+          <p className="api-state error" role="alert">
+            {doc.error}
+          </p>
+        )}
+        {doc.status === "extracting" && extraction && (
+          <p className="api-state" role="status">
+            {extraction.pages_read < extraction.pages_to_read
+              ? `Reading scanned pages with Gemini: ${extraction.pages_read} of ${extraction.pages_to_read}…`
+              : `Extracting values: part ${extraction.chunks_done} of ${extraction.chunks_total || "?"}…`}
+          </p>
+        )}
+        {canExtract && (
+          <div className="button-row">
+            <button
+              className="btn small-btn"
+              disabled={busy}
+              onClick={() => void run(() => api.documents.extract(documentId), "")}
+            >
+              {doc.status === "needs_review" ? "Re-run extraction" : "Read & extract with Gemini"}
+            </button>
+          </div>
+        )}
+        {doc.status === "approved" && <p className="api-state success">Approved by {doc.approved_by}. Values are now operational records.</p>}
+      </section>
       <div className="review-workspace">
         <section className="box">
           <h3>Review fields</h3>
@@ -2428,74 +2356,168 @@ function DocumentReviewPage() {
             review.fields.map((field) => (
               <div className="review-field" key={field.id}>
                 <div>
-                  <b>{field.field}</b>
+                  <b>{field.field.replaceAll("_", " ")}</b>
                   <small>
-                    {field.verbatim || "No verbatim source text recorded."}
+                    Proposed: {String(field.approved_value ?? field.proposed_value ?? "—")} · as written: {field.verbatim || "No verbatim source text recorded."}
                   </small>
-                  <span className="mono">
-                    {field.evidence
-                      ? `Page ${field.evidence.page}: ${field.evidence.quote}`
-                      : "Evidence not recorded"}
-                  </span>
+                  <EvidenceLine evidence={field.evidence} onShow={setPage} />
+                  {field.warnings.map((w) => (
+                    <small key={w}>⚠ {w}</small>
+                  ))}
+                  {!locked && noteInput(field.id, `Note for ${field.field}`)}
                 </div>
-                <span
-                  className={`pill ${field.review_state === "approved" ? "" : "high"}`}
-                >
-                  {field.review_state}
-                </span>
-                <button
-                  className="btn small-btn"
-                  disabled={busy || field.proposed_value == null}
-                  onClick={() =>
-                    void confirm(field.id, field.proposed_value ?? null)
-                  }
-                >
-                  Confirm
-                </button>
+                <span className={`pill ${field.review_state === "approved" ? "" : "high"}`}>{field.review_state.replace("_", " ")}</span>
+                {decisionButtons("extracted_fields", field, field.proposed_value ?? null, field.proposed_value != null)}
               </div>
             ))
           ) : (
-            <p>
-              No extracted fields are available. Extraction must complete before
-              human review.
-            </p>
+            <p>No extracted fields are available. Extraction must complete before human review.</p>
           )}
+          {DECIDABLE.map(({ key, label }) => {
+            const items = review[key] as unknown as (Record<string, unknown> & { id: string; review_state: string; warnings: string[]; evidence?: DocumentEvidence | null })[];
+            if (!items.length) return null;
+            return (
+              <div key={key}>
+                <h3>{label}</h3>
+                {items.map((item) => (
+                  <div className="review-field" key={item.id}>
+                    <div>
+                      <b>{proposalSummary(key, item)}</b>
+                      {key === "tables" && <ReviewTable table={item as unknown as TableProposal} />}
+                      <EvidenceLine evidence={item.evidence} onShow={setPage} />
+                      {item.warnings.map((w) => (
+                        <small key={w}>⚠ {w}</small>
+                      ))}
+                      {!locked && noteInput(item.id, `Note for ${label}`)}
+                    </div>
+                    <span className={`pill ${item.review_state === "approved" ? "" : "high"}`}>{item.review_state.replace("_", " ")}</span>
+                    {decisionButtons(key, item)}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+          {review.issues.length > 0 && <h3>Issues to resolve</h3>}
+          {review.issues.map((issue) => (
+            <div className="review-field" key={issue.id}>
+              <div>
+                <b>
+                  {issue.code.replaceAll("_", " ").toLowerCase()} ({issue.severity})
+                </b>
+                <small>{issue.message}</small>
+                {issue.resolution && <small>Resolution: {issue.resolution}</small>}
+                {!locked && issue.status === "open" && noteInput(issue.id, `Resolution for ${issue.code}`)}
+              </div>
+              <span className={`pill ${issue.status === "open" ? "high" : ""}`}>{issue.status}</span>
+              {!locked && issue.status === "open" && (
+                <span className="button-row">
+                  <button
+                    className="btn small-btn"
+                    disabled={busy || !notes[issue.id]}
+                    onClick={() => void run(() => api.documents.resolveIssue(documentId, issue.id, { status: "resolved", resolution: notes[issue.id] }), "Issue resolved.")}
+                  >
+                    Resolve
+                  </button>
+                  <button
+                    className="btn outline small-btn"
+                    disabled={busy || !notes[issue.id]}
+                    onClick={() => void run(() => api.documents.resolveIssue(documentId, issue.id, { status: "deferred", resolution: notes[issue.id] }), "Issue deferred.")}
+                  >
+                    Defer
+                  </button>
+                </span>
+              )}
+            </div>
+          ))}
         </section>
         <aside className="box evidence-panel">
-          <h3>Evidence</h3>
-          <p>{review.document.filename}</p>
-          <p>
-            {review.document.page_count ?? 0} pages · private document preview
-          </p>
-          <a
-            className="btn outline"
-            href={`${import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"}/api/documents/${documentId}/pdf`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Open PDF preview
-          </a>
+          <h3>Source page</h3>
+          {(doc.page_count ?? 0) > 0 ? (
+            <PageViewer documentId={documentId} pageCount={doc.page_count ?? 0} page={Math.min(page, doc.page_count ?? 1)} onPage={setPage} />
+          ) : (
+            <p>The file could not be read, so there are no pages to show.</p>
+          )}
         </aside>
       </div>
       <div className="review-footer">
         <span>
-          {confirmed} confirmed · {blockers} needs review ·{" "}
-          {review.issues.length} validation issues
+          {pending} awaiting a decision · {review.issues.filter((i) => i.status === "open").length} open issues
         </span>
+        {!doc.partner_id && !locked && (
+          <span className="button-row">
+            <select aria-label="Partner for this agreement" value={partnerId} onChange={(event) => setPartnerId(event.target.value)}>
+              <option value="">Choose partner</option>
+              {partners.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <label>
+              <input type="checkbox" checked={createPartner} onChange={(event) => setCreatePartner(event.target.checked)} /> or create it from the
+              approved partner name
+            </label>
+          </span>
+        )}
         <button
           className="btn"
-          disabled={busy || blockers > 0}
-          onClick={() => void approve()}
+          disabled={busy || locked || !check.data?.ready}
+          onClick={() =>
+            void run(async () => {
+              await api.documents.approve(documentId, { partner_id: partnerId || undefined, create_partner: createPartner || undefined });
+              onApproved();
+            }, "Approved: the agreement and its obligations are now operational records, and alerts were recalculated.")
+          }
         >
           Approve records
         </button>
       </div>
+      {!locked && check.data && !check.data.ready && (
+        <ul className="api-state" aria-label="What still blocks approval">
+          {check.data.blockers.map((b) => (
+            <li key={b}>{b}</li>
+          ))}
+        </ul>
+      )}
       {message && (
         <p className="api-state" role="status">
           {message}
         </p>
       )}
     </>
+  );
+}
+
+function ReviewTable({ table }: { table: TableProposal }) {
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Page</th>
+            {table.headers.map((h, i) => (
+              <th key={`${h}-${i}`}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row) => (
+            <tr key={row.row_index} className={row.verified ? "" : "row-unverified"} title={row.verified ? undefined : "Cells not found on that page"}>
+              <td>
+                {row.page}
+                {row.verified ? "" : " ⚠"}
+              </td>
+              {table.headers.map((_, i) => (
+                <td key={i}>{row.cells[i] ?? ""}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {[...table.unit_notes, ...table.notes].map((n) => (
+        <small key={n}>{n}</small>
+      ))}
+    </div>
   );
 }
 

@@ -66,7 +66,6 @@ export interface DashboardResponse {
   metrics: {
     partners_total: number; partners_active: number; actions_open: number; agreements_active: number;
     projects_active: number; reports_pending: number; finance_records: number;
-    documents_awaiting_review?: number; document_extraction_failures?: number; pending_addendum_approvals?: number;
   };
   findings: DeadlineFinding[];
   as_of: string;
@@ -75,24 +74,74 @@ export interface DashboardResponse {
 }
 export type DocumentKind = "mou" | "addendum";
 export type DocumentStatus = "uploaded" | "extracting" | "needs_review" | "approved" | "failed" | "blocked";
+// Documents, extraction proposals, and review (backend/app/documents.py, document_routes.py, document_review.py).
+export interface ExtractionRun {
+  started_at: string; finished_at?: string | null; model: string; pages_to_read: number; pages_read: number;
+  chunks_total: number; chunks_done: number; pages_sent: number[]; pages_skipped_low_text: number[];
+  ai_used: boolean; ai_error?: string | null; counts: Record<string, number>;
+}
 export interface SourceDocument {
   id: string; filename: string; kind: DocumentKind; partner_id?: string | null; agreement_id?: string | null;
   uploaded_at: string; uploaded_by: string; page_count?: number | null; status: DocumentStatus;
-  warnings: string[]; error?: string | null; approved_by?: string | null; approved_at?: string | null;
+  pages?: { page_number: number; char_count: number; text_status: "text" | "low_text" }[];
+  warnings: string[]; error?: string | null; extraction?: ExtractionRun | null;
+  approved_by?: string | null; approved_at?: string | null;
 }
-export interface ExtractedField {
-  id: string; document_id: string; target: string; field: string; verbatim?: string | null;
-  proposed_value?: string | number | boolean | null; approved_value?: string | number | boolean | null;
-  warnings: string[]; review_state: "proposed" | "needs_review" | "approved" | "rejected" | "deferred";
-  evidence?: { document_id: string; page: number; quote: string; verified: boolean } | null;
+export type ProposalReviewState = "proposed" | "needs_review" | "approved" | "rejected" | "deferred";
+export interface DocumentEvidence {
+  document_id: string; page: number; quote: string; verified: boolean; verification_error?: string | null;
+  /** text_layer: matched the PDF's own text; ai_transcript: matched Gemini's reading of a scanned page (weaker). */
+  basis?: "text_layer" | "ai_transcript" | null; section?: string | null; printed_page?: string | null;
 }
+interface ProposalBase {
+  id: string; document_id: string; review_state: ProposalReviewState; warnings: string[];
+  evidence?: DocumentEvidence | null; reviewed_by?: string | null; reviewed_at?: string | null;
+}
+type Scalar = string | number | boolean | null;
+export interface ExtractedField extends ProposalBase {
+  target: string; field: string; verbatim?: string | null; proposed_value?: Scalar; approved_value?: Scalar; review_note?: string | null;
+}
+export interface ClauseProposal extends ProposalBase { clause_type: string; heading?: string | null; summary: string; verbatim: string; needs_legal_review: boolean }
+export interface FinancialTermProposal extends ProposalBase {
+  term_type: string; description: string; amount?: number | null; currency?: string | null; basis: string;
+  financial_year?: string | null; payer?: string | null; due_date?: string | null; condition?: string | null;
+}
+export interface DeadlineRule {
+  deadline_type: "fixed_date" | "relative" | "recurring" | "unspecified"; text?: string | null; offset_value?: number | null;
+  offset_unit?: string | null; trigger?: string | null; trigger_event?: string | null; recurrence?: string | null;
+}
+export interface ObligationProposal extends ProposalBase {
+  obligation_type: string; title: string; frequency: string; due_date?: string | null; deadline?: DeadlineRule | null;
+  operational_ref?: { collection: string; id: string } | null;
+}
+export interface ScopeProposal extends ProposalBase {
+  dimension: string; value: string; target_value?: number | null; target_unit?: string | null; location?: string | null; period?: string | null;
+}
+export interface TableProposal extends ProposalBase {
+  title: string; kind: string; section?: string | null; pages: number[]; headers: string[];
+  rows: { row_index: number; page: number; cells: (string | null)[]; verified: boolean }[];
+  currency?: string | null; unit_notes: string[]; notes: string[]; continues_across_pages: boolean;
+}
+export interface DocumentIssue {
+  id: string; document_id: string; severity: "error" | "warning"; code: string; message: string;
+  related_id?: string | null; status: "open" | "resolved" | "deferred"; resolution?: string | null;
+}
+export type ProposalCollection = "extracted_fields" | "clauses" | "financial_terms" | "obligations" | "programme_scope" | "tables";
 export interface DocumentReview {
-  document: SourceDocument; fields: ExtractedField[]; clauses: Record<string, unknown>[]; financial_terms: Record<string, unknown>[];
-  obligations: Record<string, unknown>[]; programme_scope: Record<string, unknown>[]; issues: Record<string, unknown>[];
+  document: SourceDocument; fields: ExtractedField[]; clauses: ClauseProposal[]; financial_terms: FinancialTermProposal[];
+  obligations: ObligationProposal[]; programme_scope: ScopeProposal[]; tables: TableProposal[]; issues: DocumentIssue[];
 }
+export interface ApprovalCheck { ready: boolean; blockers: string[] }
+export interface ApprovalResult {
+  document: SourceDocument; agreement_id: string; partner_id: string | null; project_id?: string | null;
+  created: Record<string, number>; partner_created?: boolean; project_created?: boolean;
+}
+/** An addendum's change to an agreement (GET /api/agreements/{id}/history). */
 export interface AmendmentChange {
-  id: string; agreement_id: string; document_id?: string; field: string; previous_value?: string | null;
-  proposed_value?: string | null; evidence?: Record<string, unknown>; status: "proposed" | "approved" | "rejected" | "unresolved";
+  id: string; agreement_id: string; addendum_document_id: string; kind: "modify" | "add"; target: string; field: string;
+  prior_value?: Scalar; proposed_value?: Scalar; amendment_date?: string | null; effective_date?: string | null;
+  evidence: DocumentEvidence; status: "proposed" | "approved" | "rejected" | "unresolved"; note?: string | null;
+  reviewed_by?: string | null; applied_at?: string | null;
 }
 // Rules engine alerts (GET /api/alerts). Mirrors backend/app/engine.py and app/reviews.py.
 export type AlertSeverity = "overdue" | "risk" | "due_soon" | "missing_data";

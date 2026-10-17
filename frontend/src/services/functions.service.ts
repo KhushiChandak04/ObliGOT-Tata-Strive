@@ -3,6 +3,7 @@ import type {
   ActionItem, Activity, Agreement, Alert, AlertReview, AlertsResponse, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup,
   HealthResponse, ImportPreview, Milestone,
   Opportunity, Partner, Project, ReportRecord, SourceDocument, DocumentReview, AmendmentChange,
+  ApprovalCheck, ApprovalResult, ProposalCollection,
 } from "../types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -22,6 +23,13 @@ function errorMessage(detail: unknown, status: number): string {
   if (typeof detail === "string") return detail;
   // FastAPI request validation returns a list of {loc, msg}.
   if (Array.isArray(detail)) return detail.map((d) => (d && typeof d === "object" && "msg" in d ? String(d.msg) : String(d))).join("; ");
+  // Structured 409s: {message, blockers: [...]} or {message, conflicts: [...]}.
+  if (detail && typeof detail === "object" && "message" in detail) {
+    const d = detail as { message: unknown; blockers?: unknown; conflicts?: unknown };
+    const extra = Array.isArray(d.blockers) ? d.blockers.map(String).join(" ")
+      : Array.isArray(d.conflicts) ? d.conflicts.map((c) => JSON.stringify(c)).join("; ") : "";
+    return extra ? `${String(d.message)}: ${extra}` : String(d.message);
+  }
   return `Request failed (${status})`;
 }
 
@@ -47,8 +55,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function requestBlob(path: string): Promise<Blob> {
   const headers = await authHeaders();
-  const response = await fetch(`${API_BASE}${path}`, { headers });
-  if (!response.ok) throw new ApiError(`Request failed (${response.status})`, response.status);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { headers });
+  } catch {
+    throw new ApiError(`Cannot reach the ObliGOT API at ${API_BASE}.`, 0);
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new ApiError(errorMessage(body.detail, response.status), response.status);
+  }
   return response.blob();
 }
 
@@ -139,14 +155,30 @@ export const api = {
       if (partnerId) form.append("partner_id", partnerId); if (agreementId) form.append("agreement_id", agreementId);
       return request<SourceDocument>("/api/documents", { method: "POST", body: form });
     },
-    review: (documentId: string) => request<DocumentReview>(`/api/documents/${id(documentId)}/review`),
-    reviewField: (documentId: string, fieldId: string, payload: { review_state: string; approved_value?: string | number | boolean | null; review_note?: string }) =>
-      request<Record<string, unknown>>(`/api/documents/${id(documentId)}/fields/${id(fieldId)}`, send("PATCH", payload)),
-    approve: (documentId: string) => request<SourceDocument>(`/api/documents/${id(documentId)}/approve`, send("POST", {})),
-    pdf: (documentId: string) => requestBlob(`/api/documents/${id(documentId)}/pdf`),
-    amendments: (agreementId: string) => request<AmendmentChange[]>(`/api/agreements/${id(agreementId)}/amendments`),
-    decideAmendment: (changeId: string, status: "approved" | "rejected" | "unresolved") =>
-      request<AmendmentChange>(`/api/agreement-changes/${id(changeId)}`, send("PATCH", { status })),
+    /** Start reading/extraction in the background; poll `get` for status and progress. */
+    extract: (documentId: string) => request<SourceDocument>(`/api/documents/${id(documentId)}/extract`, { method: "POST" }),
+    /** Proposals and issues for review (GET /extraction), in the review screen's shape. */
+    review: async (documentId: string): Promise<DocumentReview> => {
+      const r = await request<Omit<DocumentReview, "fields" | "issues"> & { extracted_fields: DocumentReview["fields"]; review_issues: DocumentReview["issues"] }>(
+        `/api/documents/${id(documentId)}/extraction`);
+      return { document: r.document, fields: r.extracted_fields, clauses: r.clauses, financial_terms: r.financial_terms,
+        obligations: r.obligations, programme_scope: r.programme_scope, tables: r.tables ?? [], issues: r.review_issues };
+    },
+    decide: (documentId: string, collection: ProposalCollection, itemId: string,
+      payload: { decision: "approve" | "reject" | "defer" | "reset"; value?: string | number | boolean | null; note?: string }) =>
+      request<Record<string, unknown>>(`/api/documents/${id(documentId)}/proposals/${collection}/${id(itemId)}`, send("PATCH", payload)),
+    resolveIssue: (documentId: string, issueId: string, payload: { status: "resolved" | "deferred" | "open"; resolution?: string }) =>
+      request<Record<string, unknown>>(`/api/documents/${id(documentId)}/issues/${id(issueId)}`, send("PATCH", payload)),
+    approvalCheck: (documentId: string, options: { partnerId?: string; createPartner?: boolean } = {}) =>
+      request<ApprovalCheck>(`/api/documents/${id(documentId)}/approval-check${query({ partner_id: options.partnerId, create_partner: options.createPartner ? "true" : undefined })}`),
+    approve: (documentId: string, options: { partner_id?: string; create_partner?: boolean; owner?: string } = {}) =>
+      request<ApprovalResult>(`/api/documents/${id(documentId)}/approve`, send("POST", options)),
+    /** One page as a JPEG (authenticated), for comparing extracted values with the source. */
+    pageImage: (documentId: string, page: number) => requestBlob(`/api/documents/${id(documentId)}/pages/${page}/image`),
+    history: (agreementId: string) =>
+      request<{ changes: AmendmentChange[]; original: Record<string, unknown>; effective: Record<string, unknown> }>(`/api/agreements/${id(agreementId)}/history`),
+    decideAmendment: (changeId: string, decision: "approve" | "reject" | "unresolved" | "reset", extra: { effective_date?: string; note?: string } = {}) =>
+      request<AmendmentChange>(`/api/agreement-changes/${id(changeId)}`, send("PATCH", { decision, ...extra })),
     exportWorkbook: () => requestBlob("/api/export/workbook"),
   },
 };
