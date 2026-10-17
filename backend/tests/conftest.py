@@ -14,6 +14,7 @@ def local_settings_do_not_apply(monkeypatch):
     monkeypatch.setattr(settings, "ocr_engine", "tesseract")  # never the locally installed RapidOCR
     monkeypatch.setattr(settings, "ocr_first", False)
     monkeypatch.setattr(settings, "extraction_provider", "groq")
+    monkeypatch.setattr(settings, "page_reader", "ocr")
     monkeypatch.setattr(settings, "ocr_enabled", False)  # OCR tests switch it on with a fake; results never depend on the machine
 
 

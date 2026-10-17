@@ -228,6 +228,31 @@ async def _read_pages(document: dict, raw: bytes, inspection, run: dict, use_vis
     return readings, None
 
 
+async def _gemini_read_all(document: dict, raw: bytes, inspection, readings: dict[int, dict], run: dict) -> None:
+    """Read every scanned page still without text with Gemini, batches in parallel. Failed batches are left
+    for OCR / Groq vision."""
+    to_read = [p.page_number for p in inspection.pages if p.text_status == "low_text" and p.page_number not in readings]
+
+    async def read(batch: list[int]):
+        try:
+            images = [(n, await run_in_threadpool(render_page, raw, n)) for n in batch]
+            return batch, parse_batch(await gemini_read_pages(images), batch)
+        except ExtractionFailed as exc:
+            logger.warning("Gemini page reading failed for pages %s: %s", batch, exc.code)
+            return batch, []
+
+    for _batch, items in await asyncio.gather(*(read(b) for b in batches(to_read, 3))):
+        for item in items:
+            record = PageReading(
+                id=_page_id(document["id"], item.page), document_id=document["id"], page_number=item.page,
+                method="gemini_vision", model=settings.gemini_vision_model, read_at=now_iso(),
+                **item.model_dump(exclude={"page"})).model_dump(mode="json")
+            readings[item.page] = put_record("document_pages", record, record["id"])
+            run["pages_read"] = run.get("pages_read", 0) + 1
+            run["ai_used"] = True
+    patch_record("documents", document["id"], {"extraction": run})
+
+
 def _page_notes(readings: dict[int, dict]) -> list[tuple[str, str, str]]:
     """Review issues from the page readings: unreadable spots, poor legibility, templates."""
     notes = []
@@ -269,9 +294,13 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
     try:
         raw = await run_in_threadpool(document_storage.load_pdf, document["storage_ref"])
         inspection = await run_in_threadpool(inspect_pdf, raw, settings.max_document_pages)
-        ocr_first = settings.ocr_first and ocr.ocr_available()
-        # OCR-first: text layer now, local OCR next, AI vision only for pages OCR could not read.
+        fast_vision = settings.page_reader == "gemini" and bool(settings.gemini_api_key)
+        ocr_first = (settings.ocr_first and ocr.ocr_available()) or fast_vision
+        # Text layer now; then Gemini page reading (parallel, fastest); local OCR for pages still unread;
+        # Groq vision last.
         readings, failure = await _read_pages(document, raw, inspection, run, use_vision=use_groq and not ocr_first)
+        if fast_vision:
+            await _gemini_read_all(document, raw, inspection, readings, run)
         # Local OCR (PyMuPDF render + RapidOCR/Tesseract) for scanned pages still without text.
         unread = [p.page_number for p in inspection.pages if p.text_status == "low_text" and p.page_number not in readings]
         ocr_note = None
@@ -387,7 +416,9 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
             delete_record(collection, old["id"])
         for record in proposals[collection]:
             put_record(collection, record, record["id"])
-    groq_part = f"Groq read {run['pages_read']} scanned pages and extracted {run['chunks_done']} of {run['chunks_total']} parts" if use_groq else "Groq not used"
+    methods = sorted({r.get("method") for r in readings.values()} - {"text_layer", None}) if "readings" in locals() else []
+    groq_part = (f"Read {run['pages_read']} scanned pages ({', '.join(methods) or 'none needed'}) and extracted "
+                 f"{run['chunks_done']} of {run['chunks_total']} parts") if use_groq else "Groq not used"
     if ocr_note:
         groq_part = f"{groq_part}. {ocr_note}"
     if failure is not None:
@@ -422,7 +453,9 @@ async def start_extraction(document_id: str, request: Request, background: Backg
     already_read = _pages_for(document_id)
     use_groq = settings.groq_available
     run = ExtractionRun(
-        started_at=now_iso(), model=settings.groq_model if use_groq else "none",
+        started_at=now_iso(),
+        model=(settings.gemini_extraction_model if settings.extraction_provider == "gemini" and settings.gemini_api_key
+               else settings.groq_model) if use_groq else "none",
         mode="groq" if use_groq else "deterministic",
         pages_to_read=sum(1 for p in document["pages"] if p["text_status"] == "low_text" and p["page_number"] not in already_read) if use_groq else 0,
     ).model_dump(mode="json")

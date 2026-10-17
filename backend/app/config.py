@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     gemini_recommendation_timeout_seconds: float = 30.0
     # Fallback for reading scanned pages when Groq vision fails (e.g. its daily token quota is used up).
     gemini_vision_model: str = "gemini-3.5-flash-lite"
+    # Scanned pages: "gemini" (parallel, ~10 s for 9 pages; OCR then Groq for pages it misses) or "ocr".
+    page_reader: str = "gemini"
     # Structured extraction: "gemini" (fast; Groq is the fallback) or "groq".
     extraction_provider: str = "gemini"
     gemini_extraction_model: str = "gemini-3.5-flash-lite"
@@ -52,8 +54,8 @@ class Settings(BaseSettings):
     ocr_first: bool = True
     tesseract_cmd: str = "tesseract"
     ocr_languages: str = "eng"
-    ocr_dpi: int = 200
-    ocr_parallel_pages: int = 4
+    ocr_dpi: int = 150
+    ocr_parallel_pages: int = 2  # CPU-bound: more than 2 threads was not faster on an 8-thread laptop
     ocr_timeout_seconds: float = 60.0
     @property
     def groq_available(self) -> bool:

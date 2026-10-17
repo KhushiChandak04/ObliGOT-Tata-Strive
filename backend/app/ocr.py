@@ -76,7 +76,7 @@ def ocr_page(raw: bytes, page_number: int) -> str:
     png = _render(raw, page_number)
     if engine == "rapidocr":
         try:
-            boxes, _ = _rapidocr()(png)
+            boxes, _ = _rapidocr()(png, use_cls=False)  # scans are upright; the angle check costs ~40% of the time
         except Exception as exc:  # the engine's own failure, never document text
             raise OcrFailed(f"OCR of page {page_number} failed ({type(exc).__name__})") from exc
         return _lines(boxes or [])
