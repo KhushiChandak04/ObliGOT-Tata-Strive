@@ -147,5 +147,6 @@ async def structured_completion(
         model=model,
         timeout=timeout,
         response_format={"type": "json_object"},
-        max_completion_tokens=8192,
+        # Groq counts the reserved output toward the per-minute token limit (8k on the free tier).
+        max_completion_tokens=settings.groq_max_completion_tokens,
     )

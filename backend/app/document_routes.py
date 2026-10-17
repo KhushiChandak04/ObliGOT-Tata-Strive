@@ -1,4 +1,5 @@
 """Document intake and extraction: upload private MOU/addendum PDFs and export document-scoped results."""
+import asyncio
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
@@ -13,7 +14,7 @@ from app.config import settings
 from app.documents import DocumentStatus, ExtractionRun, PageReading, SourceDocument
 from app.document_workbook import build_document_workbook
 from app.extraction import ExtractionFailed, Generate, build_prompt, build_proposals, chunk_pages, groq_generate, parse_chunk
-from app.page_reading import batches, groq_read_pages, parse_batch, render_page
+from app.page_reading import batches, gemini_read_pages, groq_read_pages, parse_batch, render_page
 from app.pdf_inspect import PdfInspectionError, inspect_pdf, looks_like_pdf
 from app.repository import delete_record, get_record, list_records, patch_record, put_record
 from app.reviews import actor, log_activity, now_iso
@@ -182,7 +183,8 @@ def _pages_for(document_id: str) -> dict[int, dict]:
             if p.get("document_id") == document_id and p.get("version", PAGE_READING_VERSION) == PAGE_READING_VERSION}
 
 
-async def _read_pages(document: dict, raw: bytes, inspection, run: dict, use_vision: bool) -> tuple[dict[int, dict], ExtractionFailed | None]:
+async def _read_pages(document: dict, raw: bytes, inspection, run: dict, use_vision: bool,
+                      upgrade_ocr: bool = True) -> tuple[dict[int, dict], ExtractionFailed | None]:
     """Every page gets a PageReading: text-layer pages from the PDF; scanned pages from Groq vision when
     available. Readings are saved per batch and reused, so a retry never re-reads (or re-sends) finished pages.
     Returns the readings and, if Groq failed part-way, that failure (completed batches are kept)."""
@@ -196,17 +198,28 @@ async def _read_pages(document: dict, raw: bytes, inspection, run: dict, use_vis
     if not use_vision:
         return readings, None
     to_read = [p.page_number for p in inspection.pages if p.text_status == "low_text"
-               and (p.page_number not in readings or readings[p.page_number].get("method") == "ocr")]
+               and (p.page_number not in readings or (upgrade_ocr and readings[p.page_number].get("method") == "ocr"))]
+    groq_failed = False  # once Groq vision fails, the rest of this run reads with Gemini
     for batch in batches(to_read, min(3, max(1, settings.vision_batch_pages))):
+        images = [(n, await run_in_threadpool(render_page, raw, n)) for n in batch]
+        method, model = "groq_vision", settings.groq_vision_model
         try:
-            images = [(n, await run_in_threadpool(render_page, raw, n)) for n in batch]
+            if groq_failed:
+                raise ExtractionFailed("skipped", "Groq vision failed earlier in this run")
             items = parse_batch(await groq_read_pages(images), batch)
         except ExtractionFailed as exc:
-            return readings, exc
+            if not settings.gemini_api_key:
+                return readings, exc
+            groq_failed = True
+            method, model = "gemini_vision", settings.gemini_vision_model
+            try:
+                items = parse_batch(await gemini_read_pages(images), batch)
+            except ExtractionFailed as gemini_exc:
+                return readings, gemini_exc
         for item in items:
             record = PageReading(
                 id=_page_id(document["id"], item.page), document_id=document["id"], page_number=item.page,
-                method="groq_vision", model=settings.groq_vision_model, read_at=now_iso(),
+                method=method, model=model, read_at=now_iso(),
                 **item.model_dump(exclude={"page"})).model_dump(mode="json")
             readings[item.page] = put_record("document_pages", record, record["id"])
         run["pages_read"] += len(batch)
@@ -256,23 +269,38 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
     try:
         raw = await run_in_threadpool(document_storage.load_pdf, document["storage_ref"])
         inspection = await run_in_threadpool(inspect_pdf, raw, settings.max_document_pages)
-        readings, failure = await _read_pages(document, raw, inspection, run, use_vision=use_groq)
-        # Optional local OCR for scanned pages still without text (Groq unavailable or stopped).
+        ocr_first = settings.ocr_first and ocr.ocr_available()
+        # OCR-first: text layer now, local OCR next, AI vision only for pages OCR could not read.
+        readings, failure = await _read_pages(document, raw, inspection, run, use_vision=use_groq and not ocr_first)
+        # Local OCR (PyMuPDF render + RapidOCR/Tesseract) for scanned pages still without text.
         unread = [p.page_number for p in inspection.pages if p.text_status == "low_text" and p.page_number not in readings]
         ocr_note = None
         if unread and ocr.ocr_available():
             done = 0
-            for n in unread:
-                try:
-                    text = await run_in_threadpool(ocr.ocr_page, raw, n)
-                except ocr.OcrFailed as exc:
-                    ocr_note = f"OCR stopped at page {n}: {exc}"
-                    break
+            limit = asyncio.Semaphore(max(1, settings.ocr_parallel_pages))
+
+            async def read_one(n: int):
+                async with limit:
+                    try:
+                        return await run_in_threadpool(ocr.ocr_page, raw, n)
+                    except ocr.OcrFailed as exc:
+                        return exc
+
+            for n, text in zip(unread, await asyncio.gather(*(read_one(n) for n in unread))):
+                if isinstance(text, ocr.OcrFailed):
+                    ocr_note = f"OCR could not read page {n}: {text}"
+                    continue
+                if not text.strip():
+                    continue
                 record = PageReading(id=_page_id(document_id, n), document_id=document_id, page_number=n, method="ocr",
-                                     model="tesseract", transcript=text, read_at=now_iso()).model_dump(mode="json")
+                                     model=ocr.engine_name(), transcript=text, read_at=now_iso()).model_dump(mode="json")
                 readings[n] = put_record("document_pages", record, record["id"])
                 done += 1
+                run["pages_read"] = run.get("pages_read", 0) + 1
+                patch_record("documents", document_id, {"extraction": run})
             ocr_note = ocr_note or f"OCR read {done} scanned page{'s' if done != 1 else ''} (plain text; tables may be flattened)."
+        if ocr_first and use_groq and any(p.text_status == "low_text" and p.page_number not in readings for p in inspection.pages):
+            readings, failure = await _read_pages(document, raw, inspection, run, use_vision=True, upgrade_ocr=False)
         total = inspection.page_count
         texts = [readings[n]["transcript"] if n in readings else "" for n in range(1, total + 1)]
         bases = [{"groq_vision": "ai_transcript", "gemini_vision": "ai_transcript", "ocr": "ocr_text"}.get(readings.get(n, {}).get("method"), "text_layer")

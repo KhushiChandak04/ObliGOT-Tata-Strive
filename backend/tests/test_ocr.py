@@ -1,4 +1,4 @@
-"""Optional Tesseract OCR fallback. Tesseract is faked unless it is really installed (last test)."""
+﻿"""Optional Tesseract OCR fallback. Tesseract is faked unless it is really installed (last test)."""
 import json
 import shutil
 
@@ -110,7 +110,7 @@ def test_ocr_failure_is_reported_and_unread_pages_are_flagged(monkeypatch):
     doc = upload(scanned_pdf(PAGES))
     client.post(f"/api/documents/{doc['id']}/extract")
     final = client.get(f"/api/documents/{doc['id']}").json()
-    assert "OCR stopped at page 2: simulated OCR failure" in final["extraction"]["note"]
+    assert "OCR could not read page 2: simulated OCR failure" in final["extraction"]["note"]
     issue = next(i for i in client.get(f"/api/documents/{doc['id']}/extraction").json()["review_issues"] if i["code"] == "PAGES_NOT_READ")
     assert "Pages 2 have no text" in issue["message"] and "OCR could not read them" in issue["message"]
 

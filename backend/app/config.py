@@ -13,9 +13,15 @@ class Settings(BaseSettings):
     groq_backoff_base_seconds: float = 2.0
     groq_max_retry_wait_seconds: float = 30.0
     groq_max_concurrency: int = 2
+    groq_max_completion_tokens: int = 3500
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     gemini_recommendation_timeout_seconds: float = 30.0
+    # Fallback for reading scanned pages when Groq vision fails (e.g. its daily token quota is used up).
+    gemini_vision_model: str = "gemini-3.5-flash-lite"
+    # Structured extraction: "gemini" (fast; Groq is the fallback) or "groq".
+    extraction_provider: str = "gemini"
+    gemini_extraction_model: str = "gemini-3.5-flash-lite"
     firebase_project_id: str = ""
     # Path to a service-account JSON (git-ignored; relative paths resolve inside backend/). Empty = default credentials.
     firebase_credentials_file: str = ""
@@ -41,9 +47,13 @@ class Settings(BaseSettings):
     page_render_dpi: int = 150
     # Optional OCR fallback (Tesseract must be installed). Languages as Tesseract codes, e.g. "eng" or "eng+hin".
     ocr_enabled: bool = True
+    ocr_engine: str = "auto"  # auto (RapidOCR, then Tesseract), rapidocr, or tesseract
+    # Read scanned pages with local OCR first (no AI quota used); AI vision only for pages OCR could not read.
+    ocr_first: bool = True
     tesseract_cmd: str = "tesseract"
     ocr_languages: str = "eng"
-    ocr_dpi: int = 300
+    ocr_dpi: int = 200
+    ocr_parallel_pages: int = 4
     ocr_timeout_seconds: float = 60.0
     @property
     def groq_available(self) -> bool:

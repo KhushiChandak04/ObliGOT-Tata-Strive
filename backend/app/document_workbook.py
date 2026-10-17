@@ -63,7 +63,8 @@ def build_document_workbook(document: dict, proposals: dict[str, list[dict]]) ->
     wb.remove(wb.active)
     _append_sheet(wb, "About", ["Item", "Value"], [
         ["Filename", document["filename"]],
-        ["Data source", "SYNTHETIC DEMO — NOT CONNECTED TO LIVE FIRESTORE RECORDS" if is_demo_mode() else "Document record"],
+        ["Data source", "SYNTHETIC DEMO — NOT CONNECTED TO LIVE FIRESTORE RECORDS" if document["id"].startswith("demo-")
+         else "Uploaded PDF (demo mode: kept in memory, not saved to Firestore)" if is_demo_mode() else "Document record"],
         ["Document type", document["kind"]],
         ["Extraction status", document["status"]],
         ["Extraction mode", (document.get("extraction") or {}).get("mode")],

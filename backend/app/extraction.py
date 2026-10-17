@@ -6,11 +6,13 @@ proposals + review issues saved as `needs_review`. Nothing here is approved or o
 Document text is untrusted data; the prompt tells the model to ignore instructions inside it, and nothing the
 model returns is trusted without the checks below.
 """
+import json
 import re
 from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Literal
 
+import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
@@ -226,7 +228,32 @@ class ExtractionFailed(Exception):
 
 Generate = Callable[[str], Awaitable[str]]
 
-async def groq_generate(prompt: str) -> str:
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+
+async def gemini_generate(prompt: str) -> str:
+    """Structured extraction with Gemini: one fast call per part (large per-minute token limits)."""
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt + "\n\nReturn only a JSON object matching this JSON schema:\n"
+                                                  + json.dumps(ChunkExtraction.model_json_schema())}]}],
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=settings.groq_document_timeout_seconds) as client:
+            response = await client.post(GEMINI_URL.format(model=settings.gemini_extraction_model),
+                                         headers={"x-goog-api-key": settings.gemini_api_key}, json=payload)
+    except httpx.HTTPError as exc:
+        raise ExtractionFailed("unavailable", "Could not reach Gemini", retryable=True) from exc
+    if response.status_code == 429:
+        raise ExtractionFailed("rate_limited", "Gemini quota reached", retryable=True)
+    if response.status_code >= 400:
+        raise ExtractionFailed("invalid_request", f"Gemini HTTP {response.status_code}", retryable=response.status_code >= 500)
+    candidates = response.json().get("candidates") or []
+    content = candidates[0].get("content", {}) if candidates else {}
+    return "".join(p.get("text", "") for p in content.get("parts", []) if isinstance(p, dict))
+
+
+async def groq_only(prompt: str) -> str:
     try:
         return await structured_completion(
             [{"role": "user", "content": prompt}],
@@ -236,6 +263,17 @@ async def groq_generate(prompt: str) -> str:
         )
     except GroqRequestError as exc:
         raise ExtractionFailed(exc.code, str(exc), exc.retryable) from exc
+
+
+async def groq_generate(prompt: str) -> str:
+    """Gemini first when configured (fast, whole document in one part), Groq as the fallback."""
+    if settings.extraction_provider == "gemini" and settings.gemini_api_key:
+        try:
+            return await gemini_generate(prompt)
+        except ExtractionFailed:
+            if not settings.groq_api_key:
+                raise
+    return await groq_only(prompt)
 
 
 def parse_chunk(text: str) -> ChunkExtraction:

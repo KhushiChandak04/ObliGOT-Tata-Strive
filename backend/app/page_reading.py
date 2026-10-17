@@ -3,8 +3,11 @@
 The result is an AI transcription — an aid for extraction and review, never a verified fact. Unreadable or
 redacted text must be marked, not guessed; the reviewer compares values with the page image.
 """
+import base64
+import json
 from typing import Literal
 
+import httpx
 import pymupdf
 from pydantic import BaseModel, Field, ValidationError
 
@@ -87,6 +90,35 @@ async def groq_read_pages(images: list[tuple[int, bytes]]) -> str:
         )
     except GroqRequestError as exc:
         raise ExtractionFailed(exc.code, str(exc), exc.retryable) from exc
+
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+
+async def gemini_read_pages(images: list[tuple[int, bytes]]) -> str:
+    """Fallback page reading with Gemini (used when Groq vision fails, e.g. its daily quota is used up)."""
+    if not settings.gemini_api_key:
+        raise ExtractionFailed("not_configured", "Gemini is not configured on the server")
+    parts: list[dict[str, object]] = [{"text": INSTRUCTIONS + "\n\nReturn only a JSON object matching this JSON schema:\n"
+                                       + json.dumps(BatchReading.model_json_schema())}]
+    for number, image in images:
+        parts.append({"text": f"PHYSICAL PAGE {number}"})
+        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(image).decode("ascii")}})
+    payload = {"contents": [{"role": "user", "parts": parts}],
+               "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}
+    try:
+        async with httpx.AsyncClient(timeout=settings.groq_document_timeout_seconds) as client:
+            response = await client.post(GEMINI_URL.format(model=settings.gemini_vision_model),
+                                         headers={"x-goog-api-key": settings.gemini_api_key}, json=payload)
+    except httpx.HTTPError as exc:
+        raise ExtractionFailed("unavailable", "Could not reach Gemini", retryable=True) from exc
+    if response.status_code == 429:
+        raise ExtractionFailed("rate_limited", "Gemini quota reached", retryable=True)
+    if response.status_code >= 400:
+        raise ExtractionFailed("invalid_request", f"Gemini HTTP {response.status_code}", retryable=response.status_code >= 500)
+    candidates = response.json().get("candidates") or []
+    content = candidates[0].get("content", {}) if candidates else {}
+    return "".join(p.get("text", "") for p in content.get("parts", []) if isinstance(p, dict))
 
 
 def parse_batch(text: str, expected: list[int]) -> list[ModelPageReading]:
