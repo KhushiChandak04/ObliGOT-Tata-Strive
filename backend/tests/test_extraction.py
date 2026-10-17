@@ -164,7 +164,7 @@ def test_unclear_dates_and_amounts_stay_empty_with_issues():
     out = build(output)
     field, term = out["extracted_fields"][0], out["financial_terms"][0]
     assert field["proposed_value"] is None and field["verbatim"] == "end of the programme"
-    assert term["amount"] is None and term["currency"] is None and term["financial_year"] is None
+    assert term["amount"] is None and term["currency"] is None and term["financial_year"] == "FY27"  # kept as written
     assert "Amount 2,500,000 is stated without a clear currency" in " ".join(term["warnings"])
     codes = {i["code"] for i in out["review_issues"]}
     assert {"DATE_NOT_NORMALIZED", "AMOUNT_WITHOUT_CURRENCY", "MISSING_FIELD"} <= codes

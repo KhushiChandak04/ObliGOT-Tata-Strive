@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.rules import _parse_date
 
 
@@ -24,7 +25,7 @@ class RuleConfig(BaseModel):
     # Impact (not likelihood): an alert about an amount at or above this, in this currency, gets an impact factor.
     # Amounts in other currencies are never converted, so they do not get it.
     material_amount: float = Field(default=1_000_000, ge=0)
-    material_currency: str = Field(default="INR", pattern=r"^[A-Z]{3}$")
+    material_currency: str = Field(default_factory=lambda: settings.default_currency, pattern=r"^[A-Z]{3}$")
 
 
 # Base points per severity. Overdue items outrank upcoming ones; data gaps rank lowest.

@@ -202,7 +202,7 @@ class FinancialTerm(BaseModel):
     amount: float | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     basis: CommitmentBasis = "unspecified"
-    financial_year: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")  # e.g. 2026-27
+    financial_year: str | None = Field(default=None, max_length=20)  # as written: "2026-27", "FY2026", "2025/2026", ...
     payer: str | None = Field(default=None, max_length=160)
     due_date: date | None = None
     condition: str | None = Field(default=None, max_length=1000)

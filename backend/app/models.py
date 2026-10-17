@@ -2,6 +2,8 @@ from datetime import date
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
+from app.config import settings
+
 def _check_date_order(start: date | None, end: date | None, end_label: str, start_label: str = "start_date") -> None:
     if start and end and end < start:
         raise ValueError(f"{end_label} must be on or after {start_label}")
@@ -164,7 +166,7 @@ class FinanceRecord(BaseModel):
     record_type: Literal["budget", "fund_received", "invoice", "utilization_certificate"]
     title: str
     amount: float | None = Field(default=None, ge=0)
-    currency: str = "INR"
+    currency: str = Field(default_factory=lambda: settings.default_currency)
     issue_date: date | None = None
     due_date: date | None = None
     received_date: date | None = None
@@ -179,7 +181,8 @@ class FinanceCreate(BaseModel):
     record_type: FinanceType
     title: str = Field(min_length=2, max_length=200)
     amount: float | None = Field(default=None, ge=0)
-    currency: str = Field(default="INR", pattern=r"^[A-Z]{3}$")  # ISO 4217 code; amounts are never converted or summed
+    # ISO 4217 code; defaults to the deployment's DEFAULT_CURRENCY; amounts are never converted or summed
+    currency: str = Field(default_factory=lambda: settings.default_currency, pattern=r"^[A-Z]{3}$")
     issue_date: date | None = None
     due_date: date | None = None
     received_date: date | None = None

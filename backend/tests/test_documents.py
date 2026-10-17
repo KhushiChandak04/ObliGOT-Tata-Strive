@@ -92,8 +92,11 @@ def test_document_is_not_approved_without_approval_record():
 def test_amount_needs_currency_and_financial_year_format():
     with pytest.raises(ValidationError, match="currency"):
         FinancialTerm(id="t1", agreement_id="a1", partner_id="p1", term_type="annual_budget", description="x", amount=100)
+    # Financial years are kept as written ("2026-27", "FY27", ...), up to 20 characters.
+    assert FinancialTerm(id="t1", agreement_id="a1", partner_id="p1", term_type="annual_budget", description="x",
+                         financial_year="FY27").financial_year == "FY27"
     with pytest.raises(ValidationError):
-        FinancialTerm(id="t1", agreement_id="a1", partner_id="p1", term_type="annual_budget", description="x", financial_year="FY27")
+        FinancialTerm(id="t1", agreement_id="a1", partner_id="p1", term_type="annual_budget", description="x", financial_year="x" * 21)
 
 
 def test_addendum_change_needs_verified_evidence_and_reviewer_to_be_approved():

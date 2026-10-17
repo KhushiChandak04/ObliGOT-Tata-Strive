@@ -7,6 +7,8 @@ column or one currency, never across currencies, units, or financial concepts.
 import re
 from collections.abc import Iterable
 
+from app.money import parse_number as money_parse, strip_currency
+
 TOLERANCE = 0.5  # rupee/paisa-level rounding in printed figures
 TOTAL_ROW = re.compile(r"^\s*(grand\s+|sub[\s-]?)?total\b", re.IGNORECASE)
 PERIOD_HEADER = re.compile(r"^\s*(q[1-4]|quarter\s*[1-4]|h[12]|half[\s-]?year\s*[12]|year\s*\d|y\d|fy\s*\d{2,4}(-\d{2,4})?|"
@@ -17,18 +19,16 @@ UNIT_COST_HEADER = re.compile(r"\b(per|unit\s+cost|rate|cost\s+per)\b", re.IGNOR
 
 
 def parse_number(cell: str | None) -> float | None:
-    """A number written in a table cell (₹/Rs./INR, Indian or international grouping, trailing "/-").
-    Percentages, ranges, and text return None, so they are never summed with amounts."""
+    """A number written in a table cell, in any common format and with any currency marker (see app.money).
+    Percentages, ranges, text, and ambiguous numbers return None, so they are never summed with amounts."""
     if cell is None:
         return None
     text = cell.strip()
     if not text or "%" in text:
         return None
-    text = re.sub(r"^(₹|rs\.?|inr)\s*", "", text, flags=re.IGNORECASE)
+    text, _ = strip_currency(text)
     text = re.sub(r"\s*/-\s*$", "", text).strip()
-    if not re.fullmatch(r"-?\d[\d,]*(\.\d+)?", text):
-        return None
-    return float(text.replace(",", ""))
+    return money_parse(text)
 
 
 def _fmt(value: float) -> str:

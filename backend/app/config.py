@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     require_firebase_auth: bool = False
     # Business timezone offset used for "today" in deadline rules (IST = +330 minutes).
     business_utc_offset_minutes: int = 330
+    # Regional defaults for Tata STRIVE's Indian agreements (settings, not values in the code).
+    default_currency: str = "INR"  # pre-filled on manual finance entries; extracted amounts never get it implicitly
+    number_decimal_separator: str = "."  # Indian documents: "." is the decimal point ("1.5 lakh"); "auto" or "," also supported
+    date_order: str = "dmy"  # Indian documents write numeric dates day-first; "auto" (unambiguous only) or "mdy" also supported
     # Private folder for uploaded PDFs (relative paths resolve inside backend/; git-ignored).
     document_storage_dir: str = ".document_store"
     max_document_mb: int = 20
