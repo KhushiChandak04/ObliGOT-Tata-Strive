@@ -35,7 +35,12 @@ def _limit() -> asyncio.Semaphore:
     return _semaphores[loop_id]
 
 
-def _error(status_code: int) -> GroqRequestError:
+def _error(status_code: int, body: str = "") -> GroqRequestError:
+    if status_code == 400 and "json_validate_failed" in body:
+        # The model produced invalid JSON this time; another attempt usually succeeds.
+        return GroqRequestError("invalid_json", "Groq returned invalid JSON", retryable=True)
+    if status_code == 413:
+        return GroqRequestError("too_large", "The request is larger than the Groq token-per-minute limit (lower EXTRACTION_CHUNK_CHARS)")
     if status_code in (401, 403):
         return GroqRequestError("auth_error", "Groq rejected the API key (check GROQ_API_KEY)")
     if status_code == 404:
@@ -81,7 +86,9 @@ async def chat_completion(
                         timeout=timeout,
                     )
             if response.status_code >= 400:
-                error = _error(response.status_code)
+                detail = str(getattr(response, "text", "") or "")
+                error = _error(response.status_code, detail)
+                logger.warning("Groq HTTP %s on %s: %s", response.status_code, model, detail[:300])
                 if not error.retryable or attempt >= settings.groq_max_retries:
                     raise error
                 retry_after = response.headers.get("retry-after")
