@@ -11,7 +11,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
 | 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
 | 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | Done — approved |
-| 7 | Deadline engine and action center (7a engine, 7b review loop, 7c UI) | 7a done — awaiting review |
+| 7 | Deadline engine and action center (7a engine, 7b review loop, 7c UI) | 7a approved; 7b done — awaiting review |
 | 8 | Funding and compliance | Not started |
 | 9 | Gemini AI integration | Not started |
 | 10 | Spreadsheet import | Not started |
@@ -68,6 +68,13 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 7b notes — review loop and activity log
+- `app/reviews.py`: review model and validation, fact fingerprint, review attachment (hide dismissed / still-deferred), activity logging, actor resolution.
+- Routes: `POST|DELETE /api/alerts/{id}/review`, `POST /api/alerts/{id}/task` (prefilled from alert, `source_alert_id`, duplicate open task → 409), `GET /api/activities`; `GET /api/alerts` gains `include_reviewed`, per-alert `review` / `previous_review` / `hidden_by_review`, and `counts.hidden_by_review`. Actions log creation, status changes, and reassignment. `ActionItem` gains optional `source_alert_id` (additive).
+- Bug found by tests and fixed: activity timestamps had one-second precision, so events in the same second could be listed out of order; now microsecond timestamps plus a per-process sequence tie-breaker.
+- Verification: `pytest` → 144 passed (12 new in `tests/test_reviews.py`: acknowledge, dismiss with reason and reappearance after a fact change, dismissal surviving daily day-count changes, defer validation and expiry, reopen, 404 for resolved alerts, task creation prefill and duplicate 409, task completion and reassignment logging, full alert → task → resolution loop, activity ordering/filters/limit). Repeated 3× and in reverse file order: all pass.
+- Not in 7b: UI (7c); role restrictions on who may dismiss or change config (5c).
 
 ## Step 7a notes — deterministic rules engine
 - New `app/engine.py`: 19 rules with stable ids, descriptions, why-it-matters text, and recommended actions; alerts computed on read with id `{rule_id}:{record_type}:{record_id}`; evidence lists stored values (`source: record`) and derived values (`source: computed`); `related_alert_ids` link alerts for the same partner; transparent priority breakdown; deterministic ordering.

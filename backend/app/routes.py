@@ -16,6 +16,7 @@ from app.repository import (
     firestore_enabled, get_record, list_records, patch_record, put_record, delete_record,
 )
 from app.engine import RuleConfig, evaluate, rule_catalog
+from app.reviews import ReviewCreate, TaskFromAlert, actor, attach_reviews, fingerprint, log_activity, now_iso
 from app.rules import build_deadline_finding, business_today, scan_deadlines
 
 router = APIRouter()
@@ -120,12 +121,15 @@ def list_actions(status: str | None = None, related_partner_id: str | None = Non
             and (not related_partner_id or r.get("related_partner_id") == related_partner_id)]
 
 @router.post("/actions", response_model=ActionItem, status_code=201, tags=["actions"])
-def create_action(payload: ActionCreate) -> dict:
+def create_action(payload: ActionCreate, request: Request) -> dict:
     data = payload.model_dump(mode="json")
     if data.get("related_partner_id") and not get_record("partners", data["related_partner_id"]):
         raise HTTPException(status_code=404, detail="Related partner not found")
     data.update({"status": "open", "source_label": "user"})
-    return put_record("actions", data)
+    saved = put_record("actions", data)
+    log_activity(actor_name=actor(request), event="task_created", summary=f"Created task “{saved['title']}”",
+                 entity_type="actions", entity_id=saved["id"], partner_id=saved.get("related_partner_id"))
+    return saved
 
 @router.get("/actions/{action_id}", response_model=ActionItem, tags=["actions"])
 def get_action(action_id: str) -> dict:
@@ -135,8 +139,16 @@ def get_action(action_id: str) -> dict:
     return record
 
 @router.patch("/actions/{action_id}", response_model=ActionItem, tags=["actions"])
-def update_action(action_id: str, payload: ActionUpdate) -> dict:
-    return _patch_validated("actions", action_id, payload.model_dump(exclude_unset=True, mode="json"), ActionItem, "Action")
+def update_action(action_id: str, payload: ActionUpdate, request: Request) -> dict:
+    before = get_record("actions", action_id) or {}
+    saved = _patch_validated("actions", action_id, payload.model_dump(exclude_unset=True, mode="json"), ActionItem, "Action")
+    for field, event, verb in (("status", "task_status_changed", "status"), ("owner", "task_reassigned", "owner")):
+        if before.get(field) != saved.get(field):
+            log_activity(actor_name=actor(request), event=event,
+                         summary=f"Changed {verb} of “{saved['title']}” from {before.get(field) or 'none'} to {saved.get(field) or 'none'}",
+                         entity_type="actions", entity_id=action_id, partner_id=saved.get("related_partner_id"),
+                         details={"field": field, "from": before.get(field), "to": saved.get(field)})
+    return saved
 
 @router.delete("/actions/{action_id}", status_code=204, tags=["actions"])
 def delete_action(action_id: str):
@@ -473,24 +485,101 @@ def load_rule_config() -> RuleConfig:
     stored = get_record("config", "rules")
     return RuleConfig.model_validate({k: v for k, v in stored.items() if k != "id"}) if stored else RuleConfig()
 
+def _current_alerts() -> tuple:
+    config, today = load_rule_config(), business_today()
+    alerts = evaluate({name: list_records(name) for name in ALERT_SOURCES}, today, config)
+    reviews = {r["id"]: r for r in list_records("alert_reviews")}
+    active, _ = attach_reviews(alerts, reviews, today)
+    return today, config, alerts, active
+
 @router.get("/alerts", tags=["rules"])
 def list_alerts(partner_id: str | None = None, level: str | None = Query(default=None, pattern="^(high|medium|low)$"),
-                category: str | None = None) -> dict:
-    """Deterministic alerts computed from current records (nothing is stored). Sorted by priority score."""
-    config = load_rule_config()
-    today = business_today()
-    alerts = evaluate({name: list_records(name) for name in ALERT_SOURCES}, today, config)
-    shown = [a for a in alerts
-             if (not partner_id or a["partner_id"] == partner_id)
-             and (not level or a["priority"]["level"] == level)
-             and (not category or a["category"] == category)]
+                category: str | None = None, include_reviewed: bool = False) -> dict:
+    """Deterministic alerts computed from current records (nothing is stored). Sorted by priority score.
+
+    By default, alerts dismissed or deferred (while their facts are unchanged) are left out; `include_reviewed=true`
+    returns them too, flagged with `hidden_by_review`.
+    """
+    today, config, alerts, active = _current_alerts()
+    matches = lambda a: ((not partner_id or a["partner_id"] == partner_id)
+                         and (not level or a["priority"]["level"] == level)
+                         and (not category or a["category"] == category))
+    shown = [a for a in (alerts if include_reviewed else active) if matches(a)]
     return {
         "as_of": today.isoformat(),
         "config": config.model_dump(),
-        "counts": {"total": len(shown), "by_level": {lvl: sum(a["priority"]["level"] == lvl for a in shown) for lvl in ("high", "medium", "low")}},
+        "counts": {"total": len(shown), "by_level": {lvl: sum(a["priority"]["level"] == lvl for a in shown) for lvl in ("high", "medium", "low")},
+                   "hidden_by_review": sum(a["hidden_by_review"] for a in alerts if matches(a))},
         "alerts": shown,
         "note": "Priority scores are an illustrative, transparent business rule, not a predictive model.",
     }
+
+def _find_alert(alert_id: str) -> dict:
+    today, _, alerts, _ = _current_alerts()
+    for alert in alerts:
+        if alert["id"] == alert_id:
+            return alert
+    raise HTTPException(status_code=404, detail="Alert is not currently raised; the record may have been resolved or changed.")
+
+@router.post("/alerts/{alert_id}/review", tags=["rules"])
+def review_alert(alert_id: str, payload: ReviewCreate, request: Request) -> dict:
+    alert = _find_alert(alert_id)
+    today = business_today()
+    if payload.decision == "deferred" and not (today < payload.deferred_until <= today + timedelta(days=365)):
+        raise HTTPException(status_code=422, detail="deferred_until must be after today and within 365 days")
+    review = put_record("alert_reviews", {
+        "decision": payload.decision, "deferred_until": payload.deferred_until.isoformat() if payload.deferred_until else None,
+        "reason": (payload.reason or "").strip() or None, "note": (payload.note or "").strip() or None,
+        "reviewer": actor(request), "reviewed_at": now_iso(), "fingerprint": fingerprint(alert), "task_id": None,
+        "rule_id": alert["rule_id"], "record_type": alert["record_type"], "record_id": alert["record_id"], "partner_id": alert["partner_id"],
+    }, alert_id)
+    detail = {"deferred": f" until {review['deferred_until']}", "dismissed": f": {review['reason']}"}.get(payload.decision, "")
+    log_activity(actor_name=review["reviewer"], event=f"alert_{payload.decision}",
+                 summary=f"{payload.decision.capitalize()} “{alert['rule_title']}” for {alert['record_title']}{detail}",
+                 entity_type=alert["record_type"], entity_id=alert["record_id"], partner_id=alert["partner_id"],
+                 details={"alert_id": alert_id, "note": review["note"]})
+    return {**alert, "review": review, "hidden_by_review": payload.decision in {"dismissed", "deferred"}}
+
+@router.delete("/alerts/{alert_id}/review", status_code=204, tags=["rules"])
+def clear_alert_review(alert_id: str, request: Request):
+    review = get_record("alert_reviews", alert_id)
+    if not review or not delete_record("alert_reviews", alert_id):
+        raise HTTPException(status_code=404, detail="No review recorded for this alert")
+    log_activity(actor_name=actor(request), event="alert_review_cleared", summary=f"Reopened alert {alert_id} (previously {review['decision']})",
+                 entity_type=review.get("record_type", "alerts"), entity_id=review.get("record_id", alert_id), partner_id=review.get("partner_id"),
+                 details={"alert_id": alert_id})
+    return None
+
+@router.post("/alerts/{alert_id}/task", status_code=201, tags=["rules"])
+def create_task_from_alert(alert_id: str, payload: TaskFromAlert, request: Request) -> dict:
+    alert = _find_alert(alert_id)
+    open_task = next((a for a in list_records("actions") if a.get("source_alert_id") == alert_id and a.get("status") in {"open", "in_review"}), None)
+    if open_task:
+        raise HTTPException(status_code=409, detail=f"An open task already exists for this alert ({open_task['id']}).")
+    who = actor(request)
+    task = put_record("actions", {
+        "title": payload.title or f"{alert['rule_title']}: {alert['record_title']}",
+        "priority": payload.priority or alert["priority"]["level"], "status": "open",
+        "due_date": payload.due_date.isoformat() if payload.due_date else None,
+        "evidence": [f"{e['label']}: {e['value']}" for e in alert["evidence"]],
+        "recommended_action": alert["recommended_action"], "related_partner_id": alert["partner_id"],
+        "owner": payload.owner or alert["owner"], "source_alert_id": alert_id, "source_label": "user",
+    })
+    review = put_record("alert_reviews", {
+        "decision": "task_created", "deferred_until": None, "reason": None, "note": None, "reviewer": who, "reviewed_at": now_iso(),
+        "fingerprint": fingerprint(alert), "task_id": task["id"],
+        "rule_id": alert["rule_id"], "record_type": alert["record_type"], "record_id": alert["record_id"], "partner_id": alert["partner_id"],
+    }, alert_id)
+    log_activity(actor_name=who, event="task_created_from_alert",
+                 summary=f"Created task “{task['title']}” for {task['owner']} from alert “{alert['rule_title']}”",
+                 entity_type="actions", entity_id=task["id"], partner_id=alert["partner_id"], details={"alert_id": alert_id})
+    return {"task": task, "alert": {**alert, "review": review, "hidden_by_review": False}}
+
+@router.get("/activities", tags=["activity"])
+def list_activities(partner_id: str | None = None, entity_id: str | None = None, limit: int = Query(default=50, ge=1, le=500)) -> list[dict]:
+    rows = [r for r in list_records("activities")
+            if (not partner_id or r.get("partner_id") == partner_id) and (not entity_id or r.get("entity_id") == entity_id)]
+    return sorted(rows, key=lambda r: (r.get("at", ""), r.get("seq", 0)), reverse=True)[:limit]
 
 @router.get("/rules", tags=["rules"])
 def list_rules() -> list[dict]:

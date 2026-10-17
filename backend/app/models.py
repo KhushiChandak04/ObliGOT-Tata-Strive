@@ -63,6 +63,7 @@ class ActionItem(BaseModel):
     recommended_action: str = ""
     related_partner_id: str | None = None
     owner: str = "Unassigned"
+    source_alert_id: str | None = None  # set by the server when the task is created from an alert
     source_label: str = "demo"
 
 class ActionCreate(BaseModel):

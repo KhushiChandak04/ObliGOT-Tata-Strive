@@ -33,9 +33,9 @@ Existing collection names and fields are preserved; new fields are optional for 
 | `reports` | current | partner_id, project_id, report_type (monthly / quarterly / impact / other), due_date, submitted_date, status, owner |
 | `actions` | current | title, priority, status, due_date, evidence, recommended_action, related_partner_id, owner; **[planned]** related_record, source_alert_id. Used as the task model |
 | `followups` | current | legacy; overlaps `actions` (freeze proposed, pending team decision) |
-| `alert_reviews` | planned | id = alert id; decision (acknowledged / deferred_until / dismissed + reason / task_created), reviewer, timestamp |
+| `alert_reviews` | current (Step 7b) | id = alert id; decision (acknowledged / deferred_until / dismissed + reason / task_created), reviewer, timestamp |
 | `ai_recommendations` | planned | target, fact ids sent, validated output, model, review_status (pending / approved / edited / rejected), reviewer |
-| `activities` | planned | entity_type, entity_id, partner_id, event, actor, timestamp, details (audit trail) |
+| `activities` | current (Step 7b) | entity_type, entity_id, partner_id, event, actor, timestamp, details (audit trail) |
 | `users` | planned | uid, email, name, role |
 | `config/rules` | planned | rule thresholds |
 
@@ -49,6 +49,12 @@ Every record carries `source_label` (`demo` or `user`). Demo records are fiction
 - Rules (implemented): `MOU_EXPIRING`, `MOU_EXPIRED_NO_RENEWAL`, `MOU_SIGNED_COPY_MISSING`, `AGREEMENT_EXPIRY_MISSING`, `APPROVED_NO_AGREEMENT`, `OPPORTUNITY_NEXT_STEP_OVERDUE`, `OPPORTUNITY_STALE`, `MILESTONE_OVERDUE`/`_DUE_SOON`, `REPORT_OVERDUE`/`_DUE_SOON`/`_DUE_DATE_MISSING`, `UC_OVERDUE`/`_DUE_SOON`/`_DUE_DATE_MISSING`, `INVOICE_OVERDUE`/`_DUE_SOON`/`_DUE_DATE_MISSING`, `TASK_OVERDUE`. Planned for Step 8: `INVOICE_AGING` once invoices have an `issue_date` (until then an invoice without a due date is reported as missing data, never as overdue).
 - Priority score (illustrative business rule, not a prediction): base by severity (overdue 50, risk 30, due soon 25, missing data 15) + days overdue (1 point per day, max 30) or due-soon urgency (+20 within 7 days, +10 within 14) + cross-record (+10 when the partner has ≥ 2 other open alerts) + recorded amount at stake (+5) − 10 when an expiring MOU's renewal is already in progress. Levels: high ≥ 60, medium ≥ 35, low otherwise. Ties are ordered by nearest date, then alert id.
 - **Today's 5** = top five by score excluding deferred/dismissed; the full list is always available.
+
+## Review loop [current — Step 7b, `app/reviews.py`]
+- Decisions are stored per alert id in `alert_reviews`: `acknowledged`, `deferred` (until a date), `dismissed` (with reason), or `task_created` (with `task_id`).
+- Each review stores a fingerprint of the alert's stored evidence values (computed values such as days overdue are excluded). If the record's facts change, the review stops applying, the alert is shown again, and the old review is returned as `previous_review`.
+- Dismissed and still-deferred alerts are hidden from the active list; acknowledged and task-created alerts stay visible until the underlying record is resolved.
+- `activities` is the audit log: review decisions, review cleared, task created (directly or from an alert), task status changes, and task reassignment. Actor is the Firebase user when auth is enforced, otherwise the labelled "Demo user".
 
 ## AI [planned]
 `POST /api/intelligence/analyze` keeps its contract and gains optional `alert_id` and `mode` (summary / recommendation / message draft).

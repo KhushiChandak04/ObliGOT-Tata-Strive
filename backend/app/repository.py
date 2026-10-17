@@ -24,6 +24,8 @@ _COLLECTIONS = {
     "opportunities": OPPORTUNITIES,
     "milestones": MILESTONES,
     "config": {},
+    "alert_reviews": {},
+    "activities": {},
 }
 _firestore_client = None
 _firestore_attempted = False
