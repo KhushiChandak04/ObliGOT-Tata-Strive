@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import * as XLSX from "xlsx";
 import { repository, type Agreement, type Invoice, type PipelineItem, type PipelineStage, type Project, type Report } from "../data/repository";
 
 type Alert = {
@@ -120,10 +119,67 @@ function FinanceRow({ label, value, detail }: { label: string; value: string; de
 
 function ReportsPage() { const [tab, setTab] = useState("All"); const filtered = repository.reports.filter((report) => tab === "All" || report.status === tab); return <section className="box"><div className="tabs report-tabs">{["All", "Pending", "Overdue", "Submitted"].map((item) => <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}</div><DataTable headers={["Type", "Partner", "Project", "Due", "Status", "Owner"]} rows={filtered.map((report) => [report.type, report.partner, report.project, formatDate(report.dueDate), <span className={`pill ${report.status === "Overdue" ? "high" : ""}`} key="status">{report.status}</span>, report.owner])} empty="No reports match this tab." /></section>; }
 
+function countCsvDataRows(contents: string): number {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+
+  for (let index = 0; index < contents.length; index += 1) {
+    const character = contents[index];
+    if (quoted) {
+      if (character === '"' && contents[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else if (character === '"') {
+        quoted = false;
+      } else {
+        field += character;
+      }
+    } else if (character === '"' && field.length === 0) {
+      quoted = true;
+    } else if (character === ",") {
+      row.push(field);
+      field = "";
+    } else if (character === "\r" || character === "\n") {
+      row.push(field);
+      if (row.some((value) => value.trim())) rows.push(row);
+      row = [];
+      field = "";
+      if (character === "\r" && contents[index + 1] === "\n") index += 1;
+    } else {
+      field += character;
+    }
+  }
+
+  if (quoted) throw new Error("The CSV contains an unclosed quoted field.");
+  row.push(field);
+  if (row.some((value) => value.trim())) rows.push(row);
+  if (rows.length === 0 || !rows[0].some((value) => value.trim())) {
+    throw new Error("The CSV must include a header row.");
+  }
+  return rows.length - 1;
+}
+
 function ImportPage() {
-  const [preview, setPreview] = useState(false); const [message, setMessage] = useState("");
-  const parse = async (file: File) => { const buffer = await file.arrayBuffer(); const workbook = XLSX.read(buffer, { type: "array" }); const sheet = workbook.Sheets[workbook.SheetNames[0]]; const rows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: "" }); setPreview(true); setMessage(`${rows.length} rows previewed from ${file.name}. No records were written.`); };
-  return <div className="import-flow"><label className="dropzone">Drop a CSV or XLSX file here<input type="file" accept=".csv,.xlsx" onChange={(event) => { const file = event.target.files?.[0]; if (file) void parse(file); }} /></label>{preview && <><section className="box"><h3>Preview · column mapping</h3><div className="mapping"><span>partner</span><b>Partner Name</b><span>project</span><b>Project Name</b><span>due_date</span><b>Due Date</b></div></section><section className="box validation"><h3>Validation summary</h3><div><span className="pill">Valid · 0</span><span className="pill outline-pill">Warnings · 0</span><span className="pill high">Invalid · 0</span></div><p>Duplicate warnings will appear here before confirmation.</p></section><button className="btn" disabled={!preview} onClick={() => setMessage("Import confirmed for the previewed rows.")}>Confirm import</button><p className="import-message">{message}</p></>}</div>;
+  const [preview, setPreview] = useState(false); const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  const parse = async (file: File) => {
+    setPreview(false);
+    setMessage("");
+    setError("");
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setError("Only CSV files are supported by this preview.");
+      return;
+    }
+    try {
+      const rows = countCsvDataRows(await file.text());
+      setPreview(true);
+      setMessage(`${rows} rows previewed from ${file.name}. No records were written.`);
+    } catch (parseError) {
+      setError(parseError instanceof Error ? parseError.message : "Unable to read this CSV file.");
+    }
+  };
+  return <div className="import-flow"><label className="dropzone">Choose a CSV file to preview<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void parse(file); }} /></label>{error && <p className="import-message" role="alert">{error}</p>}{preview && <><section className="box"><h3>Preview · column mapping</h3><div className="mapping"><span>partner</span><b>Partner Name</b><span>project</span><b>Project Name</b><span>due_date</span><b>Due Date</b></div></section><section className="box validation"><h3>Validation summary</h3><div><span className="pill">Valid · 0</span><span className="pill outline-pill">Warnings · 0</span><span className="pill high">Invalid · 0</span></div><p>Duplicate warnings will appear here before confirmation.</p></section><button className="btn" disabled={!preview} onClick={() => setMessage("Import confirmed for the previewed rows.")}>Confirm import</button><p className="import-message">{message}</p></>}</div>;
 }
 
 function DataTable({ headers, rows, empty }: { headers: string[]; rows: Array<Array<ReactNode>>; empty: string }) { return rows.length ? <div className="table-wrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div> : <TableState message={empty} />; }

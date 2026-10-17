@@ -32,6 +32,8 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 
 - Replaced the placeholder route surfaces with typed synthetic repository-backed Pipeline, Agreements, Projects, Finance, Reports & UCs, and SheetJS Import screens.
 - Added deterministic counts, renewal radar buckets, project milestone progress, separated finance totals, missing invoice due-date wording, report tabs, pipeline stage movement, and import preview/confirmation state.
+- Fixed the stale SheetJS import after `xlsx` was removed for known advisories: the current preview accepts CSV only and reports malformed or unsupported files; XLSX support remains part of the unstarted Step 10.
+- Verification: `cd frontend && npm run build` passed after the fix.
 - Corrected the frontend to a light-only reference palette; removed dark-mode and pink/rose values, added cream GOT chips on green surfaces, and made the warning trace line a cream/bordo chip.
 - Verification: `cd frontend && npm run build` passed; repository scan for `prefers-color-scheme`, `data-theme`, `dark:`, pink/rose values returned no matches. Vite reported only the existing chunk-size warning.
 - API/data impact: no backend routes or contracts changed; demo records remain client-side, typed, fictional, and labelled `source_label="demo"`.
