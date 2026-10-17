@@ -1551,3 +1551,49 @@ th {
     display: none;
   }
 }
+
+/* Step 8b: API states and drawer forms (uses the reference palette tokens) */
+.api-state {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+.api-state.error {
+  border-color: var(--bordo);
+  color: var(--bordo);
+}
+.api-state.success {
+  border-color: var(--green);
+  color: var(--green);
+}
+.drawer-form {
+  display: grid;
+  gap: 12px;
+}
+.drawer-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.drawer-form textarea {
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+}
+.drawer .button-row {
+  flex-wrap: wrap;
+}
+.task-row small {
+  color: var(--muted);
+}

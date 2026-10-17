@@ -13,7 +13,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 5    | Application foundation (5a, 5b, 5c)           | 5a done (API-connected UI, now unrouted); 5b/5c blocked on Firebase credentials |
 | 6    | Core partnership workflows (6a–6d)            | Done — approved (backend APIs in use; original pages now unrouted) |
 | 7    | Deadline engine and action center (7a–7c)     | 7a, 7b approved; 7c done (UI now unrouted) |
-| 8    | Funding and compliance (8a finance)           | 8a backend done — awaiting review; frontend moves to the new UI |
+| 8    | Funding and compliance + new-UI integration (8a finance backend, 8b core UI wiring, 8c partner/pipeline/agreements/projects, 8d finance/reports) | 8a approved; 8b done — awaiting review |
 | 9    | Gemini AI integration                         | Not started                               |
 | 10   | Spreadsheet import                            | Not started                               |
 | 11   | Management dashboard and UI polish (+ motion) | Not started                               |
@@ -99,13 +99,22 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
 
+## Step 8b notes — new UI wired to the API (core) and build fix
+- Build fixed: `App.tsx` no longer imports `xlsx`; `package-lock.json` re-synced (no `xlsx`). Verified with a clean `npm ci` + `npm run build` in an isolated copy.
+- `App.tsx` (teammate's reference UI, design and CSS classes kept): hard-coded `initialAlerts` removed. `AppShell` loads `/api/alerts`, `/api/actions`, `/api/partners`; alerts are adapted to the UI's view model (`toViewAlert`). Dashboard KPIs (open, overdue, MOUs expiring ≤ 30 d, open follow-ups from alerts), Today's 5 (shared `todaysAlerts`), and "Alerts by category" are derived from API data. Action Center lists all outstanding alerts and real tasks with Mark done; a note shows how many alerts are deferred/dismissed.
+- Drawer: verified record facts and computed values from the engine's evidence, rule explanation with the priority breakdown, rule-based next step, and human decisions that call the API (create follow-up task with owner, acknowledge, defer with date, dismiss with reason, reopen). The previous simulated "Ask Gemini" (timer + canned text) was replaced by a real call to `POST /api/intelligence/analyze`; with no key it states "AI was not used (not_configured)". Escape closes the drawer.
+- Import: files are parsed by `POST /api/import/preview` (real headers, valid/invalid counts, row issues); "Confirm import" stays disabled until Step 10 instead of showing a fake success. API client sends `FormData` without a JSON content type.
+- Loading, error (with Retry), and success states added for the API-backed screens (`.api-state`, reference palette tokens).
+- Not in 8b: Partner 360, Pipeline, Agreements, Projects, Finance, Reports still use the synthetic `src/data/repository.ts` (Steps 8c/8d). The previous API-connected pages under `src/pages` are no longer routed; they are kept for reuse while wiring 8c/8d.
+- Verification: `npm run build` passes; clean `npm ci` + build passes; `pytest` 159 passed. Headless Chrome on the live API: landing → sign-in screen → dashboard (KPIs 8/2/1/0 match the API; Today's 5 and categories from API) → drawer (facts, computed, breakdown 50+15+10) → AI returns honest `not_configured` → create task (empty owner rejected) → follow-ups KPI 0→1 → dismiss (reason required; 8→7 outstanding, hidden note) → ageing alert evidence (50 days since issue) → defer (min tomorrow) → acknowledge → mark task done → backend activity log shows each decision → CSV import preview (2 valid, 2 invalid with reasons; confirm disabled) → synthetic pages still render → 390 px: 0 px overflow, drawer fits after its slide-in animation; no console errors.
+
 ## Step 8a notes — finance (backend)
 - Finance records gain optional `issue_date` and `received_date`; `currency` must be a 3-letter uppercase code; due date ≥ issue date and received date ≥ issue date (422). `GET /api/finance` gains a `record_type` filter. Linked `project_id` must exist (404) and belong to the same partner (422) on create and PATCH (shared `_check_links`, also used by agreements).
 - New rule `INVOICE_AGING` (risk): a raised/sent invoice with no due date and an issue date older than `invoice_aging_days` (config, default 30, range 7–365) is described by its age ("Days since issue"), never as overdue. `INVOICE_DUE_DATE_MISSING` now applies only when there is neither a due date nor an issue date.
 - Demo: the demo invoice has an issue date 50 days ago (now `INVOICE_AGING`); the demo fund receipt has a received date.
 - Verification: `pytest` → 159 passed (15 new in `tests/test_finance.py`).
 - Frontend: the 8a edits to the old Finance/Partner 360 pages were discarded per the team decision; the finance screen will be wired in the new UI. `FinanceRecord` type in `frontend/src/types/index.ts` updated to mirror the API.
-- Known issue on `main` (teammate commit 3ab0689): `App.tsx` imports `xlsx`, which is not in `package.json`, so `npm run build` fails on a clean install. Fix planned as the next step (use `POST /api/import/preview`).
+- Known issue on `main` (teammate commit 3ab0689): `App.tsx` imported `xlsx`, which is not in `package.json`, so `npm run build` failed on a clean install. Fixed in Step 8b.
 
 ## Step 7c notes — action center UI
 

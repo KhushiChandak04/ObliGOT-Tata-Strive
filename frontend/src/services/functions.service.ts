@@ -1,7 +1,7 @@
 import { firebaseAuth } from "../lib/firebase";
 import type {
   ActionItem, Activity, Agreement, Alert, AlertReview, AlertsResponse, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup,
-  HealthResponse, Milestone,
+  HealthResponse, ImportPreview, Milestone,
   Opportunity, Partner, Project, ReportRecord,
 } from "../types";
 
@@ -27,7 +27,8 @@ function errorMessage(detail: unknown, status: number): string {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { ...(await authHeaders()), ...(init?.headers as Record<string, string> | undefined) };
-  if (init?.body) headers["Content-Type"] = "application/json";
+  // JSON bodies are sent as strings; FormData uploads let the browser set the multipart boundary.
+  if (typeof init?.body === "string") headers["Content-Type"] = "application/json";
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, { ...init, headers });
@@ -112,6 +113,12 @@ export const api = {
     create: (payload: Partial<Followup>) => request<Followup>("/api/followups", send("POST", payload)),
     update: (followupId: string, payload: Pick<Followup, "status">) => request<Followup>(`/api/followups/${id(followupId)}`, send("PATCH", payload)),
     remove: (followupId: string) => request<void>(`/api/followups/${id(followupId)}`, { method: "DELETE" }),
+  },
+  importPreview: (file: File, entityType: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("entity_type", entityType);
+    return request<ImportPreview>("/api/import/preview", { method: "POST", body: form });
   },
   analyze: (payload: { partner_id?: string; context?: string }) => request<AnalyzeResponse>("/api/intelligence/analyze", send("POST", payload)),
 };

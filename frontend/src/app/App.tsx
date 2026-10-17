@@ -1,36 +1,47 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import * as XLSX from "xlsx";
 import { repository, type Agreement, type Invoice, type PipelineItem, type PipelineStage, type Project, type Report } from "../data/repository";
+import { api } from "../services/functions.service";
+import { useResource } from "../lib/useResource";
+import { CATEGORY_LABELS, todaysAlerts } from "../lib/alerts";
+import type { ActionItem, Alert as ApiAlert, AnalyzeResponse, AlertEvidence, ImportPreview } from "../types";
 
+/** View model for the reference UI, built from a rules-engine alert (GET /api/alerts). */
 type Alert = {
   id: string;
   rule: string;
+  ruleTitle: string;
+  ruleDescription: string;
+  partnerId: string | null;
   partner: string;
   title: string;
   priority: "High" | "Medium" | "Low";
-  days: number;
+  score: number;
+  factors: { label: string; points: number }[];
+  days: number | null;
   owner: string;
-  evidence: [string, string][];
+  category: string;
+  facts: AlertEvidence[];
+  computed: AlertEvidence[];
   why: string;
   recommendation: string;
-  status: "Open" | "Resolved";
+  review: ApiAlert["review"];
+  demo: boolean;
 };
 
-const dateFromToday = (days: number) => {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-};
+const toViewAlert = (alert: ApiAlert, partnerName: (id: string) => string | undefined): Alert => ({
+  id: alert.id, rule: alert.rule_id, ruleTitle: alert.rule_title, ruleDescription: alert.rule_description,
+  partnerId: alert.partner_id ?? null, partner: alert.partner_id ? partnerName(alert.partner_id) ?? alert.partner_id : "No partner linked",
+  title: `${alert.rule_title}: ${alert.record_title}`, priority: alert.priority.level === "high" ? "High" : alert.priority.level === "medium" ? "Medium" : "Low",
+  score: alert.priority.score, factors: alert.priority.factors, days: alert.days_remaining ?? null,
+  owner: alert.owner, category: CATEGORY_LABELS[alert.category] ?? alert.category,
+  facts: alert.evidence.filter((e) => e.source === "record"), computed: alert.evidence.filter((e) => e.source === "computed"),
+  why: alert.why_it_matters, recommendation: alert.recommended_action, review: alert.review, demo: alert.source_label === "demo",
+});
 
-const initialAlerts: Alert[] = [
-  { id: "A1", rule: "RPT-OVD-01", partner: "Greenleaf Skills Foundation", title: "Quarterly report 9 days overdue", priority: "High", days: -9, owner: "Anita R.", evidence: [["report.type", "Quarterly Progress"], ["report.dueDate", dateFromToday(-9)], ["report.status", "Pending"], ["submittedAt", "— (empty)"]], why: "Late reports can delay the next fund release and weaken partner trust.", recommendation: "Greenleaf’s quarterly report is overdue by 9 days. Suggest a courteous reminder to the programme lead and a firm new date. No contact attempt is recorded, so confirm no one has already reached out.", status: "Open" },
-  { id: "A2", rule: "MOU-EXP-01", partner: "Kaveri Retail Academy", title: "MOU expires in 14 days, no renewal", priority: "High", days: 14, owner: "Rahul S.", evidence: [["agreement.endDate", dateFromToday(14)], ["agreement.status", "Active"], ["renewalStatus", "— (empty)"]], why: "An expired MOU leaves training activities without a signed basis.", recommendation: "The MOU ends in 14 days with no renewal recorded. Suggest scheduling a renewal call this week. Whether the partner wants to renew is unknown from the records.", status: "Open" },
-  { id: "A3", rule: "UC-OVD-02", partner: "Sahyadri Agro Trust", title: "Utilization certificate 21 days overdue", priority: "High", days: -21, owner: "Meera K.", evidence: [["uc.dueDate", dateFromToday(-21)], ["uc.status", "Pending"], ["project", "Agri Skilling Cohort 3"]], why: "Pending UCs block further disbursement on funded projects.", recommendation: "UC is three weeks overdue. Suggest escalating to the finance contact and asking for an expected submission date.", status: "Open" },
-  { id: "A4", rule: "MS-OVD-01", partner: "Northgate Logistics", title: "Milestone “Cohort 2 placements” past due", priority: "Medium", days: -4, owner: "Rahul S.", evidence: [["milestone.dueDate", dateFromToday(-4)], ["milestone.status", "In progress"]], why: "Placement milestones drive reporting and renewal conversations.", recommendation: "Milestone is 4 days late but still in progress. Suggest asking for a revised completion date before treating it as a risk.", status: "Open" },
-  { id: "A5", rule: "MOU-DOC-01", partner: "Lotus Healthcare Skills", title: "Signed MOU copy missing", priority: "Medium", days: 0, owner: "Anita R.", evidence: [["agreement.signedCopyStatus", "Missing"], ["agreement.status", "Active"]], why: "Without the signed copy, obligations cannot be verified in audits.", recommendation: "The record shows no signed copy. This may be a data gap rather than a real absence. Suggest checking the shared drive first.", status: "Open" },
-  { id: "A6", rule: "MOU-EXP-01", partner: "Brahma Textile Mills", title: "MOU expires in 27 days", priority: "Low", days: 27, owner: "Meera K.", evidence: [["agreement.endDate", dateFromToday(27)], ["renewalStatus", "In discussion"]], why: "Renewal is in discussion, so this is for visibility.", recommendation: "Renewal talks are underway. Suggest a check-in note to confirm timelines.", status: "Open" },
-];
+/** Short timing label from the backend's days_remaining; the browser does no deadline arithmetic. */
+const timing = (alert: Alert) => alert.days === null ? "No date" : alert.days < 0 ? `${Math.abs(alert.days)}d overdue` : alert.days === 0 ? "Today" : `in ${alert.days}d`;
+const isOpenTask = (task: ActionItem) => task.status === "open" || task.status === "in_review";
 
 function Logo({ light = false }: { light?: boolean }) {
   return <span className={`logo${light ? " light" : ""}`}>Obli<i>GOT</i></span>;
@@ -68,31 +79,61 @@ function Auth() {
 function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [alerts, setAlerts] = useState(initialAlerts);
-  const [tasks, setTasks] = useState<string[]>([]);
-  const [selected, setSelected] = useState<Alert | null>(null);
-  const open = alerts.filter((alert) => alert.status === "Open");
-  const sorted = useMemo(() => [...open].sort((a, b) => ({ High: 0, Medium: 1, Low: 2 }[a.priority] - ({ High: 0, Medium: 1, Low: 2 }[b.priority]) || a.days - b.days)), [open]);
+  const workspace = useResource(async () => {
+    const [alerts, tasks, partners] = await Promise.all([api.alerts.list(), api.actions.list(), api.partners.list()]);
+    return { alerts, tasks, partners };
+  }, []);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
+  const names = new Map((workspace.data?.partners ?? []).map((p) => [p.id, p.name]));
+  const apiAlerts = workspace.data?.alerts.alerts ?? [];
+  const sorted = apiAlerts.map((alert) => toViewAlert(alert, (id) => names.get(id)));  // already ordered by priority score
+  const today = todaysAlerts(apiAlerts).map((alert) => toViewAlert(alert, (id) => names.get(id)));
+  const open = sorted;
+  const tasks = (workspace.data?.tasks ?? []).filter(isOpenTask);
+  const selected = sorted.find((alert) => alert.id === selectedId) ?? null;
+  const select = (alert: Alert) => { setNotice(""); setSelectedId(alert.id); };
+  const changed = (message: string) => { setSelectedId(null); setNotice(message); workspace.reload(); };
   const page = location.pathname;
   const title = page === "/action-center" ? "Action Center" : page === "/partner-360" ? "Kaveri Retail Academy" : page === "/dashboard" ? "Good day, team." : page === "/pipeline" ? "Pipeline" : page === "/agreements" ? "Agreements" : page === "/projects" ? "Projects" : page === "/finance" ? "Finance" : page === "/reports" ? "Reports & UCs" : "Import";
-  const eyebrow = page === "/dashboard" ? "Portfolio overview" : page === "/partner-360" ? "Partner 360" : "Synthetic demo data";
-  return <div className="app-shell"><aside className="sidebar"><Logo light /><nav>{[{to:"/dashboard", label:"Dashboard"}, {to:"/action-center", label:"Action Center", count:open.length}, {to:"/partner-360", label:"Partner 360"}, {to:"/pipeline", label:"Pipeline"}, {to:"/agreements", label:"Agreements"}, {to:"/projects", label:"Projects"}, {to:"/finance", label:"Finance"}, {to:"/reports", label:"Reports & UCs"}, {to:"/import", label:"Import"}].map((item) => <NavLink key={item.to} to={item.to} className={({isActive}) => isActive ? "active" : ""}>{item.label}{item.count ? <span className="pill high">{item.count}</span> : null}</NavLink>)}</nav><button className="logout" onClick={() => navigate("/")}>↩ Log out</button><small>Synthetic demo data</small></aside><main className="app-main"><div className="page-header"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1></div>{page === "/dashboard" && <Dashboard open={open} sorted={sorted} tasks={tasks} onSelect={setSelected} />}{page === "/action-center" && <ActionCenter open={open} sorted={sorted} tasks={tasks} onSelect={setSelected} />}{page === "/partner-360" && <Partner360 open={open} onSelect={setSelected} />}{page === "/pipeline" && <PipelinePage />}{page === "/agreements" && <AgreementsPage />}{page === "/projects" && <ProjectsPage />}{page === "/finance" && <FinancePage />}{page === "/reports" && <ReportsPage />}{page === "/import" && <ImportPage />}</main>{selected && <Drawer alert={selected} onClose={() => setSelected(null)} onResolve={() => { setAlerts((items) => items.map((item) => item.id === selected.id ? { ...item, status: "Resolved" } : item)); setTasks((items) => [...items, `${selected.partner}: ${selected.title}`]); setSelected(null); }} />}</div>;
+  const eyebrow = page === "/dashboard" ? `Portfolio overview${workspace.data ? ` · rules evaluated ${formatDate(workspace.data.alerts.as_of)}` : ""}` : page === "/partner-360" ? "Partner 360" : page === "/action-center" ? "Live rule alerts" : "Synthetic demo data";
+  const usesApi = page === "/dashboard" || page === "/action-center";
+  return <div className="app-shell"><aside className="sidebar"><Logo light /><nav>{[{to:"/dashboard", label:"Dashboard"}, {to:"/action-center", label:"Action Center", count:open.length}, {to:"/partner-360", label:"Partner 360"}, {to:"/pipeline", label:"Pipeline"}, {to:"/agreements", label:"Agreements"}, {to:"/projects", label:"Projects"}, {to:"/finance", label:"Finance"}, {to:"/reports", label:"Reports & UCs"}, {to:"/import", label:"Import"}].map((item) => <NavLink key={item.to} to={item.to} className={({isActive}) => isActive ? "active" : ""}>{item.label}{item.count ? <span className="pill high">{item.count}</span> : null}</NavLink>)}</nav><button className="logout" onClick={() => navigate("/")}>↩ Log out</button><small>{workspace.data?.alerts.alerts.some((alert) => alert.source_label === "demo") ? "Fictional demo records" : "Synthetic demo data"}</small></aside><main className="app-main"><div className="page-header"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1></div>
+    {usesApi && workspace.error && <div className="api-state error" role="alert"><b>Could not reach the ObliGOT API.</b><span>{workspace.error.message}</span><button className="btn small-btn" onClick={workspace.reload}>Retry</button></div>}
+    {usesApi && workspace.loading && !workspace.data && <p className="api-state" role="status">Evaluating rules on stored records…</p>}
+    {usesApi && notice && <p className="api-state success" role="status">{notice}</p>}
+    {page === "/dashboard" && workspace.data && <Dashboard open={open} sorted={today} tasks={tasks} onSelect={select} />}{page === "/action-center" && workspace.data && <ActionCenter open={open} sorted={sorted} tasks={tasks} hidden={workspace.data.alerts.counts.hidden_by_review} onSelect={select} onChanged={changed} />}{page === "/partner-360" && <Partner360 open={open} onSelect={select} />}{page === "/pipeline" && <PipelinePage />}{page === "/agreements" && <AgreementsPage />}{page === "/projects" && <ProjectsPage />}{page === "/finance" && <FinancePage />}{page === "/reports" && <ReportsPage />}{page === "/import" && <ImportPage />}</main>{selected && workspace.data && <Drawer alert={selected} asOf={workspace.data.alerts.as_of} onClose={() => setSelectedId(null)} onChanged={changed} />}</div>;
 }
 
 function AlertRow({ alert, index, onSelect }: { alert: Alert; index: number; onSelect: (alert: Alert) => void }) {
-  return <button className="alert-row" onClick={() => onSelect(alert)}><strong>{index + 1}</strong><span className="alert-copy"><b>{alert.partner}</b><small>{alert.title} · {alert.owner}</small></span><span className={`pill ${alert.priority === "High" ? "high" : "outline-pill"}`}>{alert.priority}</span><span className="pill outline-pill">{alert.days < 0 ? `${Math.abs(alert.days)}d overdue` : alert.days === 0 ? "Today" : `in ${alert.days}d`}</span></button>;
+  return <button className="alert-row" onClick={() => onSelect(alert)} aria-label={`${alert.partner}: ${alert.title}. ${alert.priority} priority. Open details`}><strong>{index + 1}</strong><span className="alert-copy"><b>{alert.partner}</b><small>{alert.title} · {alert.owner}{alert.review ? ` · ${alert.review.decision.replace("_", " ")}` : ""}</small></span><span className={`pill ${alert.priority === "High" ? "high" : "outline-pill"}`}>{alert.priority}</span><span className="pill outline-pill">{timing(alert)}</span></button>;
 }
 
-function Dashboard({ open, sorted, tasks, onSelect }: { open: Alert[]; sorted: Alert[]; tasks: string[]; onSelect: (alert: Alert) => void }) {
-  const overdue = open.filter((alert) => alert.days < 0).length;
-  const expiring = open.filter((alert) => alert.rule === "MOU-EXP-01" && alert.days <= 30).length;
-  const families = Object.entries(open.reduce<Record<string, number>>((result, alert) => { const key = alert.rule.split("-")[0]; result[key] = (result[key] || 0) + 1; return result; }, {}));
+function Dashboard({ open, sorted, tasks, onSelect }: { open: Alert[]; sorted: Alert[]; tasks: ActionItem[]; onSelect: (alert: Alert) => void }) {
+  const overdue = open.filter((alert) => alert.days !== null && alert.days < 0).length;
+  const expiring = open.filter((alert) => alert.rule === "MOU_EXPIRING" && alert.days !== null && alert.days <= 30).length;
+  const followUps = tasks.filter((task) => task.source_alert_id).length;
+  const families = Object.entries(open.reduce<Record<string, number>>((result, alert) => { result[alert.category] = (result[alert.category] || 0) + 1; return result; }, {}));
   const max = Math.max(1, ...families.map(([, count]) => count));
-  return <><div className="kpis"><Kpi value={open.length} label="Open alerts" /><Kpi value={overdue} label="Overdue items" hot /><Kpi value={expiring} label="MOUs expiring ≤30d" /><Kpi value={tasks.length} label="Follow-ups created" /></div><div className="grid2"><section className="box"><h3>Today’s 5</h3>{sorted.slice(0, 5).map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} onSelect={onSelect} />)}{!sorted.length && <p>All clear. Obligations: got them.</p>}</section><section className="box"><h3>Alerts by rule family</h3>{families.map(([name, count]) => <div className="bar-row" key={name}><span>{name}</span><i style={{ width: `${count / max * 55}%` }} /><b>{count}</b></div>)}</section></div></>;
+  return <><div className="kpis"><Kpi value={open.length} label="Open alerts" /><Kpi value={overdue} label="Overdue items" hot /><Kpi value={expiring} label="MOUs expiring ≤30d" /><Kpi value={followUps} label="Open follow-ups from alerts" /></div><div className="grid2"><section className="box"><h3>Today’s 5</h3>{sorted.map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} onSelect={onSelect} />)}{!sorted.length && <p>All clear. Every open alert already has a follow-up, or no record triggers a rule.</p>}</section><section className="box"><h3>Alerts by category</h3>{families.map(([name, count]) => <div className="bar-row" key={name}><span>{name}</span><i style={{ width: `${count / max * 55}%` }} /><b>{count}</b></div>)}{!families.length && <p>No open alerts.</p>}</section></div></>;
 }
 
 function Kpi({ value, label, hot = false }: { value: number; label: string; hot?: boolean }) { return <div className={`kpi ${hot ? "hot" : ""}`}><b>{value}</b><span>{label}</span></div>; }
-function ActionCenter({ open, sorted, tasks, onSelect }: { open: Alert[]; sorted: Alert[]; tasks: string[]; onSelect: (alert: Alert) => void }) { return <><section className="box"><h3>All outstanding ({open.length})</h3>{sorted.map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} onSelect={onSelect} />)}</section><section className="box task-box"><h3>Follow-up tasks</h3>{tasks.map((task) => <div className="task-row" key={task}><span>{task}</span><span className="pill">Assigned</span></div>)}{!tasks.length && <small>None yet. Approve a recommendation to create one.</small>}</section></>; }
+function ActionCenter({ open, sorted, tasks, hidden, onSelect, onChanged }: { open: Alert[]; sorted: Alert[]; tasks: ActionItem[]; hidden: number; onSelect: (alert: Alert) => void; onChanged: (message: string) => void }) {
+  const [error, setError] = useState("");
+  const done = async (task: ActionItem) => {
+    setError("");
+    try { await api.actions.update(task.id, { status: "done" }); onChanged(`Marked “${task.title}” done. The alert clears when the underlying record is updated.`); }
+    catch (err) { setError(err instanceof Error ? err.message : "Could not update the task."); }
+  };
+  return <><section className="box"><h3>All outstanding ({open.length})</h3>{hidden > 0 && <small>{hidden} deferred or dismissed alert{hidden === 1 ? " is" : "s are"} hidden until the date passes or the record changes.</small>}{sorted.map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} onSelect={onSelect} />)}{!sorted.length && <p>No open alerts.</p>}</section><section className="box task-box"><h3>Follow-up tasks</h3>{error && <p className="api-state error" role="alert">{error}</p>}{tasks.map((task) => <div className="task-row" key={task.id}><span>{task.title}<small> · {task.owner ?? "Unassigned"}{task.due_date ? ` · due ${formatDate(task.due_date)}` : ""}</small></span><button className="btn small-btn" onClick={() => void done(task)} aria-label={`Mark ${task.title} done`}>Mark done</button></div>)}{!tasks.length && <small>None yet. Create one from an alert.</small>}</section></>;
+}
+// Synthetic Partner 360 placeholder (teammate's reference UI); wired to the API in Step 8c.
+const dateFromToday = (days: number) => {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+};
 function Partner360({ open, onSelect }: { open: Alert[]; onSelect: (alert: Alert) => void }) { return <div className="grid2"><section className="box"><h3>MOU timeline</h3><div className="timeline"><i /><em /></div><div className="detail-row"><span>Start</span><span>{dateFromToday(-350)}</span></div><div className="detail-row"><span>End</span><span>{dateFromToday(14)}</span></div><div className="detail-row"><span>Renewal</span><span>— not recorded</span></div></section><section className="box"><h3>Open alerts</h3>{open.filter((alert) => alert.partner === "Kaveri Retail Academy").map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} onSelect={onSelect} />)}</section></div>; }
 
 const stages: PipelineStage[] = ["Opportunity", "Qualification", "Proposal", "Approval", "MOU", "Implementation", "Renewal", "Closure"];
@@ -121,17 +162,58 @@ function FinanceRow({ label, value, detail }: { label: string; value: string; de
 function ReportsPage() { const [tab, setTab] = useState("All"); const filtered = repository.reports.filter((report) => tab === "All" || report.status === tab); return <section className="box"><div className="tabs report-tabs">{["All", "Pending", "Overdue", "Submitted"].map((item) => <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>{item}</button>)}</div><DataTable headers={["Type", "Partner", "Project", "Due", "Status", "Owner"]} rows={filtered.map((report) => [report.type, report.partner, report.project, formatDate(report.dueDate), <span className={`pill ${report.status === "Overdue" ? "high" : ""}`} key="status">{report.status}</span>, report.owner])} empty="No reports match this tab." /></section>; }
 
 function ImportPage() {
-  const [preview, setPreview] = useState(false); const [message, setMessage] = useState("");
-  const parse = async (file: File) => { const buffer = await file.arrayBuffer(); const workbook = XLSX.read(buffer, { type: "array" }); const sheet = workbook.Sheets[workbook.SheetNames[0]]; const rows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: "" }); setPreview(true); setMessage(`${rows.length} rows previewed from ${file.name}. No records were written.`); };
-  return <div className="import-flow"><label className="dropzone">Drop a CSV or XLSX file here<input type="file" accept=".csv,.xlsx" onChange={(event) => { const file = event.target.files?.[0]; if (file) void parse(file); }} /></label>{preview && <><section className="box"><h3>Preview · column mapping</h3><div className="mapping"><span>partner</span><b>Partner Name</b><span>project</span><b>Project Name</b><span>due_date</span><b>Due Date</b></div></section><section className="box validation"><h3>Validation summary</h3><div><span className="pill">Valid · 0</span><span className="pill outline-pill">Warnings · 0</span><span className="pill high">Invalid · 0</span></div><p>Duplicate warnings will appear here before confirmation.</p></section><button className="btn" disabled={!preview} onClick={() => setMessage("Import confirmed for the previewed rows.")}>Confirm import</button><p className="import-message">{message}</p></>}</div>;
+  const [preview, setPreview] = useState<ImportPreview | null>(null); const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false);
+  const parse = async (file: File) => {
+    setBusy(true); setPreview(null); setMessage("");
+    try { const result = await api.importPreview(file, "projects"); setPreview(result); setMessage(`${result.total_rows_detected} rows previewed from ${file.name}. No records were written.`); }
+    catch (err) { setMessage(err instanceof Error ? err.message : "Could not read this file."); }
+    finally { setBusy(false); }
+  };
+  return <div className="import-flow"><label className="dropzone">{busy ? "Reading file on the server…" : "Drop a CSV or XLSX file here"}<input type="file" accept=".csv,.xlsx" onChange={(event) => { const file = event.target.files?.[0]; if (file) void parse(file); }} /></label>{message && !preview && <p className="import-message" role="alert">{message}</p>}{preview && <><section className="box"><h3>Preview · detected columns</h3><div className="mapping">{preview.headers.length ? preview.headers.map((header) => <b key={header}>{header || "(blank header)"}</b>) : <span>No header row found.</span>}</div></section><section className="box validation"><h3>Validation summary</h3><div><span className="pill">Valid · {preview.valid_count}</span><span className="pill high">Invalid · {preview.invalid_count}</span></div>{preview.issues.slice(0, 5).map((issue) => <p key={issue.row}>Row {issue.row}: {issue.issues.join("; ")}</p>)}<p>{preview.warning}</p></section><button className="btn" disabled title="Saving imported rows arrives in Step 10">Confirm import (available in Step 10)</button><p className="import-message">{message}</p></>}</div>;
 }
 
 function DataTable({ headers, rows, empty }: { headers: string[]; rows: Array<Array<ReactNode>>; empty: string }) { return rows.length ? <div className="table-wrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div> : <TableState message={empty} />; }
 
-function Drawer({ alert, onClose, onResolve }: { alert: Alert; onClose: () => void; onResolve: () => void }) {
-  const [running, setRunning] = useState(false); const [finished, setFinished] = useState(false);
-  const run = () => { setRunning(true); window.setTimeout(() => { setFinished(true); }, 2200); };
-  return <div className="drawer"><button className="close" onClick={onClose}>×</button><span className={`pill ${alert.priority === "High" ? "high" : "outline-pill"}`}>{alert.priority} · {alert.status}</span><h2>{alert.partner}: {alert.title}</h2><DrawerSection title="Verified record facts">{alert.evidence.map(([key, value]) => <div className="evidence" key={key}><span className="mono">{key}</span><b className="mono">{value}</b></div>)}<div className="evidence"><span>Owner</span><b>{alert.owner}</b></div></DrawerSection><DrawerSection title={`Rule explanation · ${alert.rule}`}><p>{alert.why}</p></DrawerSection><DrawerSection title="AI assistance · generated, not verified" ai><button className="btn bordo" onClick={run}>Ask Gemini for a recommendation</button><div className="ai-output mono">{!running && "No recommendation requested."}{running && !finished && "▸ Reading linked fields…\n▸ Checking for contact history…\n▸ Drafting suggestion…"}{finished && <span className="ai-copy">{alert.recommendation}</span>}</div></DrawerSection><DrawerSection title="Human decision"><div className="button-row"><button className="btn" disabled={!finished} onClick={onResolve}>Approve & create task</button><button className="btn outline" onClick={onClose}>Defer</button></div></DrawerSection></div>;
+function Drawer({ alert, asOf, onClose, onChanged }: { alert: Alert; asOf: string; onClose: () => void; onChanged: (message: string) => void }) {
+  const [ai, setAi] = useState<AnalyzeResponse | null>(null); const [running, setRunning] = useState(false);
+  const [mode, setMode] = useState<"none" | "task" | "defer" | "dismiss">("none");
+  const [owner, setOwner] = useState(alert.owner === "Unassigned" ? "" : alert.owner); const [due, setDue] = useState("");
+  const [deferUntil, setDeferUntil] = useState(""); const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  useEffect(() => { const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [onClose]);
+  const run = async () => {
+    setRunning(true); setAi(null);
+    const context = [`Alert: ${alert.ruleTitle}. ${alert.ruleDescription}`, ...alert.facts.map((fact) => `${fact.label}: ${fact.value}`), ...alert.computed.map((fact) => `${fact.label} (computed): ${fact.value}`), `Rule-based next step: ${alert.recommendation}`].join("\n");
+    try { setAi(await api.analyze({ partner_id: alert.partnerId ?? undefined, context })); }
+    catch (err) { setAi({ summary: err instanceof Error ? err.message : "The AI request failed.", observations: [], recommendations: [], ai_used: false, ai_error: "request_failed" }); }
+    finally { setRunning(false); }
+  };
+  const act = async (action: () => Promise<unknown>, message: string) => {
+    setBusy(true); setError("");
+    try { await action(); onChanged(message); } catch (err) { setError(err instanceof Error ? err.message : "The request failed."); } finally { setBusy(false); }
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (mode === "task") { if (owner.trim().length < 2) { setError("Assign a responsible owner (at least 2 characters)."); return; } void act(() => api.alerts.createTask(alert.id, { owner: owner.trim(), due_date: due || null }), `Follow-up task created for ${owner.trim()}.`); }
+    if (mode === "defer") { if (!deferUntil) { setError("Choose the date to bring this alert back."); return; } void act(() => api.alerts.review(alert.id, { decision: "deferred", deferred_until: deferUntil }), `Deferred until ${formatDate(deferUntil)}.`); }
+    if (mode === "dismiss") { if (reason.trim().length < 5) { setError("Give a reason of at least 5 characters; it is recorded in the activity log."); return; } void act(() => api.alerts.review(alert.id, { decision: "dismissed", reason: reason.trim() }), "Alert dismissed. It returns if the record changes."); }
+  };
+  const minDefer = (() => { const d = new Date(`${asOf}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })();
+  return <div className="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title"><button className="close" onClick={onClose} aria-label="Close alert details">×</button><span className={`pill ${alert.priority === "High" ? "high" : "outline-pill"}`}>{alert.priority} · score {alert.score}{alert.review ? ` · ${alert.review.decision.replace("_", " ")}` : ""}</span><h2 id="drawer-title">{alert.partner}: {alert.title}</h2>
+    <DrawerSection title="Verified record facts">{alert.facts.map((fact) => <div className="evidence" key={fact.label}><span className="mono">{fact.label}</span><b className="mono">{String(fact.value)}</b></div>)}<div className="evidence"><span>Owner</span><b>{alert.owner}</b></div>{alert.demo && <small>From a fictional demo record.</small>}</DrawerSection>
+    {alert.computed.length > 0 && <DrawerSection title={`Computed by the rule · as of ${formatDate(asOf)}`}>{alert.computed.map((fact) => <div className="evidence" key={fact.label}><span className="mono">{fact.label}</span><b className="mono">{String(fact.value)}</b></div>)}</DrawerSection>}
+    <DrawerSection title={`Rule explanation · ${alert.rule}`}><p>{alert.ruleDescription}</p><p>{alert.why}</p>{alert.factors.map((factor) => <div className="evidence" key={factor.label}><span>{factor.label}</span><b className="mono">{factor.points > 0 ? `+${factor.points}` : factor.points}</b></div>)}<small>Priority is a transparent business rule, not a prediction.</small></DrawerSection>
+    <DrawerSection title="Rule-based next step"><p>{alert.recommendation}</p></DrawerSection>
+    <DrawerSection title="AI assistance · generated, not verified" ai><button className="btn bordo" onClick={() => void run()} disabled={running}>{running ? "Asking Gemini…" : "Ask Gemini for a recommendation"}</button><div className="ai-output mono" aria-live="polite">{!running && !ai && "No recommendation requested."}{running && "▸ Sending this alert's facts to the backend…"}{ai && (ai.ai_used ? <span className="ai-copy">{[ai.summary, ...ai.observations, ...ai.recommendations].join("\n")}</span> : <span className="ai-copy">AI was not used ({ai.ai_error ?? "unknown reason"}). {ai.summary}</span>)}</div></DrawerSection>
+    <DrawerSection title="Human decision">{error && <p className="api-state error" role="alert">{error}</p>}
+      {mode === "none" && <div className="button-row"><button className="btn" disabled={busy || alert.review?.decision === "task_created"} onClick={() => setMode("task")}>Create follow-up task</button><button className="btn outline" disabled={busy || alert.review?.decision === "acknowledged"} onClick={() => void act(() => api.alerts.review(alert.id, { decision: "acknowledged" }), "Alert acknowledged.")}>Acknowledge</button><button className="btn outline" disabled={busy} onClick={() => setMode("defer")}>Defer</button><button className="btn outline" disabled={busy} onClick={() => setMode("dismiss")}>Dismiss</button>{alert.review && <button className="btn outline" disabled={busy} onClick={() => void act(() => api.alerts.clearReview(alert.id), "Review cleared; the alert is open again.")}>Reopen</button>}</div>}
+      {mode !== "none" && <form className="drawer-form" onSubmit={submit} noValidate>
+        {mode === "task" && <><label>Assign to<input value={owner} onChange={(event) => { setOwner(event.target.value); setError(""); }} maxLength={120} autoFocus /></label><label>Due date (optional)<input type="date" value={due} onChange={(event) => setDue(event.target.value)} /></label></>}
+        {mode === "defer" && <label>Bring back on<input type="date" min={minDefer} value={deferUntil} onChange={(event) => { setDeferUntil(event.target.value); setError(""); }} autoFocus /></label>}
+        {mode === "dismiss" && <label>Reason for dismissing<textarea rows={2} maxLength={500} value={reason} onChange={(event) => { setReason(event.target.value); setError(""); }} autoFocus /></label>}
+        <div className="button-row"><button className="btn" type="submit" disabled={busy}>{busy ? "Saving…" : mode === "task" ? "Create task" : mode === "defer" ? "Defer alert" : "Dismiss alert"}</button><button className="btn outline" type="button" disabled={busy} onClick={() => { setMode("none"); setError(""); }}>Back</button></div>
+      </form>}
+    </DrawerSection></div>;
 }
 function DrawerSection({ title, children, ai = false }: { title: string; children: ReactNode; ai?: boolean }) { return <section className={`drawer-section${ai ? " ai" : ""}`}><h4>{title}</h4>{children}</section>; }
 

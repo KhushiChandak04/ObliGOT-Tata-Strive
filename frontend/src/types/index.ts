@@ -98,6 +98,13 @@ export interface Activity {
   id: string; at: string; actor: string; event: string; summary: string; entity_type: string; entity_id: string;
   partner_id?: string | null; details: Record<string, unknown>;
 }
+/** POST /api/import/preview (preview only; nothing is written). */
+export interface ImportPreview {
+  entity_type: string; filename?: string | null; headers: string[]; preview_rows: Record<string, unknown>[];
+  rows_previewed: number; total_rows_detected: number; valid_count: number; invalid_count: number;
+  valid_rows: { row: number; name: string | null }[]; issues: { row: number; name: string | null; issues: string[] }[];
+  committed: false; warning: string;
+}
 export interface HealthResponse {
   status: string; app: string; ai_configured: boolean; database?: string; auth_required?: boolean;
 }
