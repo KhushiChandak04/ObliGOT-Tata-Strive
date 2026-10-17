@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
-from app import deterministic, document_storage
+from app import deterministic, document_storage, ocr
 from app.config import settings
 from app.documents import DocumentStatus, ExtractionRun, PageReading, SourceDocument
 from app.extraction import ExtractionFailed, Generate, build_prompt, build_proposals, chunk_pages, gemini_generate, parse_chunk
@@ -96,13 +96,14 @@ async def upload_document(request: Request) -> dict:
         record["storage_ref"] = await run_in_threadpool(document_storage.save_pdf, document_id, raw)
         record.update(page_count=inspection.page_count, pages=[p.model_dump() for p in inspection.pages])
         low = inspection.low_text_pages
-        if low and settings.gemini_api_key:
+        if low and (settings.gemini_api_key or ocr.ocr_available()):
             # Scanned pages are read from page images during extraction (AI transcription, reviewed by a person).
             record["status"] = "uploaded"
             scope = "All pages are" if len(low) == inspection.page_count else f"Page{'s' if len(low) > 1 else ''} {', '.join(map(str, low))} {'are' if len(low) > 1 else 'is'}"
             record["warnings"].append(
-                f"{scope} scanned images without a text layer. During extraction Gemini reads them from the page images; "
-                "that reading is an AI transcription, so compare extracted values with the page images when reviewing.")
+                f"{scope} scanned images without a text layer. During extraction "
+                + ("Gemini reads them from the page images (an AI transcription)" if settings.gemini_api_key else "local OCR reads them (plain text)")
+                + ", so compare extracted values with the page images when reviewing.")
         elif len(low) == inspection.page_count:
             record["status"] = "blocked"
             record["warnings"].append(
@@ -170,8 +171,9 @@ def _check_can_extract(document: dict) -> None:
         raise HTTPException(status_code=409, detail="The document is approved; its values can no longer be re-extracted")
     if not document.get("storage_ref"):
         raise HTTPException(status_code=409, detail="The file could not be read when uploaded; upload a readable copy")
-    if all(p["text_status"] == "low_text" for p in document.get("pages", [])) and not settings.gemini_api_key and not _pages_for(document["id"]):
-        raise HTTPException(status_code=409, detail="No page has embedded text and Gemini is not configured to read page images (OCR is not available); enter the values manually or configure Gemini")
+    if all(p["text_status"] == "low_text" for p in document.get("pages", [])) and not settings.gemini_api_key \
+            and not ocr.ocr_available() and not _pages_for(document["id"]):
+        raise HTTPException(status_code=409, detail="No page has embedded text, Gemini is not configured, and OCR (Tesseract) is not installed; enter the values manually or configure one of them")
     proposals = _proposals_for(document["id"])
     if any(r.get("review_state") in ("approved", "rejected") for c, rows in proposals.items() if c != "review_issues" for r in rows):
         raise HTTPException(status_code=409, detail="Some extracted values were already reviewed; re-extracting would discard that review")
@@ -200,7 +202,8 @@ async def _read_pages(document: dict, raw: bytes, inspection, run: dict, use_vis
                 transcript=inspection.page_texts[n - 1], legibility="good", read_at=now_iso()).model_dump(mode="json"), _page_id(document["id"], n))
     if not use_vision:
         return readings, None
-    to_read = [p.page_number for p in inspection.pages if p.text_status == "low_text" and p.page_number not in readings]
+    to_read = [p.page_number for p in inspection.pages if p.text_status == "low_text"
+               and (p.page_number not in readings or readings[p.page_number].get("method") == "ocr")]
     for batch in batches(to_read, max(1, settings.vision_batch_pages)):
         try:
             images = [(n, await run_in_threadpool(render_page, raw, n)) for n in batch]
@@ -261,9 +264,26 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
         raw = await run_in_threadpool(document_storage.load_pdf, document["storage_ref"])
         inspection = await run_in_threadpool(inspect_pdf, raw, settings.max_document_pages)
         readings, failure = await _read_pages(document, raw, inspection, run, use_vision=use_gemini)
+        # Optional local OCR for scanned pages still without text (Gemini unavailable or stopped).
+        unread = [p.page_number for p in inspection.pages if p.text_status == "low_text" and p.page_number not in readings]
+        ocr_note = None
+        if unread and ocr.ocr_available():
+            done = 0
+            for n in unread:
+                try:
+                    text = await run_in_threadpool(ocr.ocr_page, raw, n)
+                except ocr.OcrFailed as exc:
+                    ocr_note = f"OCR stopped at page {n}: {exc}"
+                    break
+                record = PageReading(id=_page_id(document_id, n), document_id=document_id, page_number=n, method="ocr",
+                                     model="tesseract", transcript=text, read_at=now_iso()).model_dump(mode="json")
+                readings[n] = put_record("document_pages", record, record["id"])
+                done += 1
+            ocr_note = ocr_note or f"OCR read {done} scanned page{'s' if done != 1 else ''} (plain text; tables may be flattened)."
         total = inspection.page_count
         texts = [readings[n]["transcript"] if n in readings else "" for n in range(1, total + 1)]
-        bases = ["ai_transcript" if readings.get(n, {}).get("method") == "gemini_vision" else "text_layer" for n in range(1, total + 1)]
+        bases = [{"gemini_vision": "ai_transcript", "ocr": "ocr_text"}.get(readings.get(n, {}).get("method"), "text_layer")
+                 for n in range(1, total + 1)]
         lengths = {n: len(texts[n - 1]) for n in range(1, total + 1) if texts[n - 1].strip()}
         no_text = [n for n in range(1, total + 1) if n not in lengths]
         run.update(pages_sent=sorted(lengths), pages_skipped_low_text=no_text)
@@ -301,7 +321,8 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
                           "currency). Clauses, obligations, deadlines, and tables on them were not extracted — re-run extraction "
                           "when Gemini is available, or enter them manually."))
         if no_text:
-            why = "Gemini could not read them" if use_gemini else "Gemini is not configured and OCR is not available"
+            why = ("Gemini could not read them" if use_gemini else "Gemini is not configured") + (
+                " and OCR could not read them" if ocr.ocr_available() else " and OCR (Tesseract) is not installed")
             notes.append(("error", "PAGES_NOT_READ",
                           f"Pages {_ranges(no_text)} have no text available ({why}); nothing on them was extracted. "
                           "Re-run extraction later or review them manually from the page images."))
@@ -333,6 +354,8 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
         for record in proposals[collection]:
             put_record(collection, record, record["id"])
     gemini_part = f"Gemini read {run['pages_read']} scanned pages and extracted {run['chunks_done']} of {run['chunks_total']} parts" if use_gemini else "Gemini not used"
+    if ocr_note:
+        gemini_part = f"{gemini_part}. {ocr_note}"
     if failure is not None:
         stage = f"{gemini_part}; then stopped ({failure.code}: {failure}). Pattern matching covered the rest."
     elif remaining:

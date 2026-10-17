@@ -65,7 +65,7 @@ class PageReading(BaseModel):
     id: str
     document_id: str
     page_number: int = Field(ge=1)  # physical index in the PDF, from 1
-    method: Literal["text_layer", "gemini_vision"]
+    method: Literal["text_layer", "gemini_vision", "ocr"]
     model: str | None = None
     transcript: str = ""
     printed_page_number: str | None = None  # as printed on the page, if readable; distinct from page_number
@@ -140,7 +140,7 @@ class Evidence(BaseModel):
     verification_error: Literal["page_out_of_range", "quote_not_found"] | None = None
     # What the quote was checked against: the PDF's own text layer, or an AI transcription of a scanned page
     # (weaker: the reviewer must compare with the page image).
-    basis: Literal["text_layer", "ai_transcript"] | None = None
+    basis: Literal["text_layer", "ai_transcript", "ocr_text"] | None = None
     section: str | None = Field(default=None, max_length=120)  # clause number or schedule/annexure label as printed
     printed_page: str | None = Field(default=None, max_length=20)  # from the page reading; distinct from `page`
 

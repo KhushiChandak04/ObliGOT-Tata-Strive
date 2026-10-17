@@ -17,6 +17,7 @@ from app.repository import (
     firestore_enabled, get_record, list_records, patch_record, put_record, delete_record,
 )
 from app.amendments import apply_due_changes
+from app.ocr import ocr_available
 from app.engine import RuleConfig, evaluate, rule_catalog
 from app.reviews import ReviewCreate, TaskFromAlert, actor, attach_reviews, fingerprint, log_activity, now_iso
 from app.rules import build_deadline_finding, business_today, scan_deadlines
@@ -31,7 +32,7 @@ def health() -> dict:
             "database": "firestore" if firestore_enabled() else "demo-memory-fallback",
             "ai_configured": bool(settings.gemini_api_key), "auth_required": settings.require_firebase_auth,
             # OCR needs the Tesseract program itself, not just a Python package; none is installed or used yet.
-            "ocr_available": shutil.which("tesseract") is not None,
+            "ocr_available": ocr_available(),
             "extraction_without_gemini": "pattern matching on text-layer pages and stored page readings only"}
 
 @router.get("/dashboard", tags=["dashboard"])

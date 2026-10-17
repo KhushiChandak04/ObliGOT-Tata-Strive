@@ -62,6 +62,15 @@ The Firebase Admin SDK uses Application Default Credentials in supported Google 
 ### Gemini
 Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager. Never use `VITE_GEMINI_API_KEY`; Vite variables are exposed to the browser. When Gemini is absent or errors, the API returns a clear rules-first response with `ai_used=false` and a machine-readable `ai_error` (`not_configured`, `timeout`, `empty_response`, `api_error:<HTTP code>`, or `error:<type>`). `GEMINI_TIMEOUT_SECONDS` (default 20) bounds each request.
 
+### Reading scanned MOUs: Gemini first, optional OCR fallback
+- Gemini reads scanned pages from page images (keeps tables, stamps, Hindi/English) and extracts the agreement terms.
+- If Gemini is unavailable, pages it could not read are read by **Tesseract OCR** when it is installed (plain text; tables may be flattened), then only labelled dates, references, and amounts are extracted by pattern matching. Everything is labelled with how it was read and goes through review.
+- Install Tesseract (optional):
+  - Windows: `winget install --id UB-Mannheim.TesseractOCR`, then add `C:\Program Files\Tesseract-OCR` to PATH (or set `TESSERACT_CMD` to the full path of `tesseract.exe`). For Hindi, tick "Hindi" under additional languages in the installer and set `OCR_LANGUAGES=eng+hin`.
+  - Linux / Docker: `apt-get install tesseract-ocr tesseract-ocr-hin` (already in `backend/Dockerfile`).
+- Check: `GET /api/health` → `"ocr_available": true`.
+- Regional settings (defaults for Tata STRIVE's Indian agreements): `DEFAULT_CURRENCY=INR`, `DATE_ORDER=dmy` (numeric dates day-first), `NUMBER_DECIMAL_SEPARATOR=.`. Amounts in lakh/crore are kept as written, never converted; a symbol shared by several currencies (e.g. `$`) is flagged, not guessed.
+
 ## API endpoints
 - `GET /api/health`
 - `GET /api/dashboard`

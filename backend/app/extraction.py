@@ -195,7 +195,9 @@ Rules:
 def _page_header(n: int, label: dict | None) -> str:
     if not label:
         return f"<<<PAGE {n}>>>"
-    parts = [f"read from {'the PDF text layer' if label.get('method') == 'text_layer' else 'a scanned image (AI transcription)'}"]
+    source = {"text_layer": "the PDF text layer", "ocr": "a scanned image (OCR text; tables may be flattened)"}.get(
+        label.get("method"), "a scanned image (AI transcription)")
+    parts = [f"read from {source}"]
     if label.get("page_type") not in (None, "unclassified"):
         parts.append(f"page type: {label['page_type']}")
     if label.get("printed_page_number"):

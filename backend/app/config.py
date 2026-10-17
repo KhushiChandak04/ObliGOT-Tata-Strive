@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     # Scanned pages: rendered to images and read by Gemini in small batches (AI transcription, reviewed by a person).
     vision_batch_pages: int = 4
     page_render_dpi: int = 150
+    # Optional OCR fallback (Tesseract must be installed). Languages as Tesseract codes, e.g. "eng" or "eng+hin".
+    ocr_enabled: bool = True
+    tesseract_cmd: str = "tesseract"
+    ocr_languages: str = "eng"
+    ocr_dpi: int = 300
+    ocr_timeout_seconds: float = 60.0
     # Gemini resilience. Retryable errors (rate limit, overload, timeout) are retried with exponential backoff;
     # Google's suggested retry delay is used when given. Permanent errors are never retried.
     gemini_max_retries: int = 3

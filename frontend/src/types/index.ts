@@ -93,7 +93,7 @@ export type ProposalReviewState = "proposed" | "needs_review" | "approved" | "re
 export interface DocumentEvidence {
   document_id: string; page: number; quote: string; verified: boolean; verification_error?: string | null;
   /** text_layer: matched the PDF's own text; ai_transcript: matched Gemini's reading of a scanned page (weaker). */
-  basis?: "text_layer" | "ai_transcript" | null; section?: string | null; printed_page?: string | null;
+  basis?: "text_layer" | "ai_transcript" | "ocr_text" | null; section?: string | null; printed_page?: string | null;
 }
 interface ProposalBase {
   id: string; document_id: string; review_state: ProposalReviewState; warnings: string[];

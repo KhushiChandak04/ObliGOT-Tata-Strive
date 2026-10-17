@@ -2240,7 +2240,9 @@ function EvidenceLine({ evidence, onShow }: { evidence?: DocumentEvidence | null
       {evidence.verified
         ? evidence.basis === "ai_transcript"
           ? "found in the AI reading of a scanned page — compare with the image"
-          : "found in the PDF text"
+          : evidence.basis === "ocr_text"
+            ? "found in OCR text of a scanned page — compare with the image"
+            : "found in the PDF text"
         : "not found on that page"}
     </span>
   );

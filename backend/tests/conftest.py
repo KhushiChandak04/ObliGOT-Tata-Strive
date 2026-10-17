@@ -13,6 +13,7 @@ def local_settings_do_not_apply(monkeypatch):
     monkeypatch.setattr(settings, "gemini_backoff_base_seconds", 0.0)  # no real waiting on retries in tests
     monkeypatch.setattr(settings, "gemini_max_retry_wait_seconds", 0.0)
     monkeypatch.setattr(settings, "gemini_fallback_models", [])
+    monkeypatch.setattr(settings, "ocr_enabled", False)  # OCR tests switch it on with a fake; results never depend on the machine
 
 
 @pytest.fixture(autouse=True)
