@@ -92,7 +92,7 @@ class AgreementCreate(BaseModel):
 
 class Project(BaseModel):
     id: str
-    partner_id: str
+    partner_id: str | None = None
     name: str
     status: RecordStatus = "planned"
     owner: str = "Unassigned"
@@ -102,7 +102,7 @@ class Project(BaseModel):
     source_label: str = "demo"
 
 class ProjectCreate(BaseModel):
-    partner_id: str
+    partner_id: str | None = None
     name: str = Field(min_length=2, max_length=200)
     status: RecordStatus = "planned"
     owner: str = "Unassigned"

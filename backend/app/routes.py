@@ -1,6 +1,6 @@
 from datetime import date
 from uuid import uuid4
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Request
 
 from app.config import settings
 from app.demo_data import PARTNERS, ACTIONS
@@ -119,9 +119,17 @@ def list_projects(partner_id: str | None = None) -> list[dict]:
     records = list_records("projects")
     return [r for r in records if not partner_id or r.get("partner_id") == partner_id]
 
+@router.get("/projects/{project_id}", response_model=Project, tags=["projects"])
+def get_project(project_id: str) -> dict:
+    for record in list_records("projects"):
+        if record.get("id") == project_id:
+            return record
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
 @router.post("/projects", response_model=Project, status_code=201, tags=["projects"])
 def create_project(payload: ProjectCreate) -> dict:
-    if not get_record("partners", payload.partner_id):
+    if payload.partner_id and not get_record("partners", payload.partner_id):
         raise HTTPException(status_code=404, detail="Partner not found")
     return put_record("projects", {**payload.model_dump(mode="json"), "source_label": "user"})
 
@@ -179,34 +187,98 @@ def deadline_preview(record_id: str = "demo-record", record_type: str = "report"
             "note": "Preview only; use verified record dates for operational use."}
 
 @router.post("/import/preview", tags=["import"])
-async def import_preview(file: UploadFile = File(...)) -> dict:
-    """Preview CSV/XLSX rows without writing to Firestore. Import commit needs explicit mapping/review."""
-    filename = (file.filename or "").lower()
-    raw = await file.read()
-    if len(raw) > 5_000_000:
-        raise HTTPException(status_code=413, detail="File is larger than the 5 MB preview limit")
-    try:
-        if filename.endswith(".csv"):
-            import csv, io
-            text = raw.decode("utf-8-sig")
-            rows = list(csv.DictReader(io.StringIO(text)))
-            headers = list(rows[0].keys()) if rows else []
-        elif filename.endswith((".xlsx", ".xlsm")):
-            from openpyxl import load_workbook
-            import io
-            workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-            sheet = workbook.active
-            values = list(sheet.iter_rows(values_only=True))
-            headers = [str(v) if v is not None else "" for v in values[0]] if values else []
-            rows = [dict(zip(headers, [str(v) if v is not None else "" for v in row])) for row in values[1:101]]
-        else:
-            raise HTTPException(status_code=415, detail="Upload a .csv or .xlsx file")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from exc
-    except Exception as exc:
-        if isinstance(exc, HTTPException):
+async def import_preview(request: Request, file: UploadFile | None = File(default=None)) -> dict:
+    """Validate JSON rows or CSV/XLSX uploads without writing imported data."""
+    content_type = request.headers.get("content-type", "").lower()
+    entity_type = "finance-records"
+    rows = []
+
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="Expected a JSON object")
+        entity_type = str(payload.get("entity_type", "finance-records"))
+        rows = payload.get("rows")
+        if not isinstance(rows, list) or not rows:
+            raise HTTPException(status_code=422, detail="rows must be a non-empty list")
+        if len(rows) > 500:
+            raise HTTPException(status_code=413, detail="Maximum 500 rows per preview")
+    else:
+        if file is None:
+            raise HTTPException(status_code=422, detail="Upload a CSV/XLSX file or send JSON rows")
+        filename = (file.filename or "").lower()
+        raw = await file.read()
+        if len(raw) > 5_000_000:
+            raise HTTPException(status_code=413, detail="File is larger than the 5 MB preview limit")
+        try:
+            if filename.endswith(".csv"):
+                import csv
+                import io
+                rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
+            elif filename.endswith((".xlsx", ".xlsm")):
+                from openpyxl import load_workbook
+                import io
+                workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+                sheet = workbook.active
+                values = sheet.iter_rows(values_only=True)
+                headers = [str(v).strip() if v is not None else "" for v in next(values, ())]
+                rows = [
+                    {headers[i]: value for i, value in enumerate(row) if i < len(headers) and headers[i]}
+                    for row in values
+                ]
+                workbook.close()
+            else:
+                raise HTTPException(status_code=415, detail="Only CSV and XLSX files are supported")
+        except HTTPException:
             raise
-        raise HTTPException(status_code=400, detail="Could not read this file; check its format") from exc
-    return {"filename": file.filename, "headers": headers, "preview_rows": rows[:100], "rows_previewed": min(len(rows), 100),
-            "total_rows_detected": len(rows), "committed": False,
-            "warning": "Preview only. Review column mappings, duplicates, and missing fields before importing."}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not read import file: {exc}") from exc
+        if not rows:
+            raise HTTPException(status_code=422, detail="The uploaded file contains no data rows")
+        if len(rows) > 500:
+            raise HTTPException(status_code=413, detail="Maximum 500 rows per preview")
+
+    seen = set()
+    valid_rows = []
+    issues = []
+
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            issues.append({"row": index, "issues": ["Row must be an object"]})
+            continue
+
+        errors = []
+        name = str(row.get("name", "") or "").strip()
+        if not name:
+            errors.append("Missing required field: name")
+        elif name.casefold() in seen:
+            errors.append("Duplicate name in this batch")
+        if name:
+            seen.add(name.casefold())
+
+        amount = row.get("amount")
+        if amount not in (None, ""):
+            try:
+                if float(amount) < 0:
+                    errors.append("Amount cannot be negative")
+            except (TypeError, ValueError):
+                errors.append("Amount must be numeric")
+
+        item = {"row": index, "name": name or None, "valid": not errors, "issues": errors}
+        if errors:
+            issues.append(item)
+        else:
+            valid_rows.append(item)
+
+    return {
+        "entity_type": entity_type,
+        "total_rows": len(rows),
+        "valid_count": len(valid_rows),
+        "invalid_count": len(issues),
+        "valid_rows": valid_rows,
+        "issues": issues,
+        "committed": False,
+    }
