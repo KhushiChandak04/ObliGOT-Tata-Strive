@@ -66,11 +66,33 @@ export interface DashboardResponse {
   metrics: {
     partners_total: number; partners_active: number; actions_open: number; agreements_active: number;
     projects_active: number; reports_pending: number; finance_records: number;
+    documents_awaiting_review?: number; document_extraction_failures?: number; pending_addendum_approvals?: number;
   };
   findings: DeadlineFinding[];
   as_of: string;
   storage_mode: "firestore" | "demo-memory-fallback";
   demo_data_notice: string;
+}
+export type DocumentKind = "mou" | "addendum";
+export type DocumentStatus = "uploaded" | "extracting" | "needs_review" | "approved" | "failed" | "blocked";
+export interface SourceDocument {
+  id: string; filename: string; kind: DocumentKind; partner_id?: string | null; agreement_id?: string | null;
+  uploaded_at: string; uploaded_by: string; page_count?: number | null; status: DocumentStatus;
+  warnings: string[]; error?: string | null; approved_by?: string | null; approved_at?: string | null;
+}
+export interface ExtractedField {
+  id: string; document_id: string; target: string; field: string; verbatim?: string | null;
+  proposed_value?: string | number | boolean | null; approved_value?: string | number | boolean | null;
+  warnings: string[]; review_state: "proposed" | "needs_review" | "approved" | "rejected" | "deferred";
+  evidence?: { document_id: string; page: number; quote: string; verified: boolean } | null;
+}
+export interface DocumentReview {
+  document: SourceDocument; fields: ExtractedField[]; clauses: Record<string, unknown>[]; financial_terms: Record<string, unknown>[];
+  obligations: Record<string, unknown>[]; programme_scope: Record<string, unknown>[]; issues: Record<string, unknown>[];
+}
+export interface AmendmentChange {
+  id: string; agreement_id: string; document_id?: string; field: string; previous_value?: string | null;
+  proposed_value?: string | null; evidence?: Record<string, unknown>; status: "proposed" | "approved" | "rejected" | "unresolved";
 }
 // Rules engine alerts (GET /api/alerts). Mirrors backend/app/engine.py and app/reviews.py.
 export type AlertSeverity = "overdue" | "risk" | "due_soon" | "missing_data";
