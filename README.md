@@ -60,7 +60,7 @@ Open http://127.0.0.1:5173.
 The Firebase Admin SDK uses Application Default Credentials in supported Google Cloud environments. Prefer attached service identity on Cloud Run instead of shipping service-account keys.
 
 ### Gemini
-Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager. Never use `VITE_GEMINI_API_KEY`; Vite variables are exposed to the browser. When Gemini is absent or errors, the API returns a clear rules-first response with `ai_used=false` and a machine-readable `ai_error` (`not_configured`, `timeout`, `empty_response`, `api_error:<HTTP code>`, or `error:<type>`). `GEMINI_TIMEOUT_SECONDS` (default 20) bounds each request.
+Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager, then restart the backend. On Windows, a user-level `GEMINI_API_KEY` overrides the value in `.env`; if it is stale, clear it from the current PowerShell session before restarting with `Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue`. Never use `VITE_GEMINI_API_KEY`; Vite variables are exposed to the browser. Rotate any key accidentally shared in chat or source control. When Gemini is absent or errors, the API returns a clear rules-first response with `ai_used=false` and a machine-readable `ai_error` (`not_configured`, `timeout`, `empty_response`, `api_error:<HTTP code>`, or `error:<type>`). `GEMINI_TIMEOUT_SECONDS` (default 20) bounds each request.
 
 ### Reading scanned MOUs: Gemini first, optional OCR fallback
 - Gemini reads scanned pages from page images (keeps tables, stamps, Hindi/English) and extracts the agreement terms.

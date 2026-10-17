@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   Link,
   NavLink,
@@ -66,6 +66,7 @@ type Alert = {
   partnerId: string | null;
   partner: string;
   title: string;
+  recordTitle: string;
   priority: "High" | "Medium" | "Low";
   score: number;
   factors: { label: string; points: number }[];
@@ -96,6 +97,7 @@ const toViewAlert = (
     ? (partnerName(alert.partner_id) ?? alert.partner_id)
     : "No partner linked",
   title: `${alert.rule_title}: ${alert.record_title}`,
+  recordTitle: alert.record_title,
   priority:
     alert.priority.level === "high"
       ? "High"
@@ -551,6 +553,7 @@ function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuthUser();
+  const previousPath = useRef(location.pathname);
   const logOut = async () => {
     if (firebaseAuth) await signOut(firebaseAuth);
     navigate("/");
@@ -565,6 +568,12 @@ function AppShell() {
     ]);
     return { alerts, tasks, partners, documents, summary };
   }, []);
+  useEffect(() => {
+    if (location.pathname === "/dashboard" && previousPath.current !== "/dashboard") {
+      workspace.reload();
+    }
+    previousPath.current = location.pathname;
+  }, [location.pathname, workspace.reload]);
   // Live records only. While loading or when the API fails, pages show loading/error states — never sample data.
   const live = workspace.data;
   const livePartners = live?.partners ?? [];
@@ -707,6 +716,8 @@ function AppShell() {
             sorted={today}
             onSelect={select}
             summary={live.summary}
+            onRefresh={workspace.reload}
+            refreshing={workspace.loading}
           />
         )}
         {page === "/action-center" && live && (
@@ -771,9 +782,9 @@ function AlertRow({
     >
       <strong>{index + 1}</strong>
       <span className="alert-copy">
-        <b>{alert.partner}</b>
+        <b>{alert.partner} · {alert.recordTitle}</b>
         <small>
-          {alert.title} · {alert.owner}
+          {alert.ruleTitle} · {alert.owner}
           {alert.review ? ` · ${alert.review.decision.replace("_", " ")}` : ""}
         </small>
       </span>
@@ -791,10 +802,14 @@ function Dashboard({
   sorted,
   onSelect,
   summary,
+  onRefresh,
+  refreshing,
 }: {
   sorted: Alert[];
   onSelect: (alert: Alert) => void;
   summary: DashboardSummary;
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
   // Every figure below is computed by the backend from current records (GET /api/dashboard/summary).
   const label = useLabel();
@@ -813,7 +828,7 @@ function Dashboard({
         <Kpi value={summary.alerts.open} label="Open alerts" />
         <Kpi value={summary.alerts.overdue} label="Overdue items" hot />
         <Kpi value={summary.alerts.mous_expiring_30d} label="MOUs expiring ≤30d" />
-        <Kpi value={summary.tasks.open_from_alerts} label="Open follow-ups from alerts" />
+        <Kpi value={summary.tasks.open} label="Open follow-ups" />
       </div>
       <div className="document-strip">
         <span>
@@ -828,7 +843,15 @@ function Dashboard({
       </div>
       <div className="grid2">
         <section className="box">
-          <h3>Today’s 5</h3>
+          <div className="dashboard-heading">
+            <div>
+              <h3>Priority alerts</h3>
+              <p>Up to five active alerts without a follow-up, highest priority first.</p>
+            </div>
+            <button className="btn small-btn" onClick={onRefresh} disabled={refreshing}>
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
           {sorted.map((alert, index) => (
             <AlertRow
               key={alert.id}
@@ -1007,7 +1030,11 @@ function Partner360({
   onChanged: () => void;
 }) {
   const [params, setParams] = useSearchParams();
-  const partnerId = params.get("id") ?? partners[0]?.id ?? "";
+  const selectablePartners = partners.filter((partner) => partner.source_label !== "demo");
+  const requestedPartnerId = params.get("id");
+  const partnerId = selectablePartners.some((partner) => partner.id === requestedPartnerId)
+    ? requestedPartnerId!
+    : selectablePartners[0]?.id ?? "";
   const [editing, setEditing] = useState(false);
   const data = useResource(async () => {
     if (!partnerId) return null;
@@ -1044,11 +1071,11 @@ function Partner360({
       asOf: alerts.as_of,
     };
   }, [partnerId]);
-  if (!partners.length)
+  if (!selectablePartners.length)
     return (
       <section className="box">
-        <h3>No partners yet</h3>
-        <p>Partner records added through the API appear here.</p>
+        <h3>No verified partners available</h3>
+        <p>Fictional demo partners are not selectable. Add a verified partner record to use Partner 360.</p>
       </section>
     );
   const d = data.data;
@@ -1086,7 +1113,7 @@ function Partner360({
           onChange={(event) => setParams({ id: event.target.value })}
           aria-label="Choose partner"
         >
-          {partners.map((p) => (
+          {selectablePartners.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
             </option>

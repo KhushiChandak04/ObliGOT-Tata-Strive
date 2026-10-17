@@ -1885,3 +1885,23 @@ ul.api-state li { margin: 2px 0; }
 .table-scroll th, .table-scroll td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; white-space: nowrap; }
 .table-scroll .row-unverified td { background: #fff3e6; }
 @media (max-width: 700px) { .evidence-panel { position: static; } }
+
+.dashboard-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.dashboard-heading h3 {
+  margin-bottom: 4px;
+}
+.dashboard-heading p {
+  color: var(--muted);
+  font-size: 13px;
+}
+@media (max-width: 420px) {
+  .dashboard-heading {
+    flex-direction: column;
+  }
+}

@@ -34,9 +34,16 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | R3 | Backend-computed dashboard and options; remove remaining hardcoded frontend data | Done |
 | S3 | Arithmetic consistency checks and workbook sheets for budgets/tranches/targets | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
-| P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
+| P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Dashboard cleanup first pass done — awaiting review; document review integration not started |
 | P7 | Grounded AI summaries and alert explanations | Scaffolded (no key; free-text output) |
 | P8 | Integration testing and demo readiness | Not started |
+
+### Dashboard cleanup (17 Oct 2026)
+
+- Dashboard refetches when revisited and has a manual refresh control; the open-follow-ups KPI counts all open tasks instead of only alert-created tasks.
+- Top alert rows show the specific record title first and the rule as context; heading describes ranked active alerts instead of implying they are due today.
+- Fictional demo partners are excluded from the Partner 360 selector; existing demo records are not deleted.
+- Verification: `cd frontend && npm run build` passed (TypeScript and Vite production build, 1,611 modules).
 
 > **Note on the two sets of Step 5–6 notes.** The "React application foundation" and "Core workflow screens" notes directly
 > below were written by a teammate for the new reference-based frontend (`reference/obligot.html` → `frontend/src/app/App.tsx`),
