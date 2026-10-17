@@ -10,6 +10,18 @@ def local_settings_do_not_apply(monkeypatch):
     monkeypatch.setattr(settings, "require_firebase_auth", False)
     monkeypatch.setattr(settings, "firebase_credentials_file", "")
     monkeypatch.setattr(settings, "gemini_api_key", "")
+    monkeypatch.setattr(settings, "gemini_retry_delays", [])  # no real waiting on rate-limit retries in tests
+
+
+@pytest.fixture(autouse=True)
+def no_real_gemini(monkeypatch):
+    """Tests must never send anything to Google. Tests that exercise the client install their own fake."""
+    from google import genai
+
+    class Blocked:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("A test tried to call the real Gemini API; install a fake instead")
+    monkeypatch.setattr(genai, "Client", Blocked)
 
 
 @pytest.fixture(autouse=True)

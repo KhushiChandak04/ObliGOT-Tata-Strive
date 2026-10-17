@@ -134,11 +134,34 @@ Rules:
   and explain in `ambiguity` or `ambiguities`.
 - Do not correct spelling or legal wording in quotes. Report suspected errors or conflicts in `ambiguities`.
 - Clauses: material ones only (responsibilities, payment/fund release, reporting, utilization certificates,
-  renewal, termination, penalties, exceptions, audit, confidentiality)."""
+  renewal, termination, penalties, exceptions, audit, confidentiality).
+- Read the whole part, including schedules and annexures after the signature page.
+- A page described as receipt_template is a blank format: extract no payments or amounts from it as facts.
+- Budget schedules state planned allocations or commitments, not money received or spent.
+- Some pages are AI transcriptions of scanned images: [unreadable] and [redacted] mark text that could not be read.
+  Never fill such gaps; report them in `ambiguities`.
+- Page numbers in citations are the <<<PAGE n>>> numbers (physical pages), not numbers printed on the page."""
 
 
-def build_prompt(kind: str, page_texts: list[str], pages: list[int], total_pages: int) -> str:
-    body = "\n".join(f"<<<PAGE {n}>>>\n{page_texts[n - 1]}\n<<<END PAGE {n}>>>" for n in pages)
+def _page_header(n: int, label: dict | None) -> str:
+    if not label:
+        return f"<<<PAGE {n}>>>"
+    parts = [f"read from {'the PDF text layer' if label.get('method') == 'text_layer' else 'a scanned image (AI transcription)'}"]
+    if label.get("page_type") not in (None, "unclassified"):
+        parts.append(f"page type: {label['page_type']}")
+    if label.get("printed_page_number"):
+        parts.append(f"printed page number: {label['printed_page_number']}")
+    if label.get("section_labels"):
+        parts.append(f"sections: {', '.join(label['section_labels'][:6])}")
+    if label.get("table_continues_from_previous"):
+        parts.append("a table continues from the previous page")
+    return f"<<<PAGE {n}>>> [{'; '.join(parts)}]"
+
+
+def build_prompt(kind: str, page_texts: list[str], pages: list[int], total_pages: int,
+                 labels: dict[int, dict] | None = None) -> str:
+    labels = labels or {}
+    body = "\n".join(f"{_page_header(n, labels.get(n))}\n{page_texts[n - 1]}\n<<<END PAGE {n}>>>" for n in pages)
     return (f"{INSTRUCTIONS}\n\nDocument type: {'addendum/amendment' if kind == 'addendum' else 'MOU/agreement'}. "
             f"This part contains pages {pages[0]}–{pages[-1]} of {total_pages}.\n\n{body}")
 
@@ -154,28 +177,42 @@ class ExtractionFailed(Exception):
 Generate = Callable[[str], Awaitable[str]]
 
 
-async def gemini_generate(prompt: str) -> str:
+async def gemini_structured(contents, schema: type[BaseModel]) -> str:
+    """One structured-JSON Gemini call (text or text + images) with a timeout and rate-limit retries.
+    Returns the raw JSON text; callers validate it. Errors become ExtractionFailed with a machine-readable code."""
     if not settings.gemini_api_key:
         raise ExtractionFailed("not_configured", "Gemini is not configured on the server")
     from google import genai
     from google.genai import types
     client = genai.Client(api_key=settings.gemini_api_key)
-    config = types.GenerateContentConfig(response_mime_type="application/json", response_schema=ChunkExtraction, temperature=0)
-    try:
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(model=settings.gemini_model, contents=prompt, config=config),
-            timeout=settings.gemini_extraction_timeout_seconds,
-        )
-    except asyncio.TimeoutError as exc:
-        raise ExtractionFailed("timeout", f"Gemini did not respond within {settings.gemini_extraction_timeout_seconds:g} seconds") from exc
-    except Exception as exc:
-        code = getattr(exc, "code", None)
-        if code == 429:
-            raise ExtractionFailed("rate_limited", "Gemini rate limit reached; try again in a minute") from exc
-        ai_error = f"api_error:{code}" if isinstance(code, int) else f"error:{type(exc).__name__}"
-        logger.warning("Gemini extraction failed: %s", ai_error)  # type/code only; messages may echo document text
-        raise ExtractionFailed(ai_error, f"The Gemini request failed ({ai_error})") from exc
-    return response.text or ""
+    config = types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema, temperature=0)
+    delays = list(settings.gemini_retry_delays)
+    while True:
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(model=settings.gemini_model, contents=contents, config=config),
+                timeout=settings.gemini_extraction_timeout_seconds,
+            )
+            return response.text or ""
+        except asyncio.TimeoutError as exc:
+            raise ExtractionFailed("timeout", f"Gemini did not respond within {settings.gemini_extraction_timeout_seconds:g} seconds") from exc
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            if code in (429, 503) and delays:  # rate limit or temporarily overloaded: wait and retry
+                logger.warning("Gemini returned %s; retrying in %ss", code, delays[0])
+                await asyncio.sleep(delays.pop(0))
+                continue
+            if code == 429:
+                raise ExtractionFailed("rate_limited", "Gemini rate limit reached; try again in a minute") from exc
+            if code == 503:
+                raise ExtractionFailed("unavailable", "Gemini is temporarily overloaded; try again in a few minutes") from exc
+            ai_error = f"api_error:{code}" if isinstance(code, int) else f"error:{type(exc).__name__}"
+            logger.warning("Gemini request failed: %s", ai_error)  # type/code only; messages may echo document text
+            raise ExtractionFailed(ai_error, f"The Gemini request failed ({ai_error})") from exc
+
+
+async def gemini_generate(prompt: str) -> str:
+    return await gemini_structured(prompt, ChunkExtraction)
 
 
 def parse_chunk(text: str) -> ChunkExtraction:
@@ -199,9 +236,10 @@ def _iso_date(value: str | None) -> date | None:
 
 
 class _Builder:
-    def __init__(self, document: dict, page_texts: list[str]):
+    def __init__(self, document: dict, page_texts: list[str], page_bases: list[str] | None = None):
         self.doc = document
         self.page_texts = page_texts
+        self.page_bases = page_bases or ["text_layer"] * len(page_texts)
         self.out: dict[str, list[dict]] = {k: [] for k in (
             "extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope", "review_issues")}
         self._n: dict[str, int] = {}
@@ -222,6 +260,8 @@ class _Builder:
             self.issue("warning", "EVIDENCE_MISSING", "No source quote or page was given for this item.", related_id)
             return None
         checked = verify_evidence(Evidence(document_id=self.doc["id"], page=item.page, quote=quote), self.page_texts)
+        if item.page <= len(self.page_bases):
+            checked.basis = self.page_bases[item.page - 1]
         if not checked.verified:
             reason = ("cites a page outside the document" if checked.verification_error == "page_out_of_range"
                       else f"quote was not found on page {item.page}")
@@ -345,9 +385,14 @@ class _Builder:
             self.issue("error", "DATE_ORDER", f"Expiry date {expiry} is before start/effective date {start}.")
 
 
-def build_proposals(document: dict, chunks: list[ChunkExtraction], page_texts: list[str]) -> dict[str, list[dict]]:
-    """Turn validated model output into proposals and review issues. Pure function; nothing is persisted here."""
-    builder = _Builder(document, page_texts)
+def build_proposals(document: dict, chunks: list[ChunkExtraction], page_texts: list[str],
+                    page_bases: list[str] | None = None,
+                    page_notes: list[tuple[str, str, str]] | None = None) -> dict[str, list[dict]]:
+    """Turn validated model output into proposals and review issues. Pure function; nothing is persisted here.
+    `page_bases` says, per page, whether its text is the PDF text layer or an AI transcription."""
+    builder = _Builder(document, page_texts, page_bases)
+    for severity, code, message in page_notes or []:
+        builder.issue(severity, code, message)
     for chunk in chunks:
         for item in chunk.fields:
             builder.add_field(item)

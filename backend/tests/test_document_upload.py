@@ -81,7 +81,7 @@ def test_blank_or_scanned_pages_are_flagged_not_treated_as_extracted():
 
 def test_pdf_without_any_text_is_blocked_for_manual_review():
     doc = upload(make_pdf(["", ""])).json()
-    assert doc["status"] == "blocked" and "OCR is not available" in doc["warnings"][0]
+    assert doc["status"] == "blocked" and "Gemini is not configured to read page images" in doc["warnings"][0]
 
 
 def test_non_pdf_empty_and_oversized_files_are_rejected(monkeypatch):

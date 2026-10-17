@@ -8,13 +8,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
 from app import document_storage
 from app.config import settings
-from app.documents import DocumentStatus, ExtractionRun, SourceDocument
+from app.documents import DocumentStatus, ExtractionRun, PageReading, SourceDocument
 from app.extraction import ExtractionFailed, Generate, build_prompt, build_proposals, chunk_pages, gemini_generate, parse_chunk
+from app.page_reading import batches, gemini_read_pages, parse_batch, render_page
 from app.pdf_inspect import PdfInspectionError, inspect_pdf, looks_like_pdf
 from app.repository import delete_record, get_record, list_records, patch_record, put_record
 from app.reviews import actor, log_activity, now_iso
@@ -95,10 +96,17 @@ async def upload_document(request: Request) -> dict:
         record["storage_ref"] = await run_in_threadpool(document_storage.save_pdf, document_id, raw)
         record.update(page_count=inspection.page_count, pages=[p.model_dump() for p in inspection.pages])
         low = inspection.low_text_pages
-        if len(low) == inspection.page_count:
+        if low and settings.gemini_api_key:
+            # Scanned pages are read from page images during extraction (AI transcription, reviewed by a person).
+            record["status"] = "uploaded"
+            scope = "All pages are" if len(low) == inspection.page_count else f"Page{'s' if len(low) > 1 else ''} {', '.join(map(str, low))} {'are' if len(low) > 1 else 'is'}"
+            record["warnings"].append(
+                f"{scope} scanned images without a text layer. During extraction Gemini reads them from the page images; "
+                "that reading is an AI transcription, so compare extracted values with the page images when reviewing.")
+        elif len(low) == inspection.page_count:
             record["status"] = "blocked"
             record["warnings"].append(
-                "No page has embedded text (likely a scanned PDF). OCR is not available yet; the document needs manual review.")
+                "No page has embedded text (likely a scanned PDF). Gemini is not configured to read page images; the document needs manual review.")
         else:
             record["status"] = "uploaded"
             if low:
@@ -149,12 +157,6 @@ def _proposals_for(document_id: str) -> dict[str, list[dict]]:
             for c in PROPOSAL_COLLECTIONS}
 
 
-def _chunk_plan(document: dict) -> list[list[int]]:
-    """Pages with text, grouped into whole-page chunks by their recorded character counts."""
-    lengths = {p["page_number"]: p["char_count"] for p in document["pages"] if p["text_status"] == "text"}
-    return chunk_pages(lengths, settings.extraction_chunk_chars)
-
-
 def _check_can_extract(document: dict) -> None:
     status = document["status"]
     if status == "extracting":
@@ -165,29 +167,85 @@ def _check_can_extract(document: dict) -> None:
         raise HTTPException(status_code=409, detail="The document is approved; its values can no longer be re-extracted")
     if not document.get("storage_ref"):
         raise HTTPException(status_code=409, detail="The file could not be read when uploaded; upload a readable copy")
-    if all(p["text_status"] == "low_text" for p in document.get("pages", [])):
-        raise HTTPException(status_code=409, detail="No page has embedded text; OCR is not available, so enter the values manually")
+    if all(p["text_status"] == "low_text" for p in document.get("pages", [])) and not settings.gemini_api_key:
+        raise HTTPException(status_code=409, detail="No page has embedded text and Gemini is not configured to read page images; enter the values manually")
     proposals = _proposals_for(document["id"])
     if any(r.get("review_state") in ("approved", "rejected") for c, rows in proposals.items() if c != "review_issues" for r in rows):
         raise HTTPException(status_code=409, detail="Some extracted values were already reviewed; re-extracting would discard that review")
 
 
+def _page_id(document_id: str, number: int) -> str:
+    return f"{document_id}-p{number:04d}"
+
+
+def _pages_for(document_id: str) -> dict[int, dict]:
+    return {p["page_number"]: p for p in list_records("document_pages") if p.get("document_id") == document_id}
+
+
+async def _read_pages(document: dict, raw: bytes, inspection, run: dict) -> dict[int, dict]:
+    """Make sure every page has a PageReading: text-layer pages from the PDF, scanned pages from Gemini vision.
+    Readings already stored are reused, so re-running extraction does not re-read (or re-send) pages."""
+    readings = _pages_for(document["id"])
+    for page in inspection.pages:
+        n = page.page_number
+        if page.text_status == "text" and n not in readings:
+            readings[n] = put_record("document_pages", PageReading(
+                id=_page_id(document["id"], n), document_id=document["id"], page_number=n, method="text_layer",
+                transcript=inspection.page_texts[n - 1], legibility="good", read_at=now_iso()).model_dump(mode="json"), _page_id(document["id"], n))
+    to_read = [p.page_number for p in inspection.pages if p.text_status == "low_text" and p.page_number not in readings]
+    for batch in batches(to_read, max(1, settings.vision_batch_pages)):
+        images = [(n, await run_in_threadpool(render_page, raw, n)) for n in batch]
+        for item in parse_batch(await gemini_read_pages(images), batch):
+            record = PageReading(
+                id=_page_id(document["id"], item.page), document_id=document["id"], page_number=item.page,
+                method="gemini_vision", model=settings.gemini_model, read_at=now_iso(),
+                **item.model_dump(exclude={"page"})).model_dump(mode="json")
+            readings[item.page] = record  # saved together with the proposals, after the whole run succeeds
+        run["pages_read"] += len(batch)
+        run["ai_used"] = True
+        patch_record("documents", document["id"], {"extraction": run})
+    return readings
+
+
+def _page_notes(readings: dict[int, dict]) -> list[tuple[str, str, str]]:
+    """Review issues from the page readings: unreadable spots, poor legibility, templates."""
+    notes = []
+    for n, page in sorted(readings.items()):
+        label = f"Page {n}" + (f" (printed {page['printed_page_number']})" if page.get("printed_page_number") else "")
+        for region in page.get("unreadable_regions") or []:
+            notes.append(("warning", "UNREADABLE", f"{label}: {region[:400]} — check the page image; nothing was guessed."))
+        if page.get("legibility") == "poor":
+            notes.append(("warning", "POOR_LEGIBILITY", f"{label} is hard to read; values from it need a careful check against the image."))
+        if page.get("page_type") == "receipt_template":
+            notes.append(("warning", "TEMPLATE_PAGE", f"{label} is a blank receipt format (a template), not evidence of a payment."))
+    return notes
+
+
 async def run_extraction(document_id: str, who: str, generate: Generate | None = None) -> None:
-    """Background job: extract every text page in chunks, then save all proposals at once (or none on failure)."""
+    """Background job: read scanned pages, extract every page with text in chunks, then save page readings and
+    all proposals at once (or nothing on failure)."""
     generate = generate or gemini_generate
     document = get_record("documents", document_id)
     run = dict(document["extraction"])
     try:
         raw = await run_in_threadpool(document_storage.load_pdf, document["storage_ref"])
         inspection = await run_in_threadpool(inspect_pdf, raw, settings.max_document_pages)
-        texts = inspection.page_texts
+        readings = await _read_pages(document, raw, inspection, run)
+        texts = [readings[n]["transcript"] if n in readings else "" for n in range(1, inspection.page_count + 1)]
+        bases = ["ai_transcript" if readings.get(n, {}).get("method") == "gemini_vision" else "text_layer"
+                 for n in range(1, inspection.page_count + 1)]
+        labels = {n: r for n, r in readings.items()}
+        lengths = {n: len(texts[n - 1]) for n in range(1, inspection.page_count + 1) if texts[n - 1].strip()}
+        plan = chunk_pages(lengths, settings.extraction_chunk_chars)
+        run.update(chunks_total=len(plan), pages_sent=sorted(lengths),
+                   pages_skipped_low_text=[n for n in range(1, inspection.page_count + 1) if n not in lengths])
         results = []
-        for pages in _chunk_plan(document):
-            results.append(parse_chunk(await generate(build_prompt(document["kind"], texts, pages, inspection.page_count))))
+        for pages in plan:
+            results.append(parse_chunk(await generate(build_prompt(document["kind"], texts, pages, inspection.page_count, labels))))
             run["chunks_done"] += 1
             run["ai_used"] = True
             patch_record("documents", document_id, {"extraction": run})
-        proposals = build_proposals(document, results, texts)
+        proposals = build_proposals(document, results, texts, bases, _page_notes(readings))
     except Exception as exc:  # any failure must end in a visible failed state, never a silent "extracting"
         code = exc.code if isinstance(exc, (ExtractionFailed, PdfInspectionError)) else f"error:{type(exc).__name__}"
         if not isinstance(exc, ExtractionFailed):
@@ -199,6 +257,10 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
         log_activity(actor_name=who, event="extraction_failed", summary=f"Extraction of “{document['filename']}” failed ({code})",
                      entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"), details={"error": code})
         return
+    stored = _pages_for(document_id)
+    for number, reading in readings.items():
+        if number not in stored:
+            put_record("document_pages", reading, reading["id"])
     for collection in PROPOSAL_COLLECTIONS:
         for old in _proposals_for(document_id)[collection]:
             delete_record(collection, old["id"])
@@ -224,10 +286,10 @@ async def start_extraction(document_id: str, request: Request, background: Backg
     if not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="Gemini is not configured on the server, so automatic extraction is unavailable. Values can still be entered manually.")
     text_pages = [p["page_number"] for p in document["pages"] if p["text_status"] == "text"]
+    already_read = _pages_for(document_id)
     run = ExtractionRun(
-        started_at=now_iso(), model=settings.gemini_model, pages_sent=text_pages,
-        pages_skipped_low_text=[p["page_number"] for p in document["pages"] if p["text_status"] == "low_text"],
-        chunks_total=len(_chunk_plan(document)), chunks_done=0,
+        started_at=now_iso(), model=settings.gemini_model,
+        pages_to_read=sum(1 for p in document["pages"] if p["text_status"] == "low_text" and p["page_number"] not in already_read),
     ).model_dump(mode="json")
     who = actor(request)
     updated = patch_record("documents", document_id, {"status": "extracting", "error": None, "extraction": run})
@@ -245,3 +307,25 @@ def get_extraction(document_id: str) -> dict:
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"document": SourceDocument(**document).model_dump(mode="json"), **_proposals_for(document_id)}
+
+
+@router.get("/documents/{document_id}/pages", response_model=list[PageReading])
+def list_pages(document_id: str) -> list[dict]:
+    """The document map: per physical page, how it was read, its type, printed number, and transcript."""
+    if not get_record("documents", document_id):
+        raise HTTPException(status_code=404, detail="Document not found")
+    return [page for _, page in sorted(_pages_for(document_id).items())]
+
+
+@router.get("/documents/{document_id}/pages/{page_number}/image", response_class=Response,
+            responses={200: {"content": {"image/jpeg": {}}, "description": "Page image for side-by-side review"}})
+async def page_image(document_id: str, page_number: int, dpi: int = Query(default=110, ge=50, le=200)) -> Response:
+    """One page as an image, for reviewers. Same authentication as every other route; never cached publicly."""
+    document = get_record("documents", document_id)
+    if not document or not document.get("storage_ref"):
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not 1 <= page_number <= (document.get("page_count") or 0):
+        raise HTTPException(status_code=404, detail="Page not found")
+    raw = await run_in_threadpool(document_storage.load_pdf, document["storage_ref"])
+    image = await run_in_threadpool(render_page, raw, page_number, dpi)
+    return Response(content=image, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})

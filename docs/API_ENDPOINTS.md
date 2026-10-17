@@ -98,6 +98,14 @@ Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previo
 | POST | `/api/documents/{id}/approve` | Approve a reviewed MOU. Body: `partner_id`, `create_partner`, `owner`, `overwrite_existing` | 409 with `blockers`, or with `conflicts` when approved values differ from an already linked agreement (nothing written). Creates/fills the agreement (`source_document_id`), a project when milestones/scope/programme are approved, and milestones, reports, and UC finance records from approved obligations; fund releases and other obligations stay register-only. The document becomes `approved` and locked. |
 | GET | `/api/documents/{id}/extraction` | Proposals for review: `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope`, `review_issues`, plus `document` | None of these are approved or operational. |
 
+## Scanned pages (Step S1)
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| GET | `/api/documents/{id}/pages` | Document map: per physical page, `method` (`text_layer` / `gemini_vision`), `page_type`, `printed_page_number`, section labels, table continuation flags, unreadable spots, legibility, transcript | Filled by extraction; transcripts of scanned pages are AI readings, not verified facts |
+| GET | `/api/documents/{id}/pages/{n}/image` | JPEG of one page for side-by-side review (`dpi` 50–200, default 110) | Requires sign-in like every route; `Cache-Control: private, no-store`; 404 outside the page range |
+
+`POST /api/documents/{id}/extract` now reads scanned pages first (page images in batches of `VISION_BATCH_PAGES`), then extracts from the text layer and the transcripts; `extraction.pages_to_read` / `pages_read` report progress. Scanned PDFs are accepted (`uploaded`) when Gemini is configured, and `blocked` only when it is not. Rate limits (429) and temporary overload (503) are retried (`GEMINI_RETRY_DELAYS`); otherwise the run fails with `rate_limited` / `unavailable`.
+
 ## Addenda (Step P4a)
 | Method | Path | Purpose | Notes |
 |---|---|---|---|

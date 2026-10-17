@@ -53,12 +53,41 @@ class DocumentPage(BaseModel):
     text_status: PageTextStatus
 
 
+PageType = Literal[
+    "cover_stamp", "main_agreement", "signature", "schedule", "annexure", "project_proposal", "budget_table",
+    "milestone_table", "reporting_schedule", "receipt_template", "blank", "other", "unclassified",
+]
+
+
+class PageReading(BaseModel):
+    """What is known about one physical page: its text and, for scanned pages, an AI reading of the image.
+    The transcript is an aid for extraction and review, never a verified fact."""
+    id: str
+    document_id: str
+    page_number: int = Field(ge=1)  # physical index in the PDF, from 1
+    method: Literal["text_layer", "gemini_vision"]
+    model: str | None = None
+    transcript: str = ""
+    printed_page_number: str | None = None  # as printed on the page, if readable; distinct from page_number
+    page_type: PageType = "unclassified"
+    section_labels: list[str] = Field(default_factory=list)
+    has_table: bool = False
+    table_continues_from_previous: bool = False
+    table_continues_to_next: bool = False
+    unreadable_regions: list[str] = Field(default_factory=list)
+    has_stamp_or_handwriting: bool = False
+    legibility: Literal["good", "partial", "poor", "unknown"] = "unknown"
+    read_at: datetime
+
+
 class ExtractionRun(BaseModel):
     """Progress and outcome of the latest extraction. `ai_used` is true only when the model actually answered."""
     started_at: datetime
     finished_at: datetime | None = None
     model: str
-    chunks_total: int = Field(ge=1)
+    pages_to_read: int = Field(default=0, ge=0)  # scanned pages that need reading from images
+    pages_read: int = Field(default=0, ge=0)
+    chunks_total: int = Field(default=0, ge=0)  # known once all pages have text
     chunks_done: int = Field(default=0, ge=0)
     pages_sent: list[int] = Field(default_factory=list)
     pages_skipped_low_text: list[int] = Field(default_factory=list)
@@ -105,6 +134,9 @@ class Evidence(BaseModel):
     quote: str = Field(min_length=1, max_length=1000)
     verified: bool = False
     verification_error: Literal["page_out_of_range", "quote_not_found"] | None = None
+    # What the quote was checked against: the PDF's own text layer, or an AI transcription of a scanned page
+    # (weaker: the reviewer must compare with the page image).
+    basis: Literal["text_layer", "ai_transcript"] | None = None
 
 
 class ExtractedField(BaseModel):

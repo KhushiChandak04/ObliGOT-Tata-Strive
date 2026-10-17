@@ -130,7 +130,7 @@ def test_verified_evidence_and_normalized_values():
     assert fields["expiry_date"]["proposed_value"] == date(2027, 3, 31)
     assert fields["expiry_date"]["verbatim"] == "31 March 2027"
     assert fields["expiry_date"]["evidence"] == {"document_id": DOC["id"], "page": 2, "quote": "remains valid until 31 March 2027",
-                                                 "verified": True, "verification_error": None}
+                                                 "verified": True, "verification_error": None, "basis": "text_layer"}
     assert all(f["review_state"] == "proposed" and f["approved_value"] is None for f in fields.values())
     term = out["financial_terms"][0]
     assert (term["amount"], term["currency"], term["basis"], term["financial_year"]) == (2500000, "INR", "ceiling", "2026-27")
@@ -255,6 +255,10 @@ def test_gemini_wrapper_without_key(monkeypatch):
 
 def test_extract_end_to_end_creates_proposals_only(monkeypatch):
     prompts = fake_gemini(monkeypatch, lambda p: json.dumps(good_output(pages_of(p))))
+
+    async def blank_reader(images):  # page 4 is blank: read from its image, nothing on it
+        return json.dumps({"pages": [{"page": n, "page_type": "blank", "transcript": "", "legibility": "good"} for n, _ in images]})
+    monkeypatch.setattr(document_routes, "gemini_read_pages", blank_reader)
     before = {c: len(list_records(c)) for c in ("agreements", "projects", "milestones", "reports", "finance")}
     alerts_before = client.get("/api/alerts").json()["counts"]["total"]
     doc = upload(PAGES + [""])
@@ -329,8 +333,10 @@ def test_rerun_replaces_proposals_without_duplicates(monkeypatch):
 def test_extract_preconditions(monkeypatch):
     fake_gemini(monkeypatch, lambda p: "{}")
     assert client.post("/api/documents/doc-000000000000/extract").status_code == 404
-    blank = upload(["", ""])
-    assert client.post(f"/api/documents/{blank['id']}/extract").status_code == 409
+    monkeypatch.setattr(settings, "gemini_api_key", "")
+    blank = upload(["", ""])  # scanned/blank and no Gemini to read page images
+    assert blank["status"] == "blocked" and client.post(f"/api/documents/{blank['id']}/extract").status_code == 409
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
     damaged = client.post("/api/documents", data={"kind": "mou"},
                           files={"file": ("bad.pdf", b"%PDF-1.7 broken", "application/pdf")}).json()
     assert client.post(f"/api/documents/{damaged['id']}/extract").status_code == 409

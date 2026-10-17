@@ -35,6 +35,7 @@ _COLLECTIONS = {
     "programme_scope": {},
     "review_issues": {},
     "agreement_changes": {},
+    "document_pages": {},
 }
 _firestore_client = None
 _firestore_attempted = False

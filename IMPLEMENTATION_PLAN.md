@@ -24,7 +24,10 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | P2a (backend) done — approved |
 | P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | Done — approved |
 | F1 | Firebase connection: Firestore, demo seed, sign-in required (replaces 5b; roles 5c still open) | Done — approved |
-| P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | P4a (backend) done — awaiting review. Validated on synthetic addenda only; no real addendum sample yet |
+| P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | P4a (backend) done — approved. Validated on synthetic addenda only; no real addendum sample yet |
+| S1 | Scan-aware page reading (Gemini vision for scanned pages, document map, page images) | Done — awaiting review |
+| S2 | Tables, relative deadlines, section-aware extraction (sample-driven) | Not started |
+| S3 | Arithmetic consistency checks and workbook sheets for budgets/tranches/targets | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
 | P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
 | P7 | Grounded AI summaries and alert explanations | Scaffolded (no key; free-text output) |
@@ -127,6 +130,21 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 **Reused unchanged:** record models and CRUD, link checks, rules engine and priority score, alert review loop and activity log, import preview (re-import path for exported workbooks), the new UI and its forms.
 
 **Known limitations (current):** no real MOU samples (synthetic fixtures only); scanned pages are detected as low-text and need OCR or manual review — no OCR engine is installed; Gemini has not been called successfully (no key); Firestore and Google sign-in are not verified on this machine.
+
+## Sample MOUs (17 Oct 2026)
+- Three real MOUs are kept locally in `samples/` (git-ignored with `*.pdf`; never committed). Local inspection with PyMuPDF only (no content printed, nothing sent to Gemini): `MoU 1.pdf` 9 pages, `MoU 2.pdf` 27, `mou_3.pdf` 28 — every page is a single scanned image with no text layer. Before S1 the app would have blocked all three.
+- Sending real sample pages to Gemini awaits team confirmation of the API project's data terms (the key behaves like a free-tier key: Pro models return quota errors).
+- Gemini model: `gemini-2.5-flash` returns 404 for this key (no longer offered to new projects); default changed to `gemini-3.5-flash` (verified to answer).
+
+## Step S1 notes — scan-aware page reading
+- `app/page_reading.py`: pages without a text layer are rendered to JPEG (`PAGE_RENDER_DPI`, 150) and read by Gemini in batches (`VISION_BATCH_PAGES`, 4) with a structured schema: faithful transcript in reading order (tables one row per line, cells separated by ` | `; `[unreadable]` / `[redacted]` instead of guesses), printed page number (kept separate from the physical index), page type (cover/stamp, main agreement, signature, schedule, annexure, project proposal, budget, milestone, reporting, receipt template, blank, other), section labels, table continuation flags, unreadable spots, stamps/handwriting, legibility. Each batch must return exactly the pages sent, or the run fails.
+- New `document_pages` collection (`PageReading`): one record per physical page, `method` text_layer or gemini_vision; saved only when the whole run succeeds; reused on re-runs (pages are not re-sent). Extraction uses text layer or transcript per page; the prompt tells the model how each page was read, its type, printed number, sections, and table continuation; templates and budget schedules are described as such.
+- Evidence records `basis`: `text_layer` or `ai_transcript` (quote matched an AI transcription — weaker; compare with the page image). Page readings add review issues: `UNREADABLE` (each unreadable/redacted spot), `POOR_LEGIBILITY`, `TEMPLATE_PAGE` (receipt formats are not payments).
+- `GET /documents/{id}/pages` (document map) and `GET /documents/{id}/pages/{n}/image` (authenticated JPEG for side-by-side review).
+- Scanned uploads are `uploaded` (not `blocked`) when Gemini is configured. Gemini calls retry on 429 and 503; tests can never call the real API (guard in `conftest.py`).
+- Verification: `pytest` → 258 passed (12 new in `tests/test_page_reading.py`, including 3 local checks on the real sample MOUs — page counts, all pages detected as scanned, accepted for reading, last page renders; no Gemini). Real Gemini run on a **synthetic** 3-page scanned agreement (no real data): pages read with correct types (main agreement, signature, schedule after the signature), printed page "2" detected, table detected; extraction found title, parties, reference, effective/expiry dates, total and two tranches, UC and report obligations, all quotes matched (basis `ai_transcript`). First attempt hit a 503 from Google, which led to the 503 retry.
+- Gaps seen in that run (next steps): budget table rows are not kept as rows (S2 tables); "within 15 days after year end" has no due date and the rule itself is not stored (S2 relative deadlines); the model labelled the grantor as the legal entity — reviewer correction needed.
+- Not verified: any real sample MOU through Gemini (awaiting data-use confirmation).
 
 ## Step P4a notes — addenda (backend)
 - New `app/amendments.py`: agreement candidates (suggestions with reasons, never auto-linked), `link`, change building against the agreement's current values, per-change decisions, addendum approval, application in effective-date order, and `GET /api/agreements/{id}/history`.
