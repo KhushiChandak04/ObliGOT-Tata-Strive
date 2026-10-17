@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.config import settings
 from app.documents import (
     ClauseType, CommitmentBasis, Evidence, FinancialTermType, ObligationFrequency, ObligationType, ScopeDimension,
-    verify_evidence,
+    normalize_text, verify_evidence,
 )
 
 logger = logging.getLogger("obligot.extraction")
@@ -47,6 +47,7 @@ LEGAL_REVIEW_CLAUSES = {"termination", "penalty", "exception"}
 class _Cited(BaseModel):
     page: int = Field(description="Page number from the <<<PAGE n>>> marker where the quote appears")
     quote: str = Field(description="Exact, contiguous wording copied from that page (max ~300 characters)")
+    section: str | None = Field(default=None, description="Clause number or schedule/annexure label as printed, if any (e.g. 'Clause 7.2', 'Schedule B')")
 
 
 class ProposedField(_Cited):
@@ -80,6 +81,13 @@ class ProposedObligation(_Cited):
     title: str
     frequency: ObligationFrequency = "unspecified"
     due_date: str | None = Field(default=None, description="YYYY-MM-DD only if a calendar date is stated")
+    deadline_type: Literal["fixed_date", "relative", "recurring", "unspecified"] = "unspecified"
+    deadline_text: str | None = Field(default=None, description="The deadline wording exactly as written")
+    offset_value: int | None = Field(default=None, description="Number in a relative deadline, e.g. 15 in '15 days after year end'")
+    offset_unit: Literal["calendar_days", "working_days", "months"] | None = Field(default=None, description="'days' alone means calendar_days")
+    trigger: Literal["month_end", "quarter_end", "half_year_end", "year_end", "agreement_start", "agreement_end", "event"] | None = None
+    trigger_event: str | None = Field(default=None, description="For trigger=event: the event wording, e.g. 'receipt of each instalment'")
+    recurrence: Literal["monthly", "quarterly", "half_yearly", "annual"] | None = None
 
 
 class ProposedScope(_Cited):
@@ -87,6 +95,25 @@ class ProposedScope(_Cited):
     value: str
     target_value: float | None = None
     target_unit: str | None = None
+    location: str | None = Field(default=None, description="Place the value applies to, if stated")
+    period: str | None = Field(default=None, description="Period the value applies to, e.g. 'Q2' or 'Year 1', if stated")
+
+
+class ProposedTableRow(BaseModel):
+    page: int = Field(description="<<<PAGE n>>> number the row is on")
+    cells: list[str] = Field(description="Cell text exactly as written, in header order; empty string for an empty cell")
+
+
+class ProposedTable(BaseModel):
+    title: str = Field(description="Table title or caption as written; otherwise a short neutral description")
+    kind: Literal["budget", "tranches", "targets", "milestones", "logframe", "coverage", "reporting", "other"]
+    section: str | None = Field(default=None, description="Schedule/annexure/clause the table belongs to, as printed")
+    pages: list[int]
+    headers: list[str] = Field(description="Column headers exactly as written; for multi-level headers join levels with ' / '")
+    rows: list[ProposedTableRow]
+    currency: str | None = Field(default=None, description="ISO code only if stated for the table")
+    unit_notes: list[str] = Field(default_factory=list, description="Unit statements as written, e.g. 'Amount in Rs. lakhs'")
+    notes: list[str] = Field(default_factory=list, description="Footnotes and conditions printed with the table")
 
 
 class Ambiguity(BaseModel):
@@ -100,19 +127,22 @@ class ChunkExtraction(BaseModel):
     financial_terms: list[ProposedFinancialTerm] = Field(default_factory=list)
     obligations: list[ProposedObligation] = Field(default_factory=list)
     scope: list[ProposedScope] = Field(default_factory=list)
+    tables: list[ProposedTable] = Field(default_factory=list)
     ambiguities: list[Ambiguity] = Field(default_factory=list)
 
 
 # ---- chunking and prompt ----
 
-def chunk_pages(lengths: dict[int, int], budget: int) -> list[list[int]]:
+def chunk_pages(lengths: dict[int, int], budget: int, keep_with_previous: set[int] = frozenset()) -> list[list[int]]:
     """Group whole pages ({page number: characters}) into chunks of about `budget` characters, in page order.
-    A page is never split or cut; a page longer than the budget gets a chunk of its own."""
+    A page is never split or cut; a page longer than the budget gets a chunk of its own. Pages in
+    `keep_with_previous` (a table continues onto them) stay in the same chunk as the page before."""
     chunks: list[list[int]] = []
     current: list[int] = []
     size = 0
     for number, length in sorted(lengths.items()):
-        if current and size + length > budget:
+        glued = number in keep_with_previous and current and current[-1] == number - 1
+        if current and size + length > budget and not glued:
             chunks.append(current)
             current, size = [], 0
         current.append(number)
@@ -140,7 +170,16 @@ Rules:
 - Budget schedules state planned allocations or commitments, not money received or spent.
 - Some pages are AI transcriptions of scanned images: [unreadable] and [redacted] mark text that could not be read.
   Never fill such gaps; report them in `ambiguities`.
-- Page numbers in citations are the <<<PAGE n>>> numbers (physical pages), not numbers printed on the page."""
+- Page numbers in citations are the <<<PAGE n>>> numbers (physical pages), not numbers printed on the page.
+- Tables (budgets, tranches, targets, milestones, logframes, coverage, reporting schedules): return them in `tables`
+  with headers and every row as written, one cell per column, each row with the page it is on. A table that continues
+  onto the next page is ONE table: keep the headers and add the following rows. Do not add, compute, or reformat
+  numbers. Keep unit statements (e.g. "in lakhs") in unit_notes; never convert units.
+- Deadlines: copy the wording into deadline_text. Use deadline_type fixed_date only for a stated calendar date;
+  relative for "N days/working days/months after <period end or event>" (fill offset_value, offset_unit, trigger,
+  trigger_event); recurring for regular reporting (fill recurrence). If two provisions give different deadlines for
+  similar deliverables, return both as separate obligations — never merge or choose one.
+- Put the clause number or schedule/annexure label in `section` when it is printed."""
 
 
 def _page_header(n: int, label: dict | None) -> str:
@@ -236,13 +275,21 @@ def _iso_date(value: str | None) -> date | None:
 
 
 class _Builder:
-    def __init__(self, document: dict, page_texts: list[str], page_bases: list[str] | None = None):
+    def __init__(self, document: dict, page_texts: list[str], page_bases: list[str] | None = None,
+                 page_meta: dict[int, dict] | None = None):
         self.doc = document
         self.page_texts = page_texts
         self.page_bases = page_bases or ["text_layer"] * len(page_texts)
+        self.page_meta = page_meta or {}  # page number → page reading (printed number, page type)
         self.out: dict[str, list[dict]] = {k: [] for k in (
-            "extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope", "review_issues")}
+            "extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope", "tables", "review_issues")}
         self._n: dict[str, int] = {}
+
+    def _on_template(self, page: int, label: str, related_id: str, warnings: list[str]) -> None:
+        """Values cited from a blank template page (e.g. a receipt format) are not facts about payments."""
+        if self.page_meta.get(page, {}).get("page_type") == "receipt_template":
+            warnings.append(f"Taken from page {page}, a blank template; it is not evidence of an actual payment or amount.")
+            self.issue("warning", "TEMPLATE_VALUE", f"{label} comes from a template page ({page}); confirm it is a real term.", related_id)
 
     def _id(self, prefix: str) -> str:
         self._n[prefix] = self._n.get(prefix, 0) + 1
@@ -262,6 +309,9 @@ class _Builder:
         checked = verify_evidence(Evidence(document_id=self.doc["id"], page=item.page, quote=quote), self.page_texts)
         if item.page <= len(self.page_bases):
             checked.basis = self.page_bases[item.page - 1]
+        checked.section = (getattr(item, "section", None) or None) and item.section.strip()[:120]
+        printed = self.page_meta.get(item.page, {}).get("printed_page_number")
+        checked.printed_page = printed[:20] if printed else None
         if not checked.verified:
             reason = ("cites a page outside the document" if checked.verification_error == "page_out_of_range"
                       else f"quote was not found on page {item.page}")
@@ -326,6 +376,7 @@ class _Builder:
         due = _iso_date(item.due_date)
         if item.due_date and due is None:
             warnings.append(f"Due date “{item.due_date}” is not a calendar date.")
+        self._on_template(item.page, item.description[:120], tid, warnings)
         self.out["financial_terms"].append({
             "id": tid, "agreement_id": self.doc.get("agreement_id"), "partner_id": self.doc.get("partner_id"),
             "document_id": self.doc["id"], "term_type": item.term_type, "description": item.description[:500] or "(not described)",
@@ -341,10 +392,27 @@ class _Builder:
         due = _iso_date(item.due_date)
         if item.due_date and due is None:
             warnings.append(f"Due date “{item.due_date}” is not a calendar date; no deadline is set.")
+        deadline = {"deadline_type": item.deadline_type, "text": (item.deadline_text or None) and item.deadline_text[:500],
+                    "offset_value": item.offset_value if item.offset_value is not None and 0 <= item.offset_value <= 3650 else None,
+                    "offset_unit": item.offset_unit, "trigger": item.trigger,
+                    "trigger_event": (item.trigger_event or None) and item.trigger_event[:200], "recurrence": item.recurrence}
+        if item.deadline_type in ("relative", "recurring") and due is not None:
+            # A calendar date is only kept for a stated fixed date; for a relative deadline it would be a computed guess.
+            warnings.append(f"A calendar date ({due}) was proposed for a {item.deadline_type} deadline; it was not kept.")
+            due = None
+        elif item.deadline_type == "unspecified" and due is not None:
+            deadline["deadline_type"] = "fixed_date"
+        if item.deadline_type == "relative":
+            if deadline["offset_value"] is None or not deadline["offset_unit"] or not deadline["trigger"]:
+                warnings.append("The relative deadline is incomplete (number, unit, or trigger missing); check the wording.")
+            elif deadline["trigger"] == "event":
+                warnings.append(f"Due {deadline['offset_value']} {deadline['offset_unit'].replace('_', ' ')} after "
+                                f"“{deadline['trigger_event'] or 'an event'}”: a date is set only when that event is recorded.")
         self.out["obligations"].append({
             "id": oid, "agreement_id": self.doc.get("agreement_id"), "partner_id": self.doc.get("partner_id"),
             "document_id": self.doc["id"], "project_id": None, "obligation_type": item.obligation_type,
-            "title": item.title[:300] or "(untitled)", "frequency": item.frequency, "due_date": due, "owner": None,
+            "title": item.title[:300] or "(untitled)", "frequency": item.frequency, "due_date": due,
+            "deadline": deadline, "owner": None,
             "evidence": evidence, "warnings": warnings, "review_state": self._state(warnings, evidence),
             "reviewed_by": None, "reviewed_at": None, "source_label": "user"})
 
@@ -357,8 +425,68 @@ class _Builder:
             "id": sid, "project_id": None, "agreement_id": self.doc.get("agreement_id"), "document_id": self.doc["id"],
             "dimension": item.dimension, "value": item.value[:300],
             "target_value": item.target_value if item.target_value is not None and item.target_value >= 0 else None,
-            "target_unit": (item.target_unit or None) and item.target_unit[:60], "evidence": evidence, "warnings": warnings,
-            "review_state": self._state(warnings, evidence)})
+            "target_unit": (item.target_unit or None) and item.target_unit[:60],
+            "location": (item.location or None) and item.location[:200], "period": (item.period or None) and item.period[:60],
+            "evidence": evidence, "warnings": warnings, "review_state": self._state(warnings, evidence)})
+
+    def add_table(self, item: ProposedTable) -> None:
+        tid, warnings = self._id("tb"), []
+        total_pages = len(self.page_texts)
+        headers = [h.strip()[:200] for h in item.headers]
+        if not headers or not any(headers):
+            self.issue("warning", "TABLE_WITHOUT_HEADERS", f"Table “{item.title[:120]}” was returned without headers; it was not kept.")
+            return
+        rows, unverified, bad_pages, width_mismatch = [], [], [], []
+        for index, row in enumerate(item.rows, 1):
+            cells = [(c or "").strip()[:500] or None for c in row.cells]
+            if not 1 <= row.page <= total_pages:
+                bad_pages.append(index)
+                verified = False
+            else:
+                page_text = normalize_text(self.page_texts[row.page - 1])
+                verified = all(normalize_text(c) in page_text for c in cells if c)
+            if len(cells) != len(headers):
+                width_mismatch.append(index)
+            if not verified:
+                unverified.append(index)
+            rows.append({"row_index": index, "page": max(1, min(row.page, max(total_pages, 1))), "cells": cells, "verified": verified})
+        pages = sorted({p for p in item.pages if 1 <= p <= total_pages} | {r["page"] for r in rows})
+        if not pages:
+            self.issue("warning", "TABLE_PAGE_MISSING", f"Table “{item.title[:120]}” cites no page inside the document; it was not kept.")
+            return
+        if bad_pages:
+            warnings.append(f"Rows {', '.join(map(str, bad_pages))} cite a page outside the document.")
+        if width_mismatch:
+            warnings.append(f"Rows {', '.join(map(str, width_mismatch[:20]))} do not have one cell per header; check the layout.")
+        if unverified:
+            warnings.append(f"{len(unverified)} of {len(rows)} rows have cells not found on their page; compare with the page image.")
+            self.issue("warning", "TABLE_ROWS_NOT_VERIFIED",
+                       f"“{item.title[:120]}”: rows {', '.join(map(str, unverified[:20]))} could not be matched to the page text.", tid)
+        currency = (item.currency or "").strip().upper() or None
+        if currency and not (len(currency) == 3 and currency.isalpha()):
+            warnings.append(f"Currency “{item.currency}” is not a 3-letter code.")
+            currency = None
+        for page in pages:
+            self._on_template(page, f"Table “{item.title[:80]}”", tid, warnings)
+        header_quote = " | ".join(h for h in headers if h)
+        evidence = verify_evidence(Evidence(document_id=self.doc["id"], page=pages[0], quote=header_quote[:1000]), self.page_texts)
+        evidence.basis = self.page_bases[pages[0] - 1] if pages[0] <= len(self.page_bases) else None
+        evidence.section = (item.section or None) and item.section.strip()[:120]
+        printed = self.page_meta.get(pages[0], {}).get("printed_page_number")
+        evidence.printed_page = printed[:20] if printed else None
+        if not evidence.verified:
+            # Header cells may be split across lines in a transcript; fall back to checking each header separately.
+            first = normalize_text(self.page_texts[pages[0] - 1])
+            evidence.verified = all(normalize_text(h) in first for h in headers if h)
+            evidence.verification_error = None if evidence.verified else "quote_not_found"
+        self.out["tables"].append({
+            "id": tid, "document_id": self.doc["id"], "agreement_id": self.doc.get("agreement_id"),
+            "title": item.title.strip()[:300] or "(untitled table)", "kind": item.kind,
+            "section": evidence.section, "pages": pages, "headers": headers, "rows": rows, "currency": currency,
+            "unit_notes": [u[:200] for u in item.unit_notes], "notes": [n[:500] for n in item.notes],
+            "continues_across_pages": len(pages) > 1, "evidence": evidence.model_dump(), "warnings": warnings,
+            "review_state": "needs_review" if warnings or not evidence.verified else "proposed",
+            "reviewed_by": None, "reviewed_at": None})
 
     def cross_checks(self, kind: str) -> None:
         by_field: dict[str, list[dict]] = {}
@@ -384,13 +512,33 @@ class _Builder:
         if start and expiry and expiry < start:
             self.issue("error", "DATE_ORDER", f"Expiry date {expiry} is before start/effective date {start}.")
 
+        # Similar deliverables with different relative deadlines for the same trigger (e.g. 15 vs 20 days after
+        # year end): keep both, flag for review, never pick one.
+        groups: dict[tuple, list[dict]] = {}
+        for o in self.out["obligations"]:
+            d = o.get("deadline") or {}
+            if d.get("deadline_type") == "relative" and d.get("offset_value") is not None and d.get("trigger"):
+                groups.setdefault((o["obligation_type"], d["trigger"], d.get("trigger_event") if d["trigger"] == "event" else None), []).append(o)
+        for (kind, trigger, _), items in groups.items():
+            offsets = {(o["deadline"]["offset_value"], o["deadline"]["offset_unit"]) for o in items}
+            if len(offsets) > 1:
+                wording = "; ".join(f"“{(o['deadline'].get('text') or o['title'])[:120]}” (page {(o.get('evidence') or {}).get('page', '?')})" for o in items)
+                for o in items:
+                    o["review_state"] = "needs_review"
+                    o["warnings"].append("Another provision gives a different deadline for a similar deliverable; both are kept.")
+                self.issue("warning", "DEADLINE_CONFLICT",
+                           f"{kind.replace('_', ' ')}: different deadlines after {trigger.replace('_', ' ')} — {wording}. "
+                           "They may concern different deliverables; decide whether both apply.", items[0]["id"])
+
 
 def build_proposals(document: dict, chunks: list[ChunkExtraction], page_texts: list[str],
                     page_bases: list[str] | None = None,
-                    page_notes: list[tuple[str, str, str]] | None = None) -> dict[str, list[dict]]:
+                    page_notes: list[tuple[str, str, str]] | None = None,
+                    page_meta: dict[int, dict] | None = None) -> dict[str, list[dict]]:
     """Turn validated model output into proposals and review issues. Pure function; nothing is persisted here.
-    `page_bases` says, per page, whether its text is the PDF text layer or an AI transcription."""
-    builder = _Builder(document, page_texts, page_bases)
+    `page_bases` says, per page, whether its text is the PDF text layer or an AI transcription; `page_meta`
+    gives each page's reading (printed number, page type)."""
+    builder = _Builder(document, page_texts, page_bases, page_meta)
     for severity, code, message in page_notes or []:
         builder.issue(severity, code, message)
     for chunk in chunks:
@@ -404,6 +552,8 @@ def build_proposals(document: dict, chunks: list[ChunkExtraction], page_texts: l
             builder.add_obligation(item)
         for item in chunk.scope:
             builder.add_scope(item)
+        for item in chunk.tables:
+            builder.add_table(item)
         for amb in chunk.ambiguities:
             where = f" (page {amb.page})" if amb.page else ""
             builder.issue("warning", "AMBIGUOUS", f"{amb.message[:900]}{where}")

@@ -36,6 +36,7 @@ _COLLECTIONS = {
     "review_issues": {},
     "agreement_changes": {},
     "document_pages": {},
+    "tables": {},
 }
 _firestore_client = None
 _firestore_attempted = False

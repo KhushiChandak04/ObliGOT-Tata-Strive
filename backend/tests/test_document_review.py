@@ -90,7 +90,7 @@ def decide(doc_id, collection, item_id, decision="approve", **body):
 
 def approve_all(doc_id, skip=()):
     data = proposals(doc_id)
-    for collection in ("extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope"):
+    for collection in ("extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope", "tables"):
         for row in data[collection]:
             if row["id"] not in skip and row["review_state"] in ("proposed", "needs_review"):
                 assert decide(doc_id, collection, row["id"], note="Checked against the PDF").status_code == 200

@@ -104,6 +104,8 @@ Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previo
 | GET | `/api/documents/{id}/pages` | Document map: per physical page, `method` (`text_layer` / `gemini_vision`), `page_type`, `printed_page_number`, section labels, table continuation flags, unreadable spots, legibility, transcript | Filled by extraction; transcripts of scanned pages are AI readings, not verified facts |
 | GET | `/api/documents/{id}/pages/{n}/image` | JPEG of one page for side-by-side review (`dpi` 50–200, default 110) | Requires sign-in like every route; `Cache-Control: private, no-store`; 404 outside the page range |
 
+`GET /api/documents/{id}/extraction` also returns `tables` (S2): headers, rows with page and raw cells, per-row `verified`, units, notes, section; obligations carry a `deadline` rule (type, wording, offset, unit, trigger, recurrence); evidence carries `section` and `printed_page`. Tables are reviewed through `PATCH /api/documents/{id}/proposals/tables/{item_id}`.
+
 `POST /api/documents/{id}/extract` now reads scanned pages first (page images in batches of `VISION_BATCH_PAGES`), then extracts from the text layer and the transcripts; `extraction.pages_to_read` / `pages_read` report progress. Scanned PDFs are accepted (`uploaded`) when Gemini is configured, and `blocked` only when it is not. Rate limits (429) and temporary overload (503) are retried (`GEMINI_RETRY_DELAYS`); otherwise the run fails with `rate_limited` / `unavailable`.
 
 ## Addenda (Step P4a)

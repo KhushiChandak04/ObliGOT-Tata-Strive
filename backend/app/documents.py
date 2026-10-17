@@ -137,6 +137,8 @@ class Evidence(BaseModel):
     # What the quote was checked against: the PDF's own text layer, or an AI transcription of a scanned page
     # (weaker: the reviewer must compare with the page image).
     basis: Literal["text_layer", "ai_transcript"] | None = None
+    section: str | None = Field(default=None, max_length=120)  # clause number or schedule/annexure label as printed
+    printed_page: str | None = Field(default=None, max_length=20)  # from the page reading; distinct from `page`
 
 
 class ExtractedField(BaseModel):
@@ -215,6 +217,55 @@ class FinancialTerm(BaseModel):
         return self
 
 
+class DeadlineRule(BaseModel):
+    """How a deadline is stated. A calendar date is set only for fixed dates; relative and event-based deadlines
+    keep their rule until the trigger is known (e.g. the instalment's receipt date is recorded)."""
+    deadline_type: Literal["fixed_date", "relative", "recurring", "unspecified"] = "unspecified"
+    text: str | None = Field(default=None, max_length=500)  # the wording, verbatim
+    offset_value: int | None = Field(default=None, ge=0, le=3650)
+    offset_unit: Literal["calendar_days", "working_days", "months"] | None = None
+    trigger: Literal["month_end", "quarter_end", "half_year_end", "year_end", "agreement_start", "agreement_end", "event"] | None = None
+    trigger_event: str | None = Field(default=None, max_length=200)  # wording of an event trigger
+    recurrence: Literal["monthly", "quarterly", "half_yearly", "annual"] | None = None
+
+
+TableKind = Literal["budget", "tranches", "targets", "milestones", "logframe", "coverage", "reporting", "other"]
+
+
+class TableRow(BaseModel):
+    row_index: int = Field(ge=1)
+    page: int = Field(ge=1)  # physical page the row is on
+    cells: list[str | None]  # raw cell text as read; numbers are parsed by code, never rewritten here
+    verified: bool = False  # every non-empty cell was found on that page's text
+
+
+class ExtractedTable(BaseModel):
+    """A table kept as a table: headers, rows (with their page), units, notes, and its section."""
+    id: str
+    document_id: str
+    agreement_id: str | None = None
+    title: str = Field(min_length=1, max_length=300)
+    kind: TableKind = "other"
+    section: str | None = Field(default=None, max_length=120)
+    pages: list[int] = Field(min_length=1)
+    headers: list[str] = Field(min_length=1)
+    rows: list[TableRow] = Field(default_factory=list)
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    unit_notes: list[str] = Field(default_factory=list)  # e.g. "amounts in INR lakhs" — kept, never applied silently
+    notes: list[str] = Field(default_factory=list)  # footnotes and conditions under the table
+    continues_across_pages: bool = False
+    evidence: Evidence | None = None
+    warnings: list[str] = Field(default_factory=list)
+    review_state: ReviewState = "proposed"
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def review_is_recorded(self):
+        _require_reviewer(self.review_state, self.reviewed_by, self.reviewed_at)
+        return self
+
+
 class Obligation(BaseModel):
     """Deliverable, milestone, report, UC, or fund release stated in an agreement. Due dates only when stated."""
     id: str
@@ -226,6 +277,7 @@ class Obligation(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     frequency: ObligationFrequency = "unspecified"
     due_date: date | None = None
+    deadline: DeadlineRule | None = None
     owner: str | None = None
     evidence: Evidence | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -252,6 +304,8 @@ class ProgrammeScope(BaseModel):
     value: str = Field(min_length=1, max_length=300)
     target_value: float | None = Field(default=None, ge=0)
     target_unit: str | None = Field(default=None, max_length=60)
+    location: str | None = Field(default=None, max_length=200)  # place the value applies to, if stated
+    period: str | None = Field(default=None, max_length=60)  # e.g. "Q2", "Year 1", if stated
     evidence: Evidence | None = None
     warnings: list[str] = Field(default_factory=list)
     review_state: ReviewState = "proposed"

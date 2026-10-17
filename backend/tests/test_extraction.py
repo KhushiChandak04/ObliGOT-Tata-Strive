@@ -130,7 +130,8 @@ def test_verified_evidence_and_normalized_values():
     assert fields["expiry_date"]["proposed_value"] == date(2027, 3, 31)
     assert fields["expiry_date"]["verbatim"] == "31 March 2027"
     assert fields["expiry_date"]["evidence"] == {"document_id": DOC["id"], "page": 2, "quote": "remains valid until 31 March 2027",
-                                                 "verified": True, "verification_error": None, "basis": "text_layer"}
+                                                 "verified": True, "verification_error": None, "basis": "text_layer",
+                                                 "section": None, "printed_page": None}
     assert all(f["review_state"] == "proposed" and f["approved_value"] is None for f in fields.values())
     term = out["financial_terms"][0]
     assert (term["amount"], term["currency"], term["basis"], term["financial_year"]) == (2500000, "INR", "ceiling", "2026-27")

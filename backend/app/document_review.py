@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.amendments import addendum_blockers, approve_addendum
 from app.document_routes import PROPOSAL_COLLECTIONS, _proposals_for
-from app.documents import Clause, ExtractedField, FinancialTerm, Obligation, ProgrammeScope, ReviewIssue, ScalarValue
+from app.documents import (
+    Clause, ExtractedField, ExtractedTable, FinancialTerm, Obligation, ProgrammeScope, ReviewIssue, ScalarValue,
+)
 from app.extraction import AGREEMENT_FIELDS
 from app.models import AgreementCreate, FinanceCreate, MilestoneCreate, PartnerCreate, ProjectCreate, ReportCreate
 from app.repository import get_record, patch_record, put_record
@@ -24,14 +26,15 @@ router = APIRouter(tags=["documents"])
 
 REVIEWABLE = {
     "extracted_fields": ExtractedField, "clauses": Clause, "financial_terms": FinancialTerm,
-    "obligations": Obligation, "programme_scope": ProgrammeScope,
+    "obligations": Obligation, "programme_scope": ProgrammeScope, "tables": ExtractedTable,
 }
 # Fields a reviewer may correct when approving (extracted fields are corrected through `value`).
 EDITABLE = {
     "clauses": {"clause_type", "heading", "summary", "needs_legal_review"},
     "financial_terms": {"term_type", "description", "amount", "currency", "basis", "financial_year", "payer", "due_date", "condition"},
     "obligations": {"obligation_type", "title", "frequency", "due_date", "owner"},
-    "programme_scope": {"dimension", "value", "target_value", "target_unit"},
+    "programme_scope": {"dimension", "value", "target_value", "target_unit", "location", "period"},
+    "tables": {"title", "kind", "section", "currency", "unit_notes", "notes"},  # cells are corrected against the page in S3
 }
 DECISION_STATE = {"approve": "approved", "reject": "rejected", "defer": "deferred", "reset": "needs_review"}
 PAST = {"approve": "Approved", "reject": "Rejected", "defer": "Deferred", "reset": "Reopened"}
@@ -359,6 +362,8 @@ def approve_document(document_id: str, payload: DocumentApproval, request: Reque
         patch_record("financial_terms", term["id"], {"agreement_id": agreement_id, "partner_id": partner_id})
     for clause in approved["clauses"]:
         patch_record("clauses", clause["id"], {"agreement_id": agreement_id})
+    for table in approved["tables"]:
+        patch_record("tables", table["id"], {"agreement_id": agreement_id})
     for scope in approved["programme_scope"]:
         patch_record("programme_scope", scope["id"], {"agreement_id": agreement_id, "project_id": project_id})
     for field in approved["extracted_fields"]:

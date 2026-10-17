@@ -147,7 +147,7 @@ def get_document(document_id: str) -> dict:
 
 # ---- extraction ----
 
-PROPOSAL_COLLECTIONS = ("extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope", "review_issues")
+PROPOSAL_COLLECTIONS = ("extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope", "tables", "review_issues")
 # An extraction still "running" after this long is assumed to have died with the process and may be restarted.
 STALE_EXTRACTION = timedelta(minutes=15)
 
@@ -236,7 +236,10 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
                  for n in range(1, inspection.page_count + 1)]
         labels = {n: r for n, r in readings.items()}
         lengths = {n: len(texts[n - 1]) for n in range(1, inspection.page_count + 1) if texts[n - 1].strip()}
-        plan = chunk_pages(lengths, settings.extraction_chunk_chars)
+        # A table that continues across a page break is sent to the model in one piece.
+        continuing = {n for n, r in readings.items() if r.get("table_continues_from_previous")} | \
+                     {n + 1 for n, r in readings.items() if r.get("table_continues_to_next")}
+        plan = chunk_pages(lengths, settings.extraction_chunk_chars, continuing)
         run.update(chunks_total=len(plan), pages_sent=sorted(lengths),
                    pages_skipped_low_text=[n for n in range(1, inspection.page_count + 1) if n not in lengths])
         results = []
@@ -245,7 +248,7 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
             run["chunks_done"] += 1
             run["ai_used"] = True
             patch_record("documents", document_id, {"extraction": run})
-        proposals = build_proposals(document, results, texts, bases, _page_notes(readings))
+        proposals = build_proposals(document, results, texts, bases, _page_notes(readings), readings)
     except Exception as exc:  # any failure must end in a visible failed state, never a silent "extracting"
         code = exc.code if isinstance(exc, (ExtractionFailed, PdfInspectionError)) else f"error:{type(exc).__name__}"
         if not isinstance(exc, ExtractionFailed):
