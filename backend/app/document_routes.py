@@ -142,6 +142,8 @@ def get_document(document_id: str) -> dict:
 PROPOSAL_COLLECTIONS = ("extracted_fields", "clauses", "financial_terms", "obligations", "programme_scope", "tables", "review_issues")
 # Bump when the extraction prompt/schema changes, so cached parts and page readings are not reused across versions.
 EXTRACTION_SCHEMA_VERSION = "s2.1"
+# Errors where the model's output for one part was unusable; that part is retried, then skipped.
+BAD_OUTPUT_CODES = {"malformed_response", "invalid_json", "empty_response"}
 PAGE_READING_VERSION = "1"
 # An extraction still "running" after this long is assumed to have died with the process and may be restarted.
 STALE_EXTRACTION = timedelta(minutes=15)
@@ -288,12 +290,25 @@ async def run_extraction(document_id: str, who: str, generate: Generate | None =
                 prompt = build_prompt(document["kind"], texts, pages, total, readings)
                 key = _chunk_key(document_id, prompt)
                 cached = get_record("extraction_chunks", key)
-                try:
-                    output = cached["output"] if cached else await generate(prompt)
-                    results.append(parse_chunk(output))
-                except ExtractionFailed as exc:
-                    failure = exc
+                output, bad_output, stop = None, None, None
+                for _ in range(1 if cached else 3):
+                    try:
+                        output = cached["output"] if cached else await generate(prompt)
+                        results.append(parse_chunk(output))
+                        bad_output = None
+                        break
+                    except ExtractionFailed as exc:
+                        if exc.code not in BAD_OUTPUT_CODES:
+                            stop = exc
+                            break
+                        bad_output = exc
+                if stop is not None:  # quota, auth, or outage: later parts would fail the same way
+                    failure = stop
                     break
+                if bad_output is not None:
+                    # This part's output was unusable after retries; later parts are still extracted.
+                    failure = bad_output
+                    continue
                 if not cached:  # finished parts are cached, so a retry resumes after them
                     put_record("extraction_chunks", {"document_id": document_id, "pages": pages, "output": output,
                                                      "schema_version": EXTRACTION_SCHEMA_VERSION, "created_at": now_iso()}, key)

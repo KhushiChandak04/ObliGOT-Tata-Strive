@@ -72,6 +72,9 @@ async def chat_completion(
         payload["response_format"] = response_format
     if max_completion_tokens:
         payload["max_completion_tokens"] = max_completion_tokens
+    if model.startswith("openai/gpt-oss"):
+        # Reasoning tokens share the output budget; low effort leaves room for the JSON itself.
+        payload["reasoning_effort"] = "low"
 
     for attempt in range(settings.groq_max_retries + 1):
         try:

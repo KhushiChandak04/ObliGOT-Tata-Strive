@@ -3,7 +3,7 @@
 $root = $PSScriptRoot
 $backendEnv = "`$env:OBLIGOT_DEMO_MODE='true'; `$env:REQUIRE_FIREBASE_AUTH='false'; `$env:VISION_BATCH_PAGES='1'; " +
   "`$env:GROQ_MAX_CONCURRENCY='1'; `$env:GROQ_MAX_RETRIES='6'; `$env:GROQ_MAX_RETRY_WAIT_SECONDS='65'; " +
-  "`$env:EXTRACTION_CHUNK_CHARS='5000'; `$env:GROQ_DOCUMENT_TIMEOUT_SECONDS='180'"
+  "`$env:EXTRACTION_CHUNK_CHARS='5000'; `$env:GROQ_DOCUMENT_TIMEOUT_SECONDS='180'; `$env:GROQ_MODEL='openai/gpt-oss-120b'"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\backend'; $backendEnv; python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\frontend'; npx vite --mode demo --host localhost --port 5173 --strictPort"
 Start-Sleep 6
