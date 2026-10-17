@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     document_storage_dir: str = ".document_store"
     max_document_mb: int = 20
     max_document_pages: int = 500
+    # Extraction: pages are sent in chunks of whole pages up to this many characters; one Gemini call per chunk.
+    extraction_chunk_chars: int = 40000
+    gemini_extraction_timeout_seconds: float = 120.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

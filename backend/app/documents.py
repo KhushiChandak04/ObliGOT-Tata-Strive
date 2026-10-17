@@ -53,6 +53,20 @@ class DocumentPage(BaseModel):
     text_status: PageTextStatus
 
 
+class ExtractionRun(BaseModel):
+    """Progress and outcome of the latest extraction. `ai_used` is true only when the model actually answered."""
+    started_at: datetime
+    finished_at: datetime | None = None
+    model: str
+    chunks_total: int = Field(ge=1)
+    chunks_done: int = Field(default=0, ge=0)
+    pages_sent: list[int] = Field(default_factory=list)
+    pages_skipped_low_text: list[int] = Field(default_factory=list)
+    ai_used: bool = False
+    ai_error: str | None = None  # not_configured, timeout, rate_limited, empty_response, malformed_response, api_error:<code>, error:<type>
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
 class SourceDocument(BaseModel):
     id: str
     filename: str = Field(min_length=1, max_length=255)
@@ -69,6 +83,7 @@ class SourceDocument(BaseModel):
     storage_ref: str | None = None  # private storage path, never a public URL
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
+    extraction: ExtractionRun | None = None
     approved_by: str | None = None
     approved_at: datetime | None = None
     source_label: str = "user"
@@ -118,7 +133,7 @@ class ExtractedField(BaseModel):
 
 class Clause(BaseModel):
     id: str
-    agreement_id: str
+    agreement_id: str | None = None  # proposals may precede the agreement record; set once it exists
     document_id: str
     clause_type: ClauseType
     heading: str | None = Field(default=None, max_length=200)
@@ -126,6 +141,7 @@ class Clause(BaseModel):
     verbatim: str = Field(min_length=1)
     evidence: Evidence
     needs_legal_review: bool = False
+    warnings: list[str] = Field(default_factory=list)
     review_state: ReviewState = "proposed"
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
@@ -139,8 +155,9 @@ class Clause(BaseModel):
 class FinancialTerm(BaseModel):
     """A contractual money term from an agreement. Distinct from `finance` records (budgets, receipts, invoices, UCs)."""
     id: str
-    agreement_id: str
-    partner_id: str
+    agreement_id: str | None = None
+    partner_id: str | None = None
+    document_id: str | None = None
     term_type: FinancialTermType
     description: str = Field(min_length=1, max_length=500)
     amount: float | None = Field(default=None, ge=0)
@@ -151,6 +168,7 @@ class FinancialTerm(BaseModel):
     due_date: date | None = None
     condition: str | None = Field(default=None, max_length=1000)
     evidence: Evidence | None = None
+    warnings: list[str] = Field(default_factory=list)
     review_state: ReviewState = "proposed"
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
@@ -167,8 +185,9 @@ class FinancialTerm(BaseModel):
 class Obligation(BaseModel):
     """Deliverable, milestone, report, UC, or fund release stated in an agreement. Due dates only when stated."""
     id: str
-    agreement_id: str
-    partner_id: str
+    agreement_id: str | None = None
+    partner_id: str | None = None
+    document_id: str | None = None
     project_id: str | None = None
     obligation_type: ObligationType
     title: str = Field(min_length=1, max_length=300)
@@ -176,6 +195,7 @@ class Obligation(BaseModel):
     due_date: date | None = None
     owner: str | None = None
     evidence: Evidence | None = None
+    warnings: list[str] = Field(default_factory=list)
     review_state: ReviewState = "proposed"
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
@@ -190,13 +210,15 @@ class Obligation(BaseModel):
 class ProgrammeScope(BaseModel):
     """One scope item (state, course, beneficiary group, target) of a programme; many rows per programme."""
     id: str
-    project_id: str
-    agreement_id: str
+    project_id: str | None = None
+    agreement_id: str | None = None
+    document_id: str | None = None
     dimension: ScopeDimension
     value: str = Field(min_length=1, max_length=300)
     target_value: float | None = Field(default=None, ge=0)
     target_unit: str | None = Field(default=None, max_length=60)
     evidence: Evidence | None = None
+    warnings: list[str] = Field(default_factory=list)
     review_state: ReviewState = "proposed"
 
 

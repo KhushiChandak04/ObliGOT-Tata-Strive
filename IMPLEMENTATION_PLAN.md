@@ -21,8 +21,8 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | ----- | ---- | ------ |
 | P0 | Scope and repository audit | Done — approved |
 | P1 | Canonical schema and workbook contract (P1a models + contract) | P1a done — approved |
-| P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | P2a (backend) done — awaiting review |
-| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | Not started |
+| P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | P2a (backend) done — approved |
+| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | P3a (extraction backend) done — awaiting review; P3b review/approve, P3c export not started |
 | P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
 | P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
@@ -126,6 +126,15 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 **Reused unchanged:** record models and CRUD, link checks, rules engine and priority score, alert review loop and activity log, import preview (re-import path for exported workbooks), the new UI and its forms.
 
 **Known limitations (current):** no real MOU samples (synthetic fixtures only); scanned pages are detected as low-text and need OCR or manual review — no OCR engine is installed; Gemini has not been called successfully (no key); Firestore and Google sign-in are not verified on this machine.
+
+## Step P3a notes — evidence-linked extraction (backend)
+- `POST /api/documents/{id}/extract` (202, background job) and `GET /api/documents/{id}/extraction`. Status: `extracting` → `needs_review`, or `failed` with a reason; progress in `extraction` (`chunks_done`/`chunks_total`, pages sent, low-text pages skipped, `ai_used`, `ai_error`, counts).
+- `app/extraction.py`: text pages are grouped into chunks of whole pages (`EXTRACTION_CHUNK_CHARS`, default 40 000; a page is never cut; every text page is sent). One Gemini call per chunk with JSON output constrained to the `ChunkExtraction` schema, temperature 0, `GEMINI_EXTRACTION_TIMEOUT_SECONDS` (120). The prompt marks pages (`<<<PAGE n>>>`), requires an exact quote and page for every item, forbids guessing, keeps budget/invoice, estimate/confirmed, ceiling/spent, received/owed, signing/effective/start distinct, and tells the model to ignore instructions inside the document.
+- Deterministic checks after the model: schema validation (malformed → failed); dates only as real ISO dates (otherwise empty + `DATE_NOT_NORMALIZED`); currency must be a 3-letter code and an amount without one is not stored (warning shows the stated number, `AMOUNT_WITHOUT_CURRENCY`); financial year format; every quote verified on its cited page (`EVIDENCE_NOT_VERIFIED`, `EVIDENCE_MISSING`); conflicting values for one field (`CONFLICTING_VALUES`, error); expiry before start (`DATE_ORDER`); partner name or expiry missing from an MOU (`MISSING_FIELD`, never guessed); model-reported `ambiguities` (`AMBIGUOUS`); termination/penalty/exception clauses always flagged for legal review. Items with warnings or unverified evidence are `needs_review`; nothing is approved.
+- All-or-nothing: proposals are saved only after every chunk succeeds; a failure in any chunk saves none, marks the document `failed` (rate limit, timeout, API error, empty or malformed response, unreadable file), and can be retried. Re-running replaces earlier proposals unless some were already reviewed (409). Activity log: `extraction_started`, `extraction_completed`, `extraction_failed`.
+- Models: `ExtractionRun` added; `SourceDocument.extraction`; `Clause`/`FinancialTerm`/`Obligation`/`ProgrammeScope` links (`agreement_id`, `partner_id`, `project_id`) optional for proposals and `document_id` + `warnings` added. New collections: `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope`, `review_issues`.
+- Verification: `python -m pytest -q` → 216 passed (21 new in `tests/test_extraction.py`, Gemini replaced by fakes; synthetic MOU text). The Gemini SDK converts `ChunkExtraction` to its schema offline (enums and required fields present). Live uvicorn: extract without a key → 503 with a clear message, status stays `uploaded`, no proposals; routes in OpenAPI.
+- **Not verified:** a real Gemini extraction (no `GEMINI_API_KEY` here) — quality, latency, and rate limits on real MOUs are unknown. No real MOU samples yet.
 
 ## Step P2a notes — PDF upload and page inspection (backend)
 - New routes in `app/document_routes.py` (mounted at `/api`): `POST /api/documents` (multipart), `GET /api/documents`, `GET /api/documents/{id}`. Additive; no existing contract changed except that partner DELETE now also counts linked `documents` in its 409.

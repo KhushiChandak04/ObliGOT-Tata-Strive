@@ -27,6 +27,13 @@ _COLLECTIONS = {
     "alert_reviews": {},
     "activities": {},
     "documents": {},
+    # Proposals extracted from documents (not operational until approved).
+    "extracted_fields": {},
+    "clauses": {},
+    "financial_terms": {},
+    "obligations": {},
+    "programme_scope": {},
+    "review_issues": {},
 }
 _firestore_client = None
 _firestore_attempted = False

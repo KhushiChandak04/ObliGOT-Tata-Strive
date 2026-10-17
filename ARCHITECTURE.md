@@ -39,9 +39,9 @@ Existing collection names and fields are preserved; new fields are optional for 
 | `users` | planned | uid, email, name, role |
 | `config/rules` | current (Step 7a) | rule thresholds |
 | `documents` | current (P2a) | `SourceDocument`: filename, kind (mou / addendum), partner_id, agreement_id, uploaded_at/by, page_count, pages[] (text status), status, storage_ref (private; file bytes never in Firestore), warnings, error, approval |
-| `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope` | planned (P3) | models in `app/documents.py`; each with evidence and review state |
+| `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope` | current (P3a, proposals only) | models in `app/documents.py`; each with evidence and review state |
 | `agreement_changes` | planned (P4) | addendum changes: prior / proposed value, amendment and effective dates, evidence, status, reviewer |
-| `review_issues` | planned (P3) | validation and review issues per document |
+| `review_issues` | current (P3a) | validation and review issues per document |
 
 Every record carries `source_label` (`demo` or `user`). Demo records are fictional.
 
@@ -80,7 +80,7 @@ Viewer: read. Manager: create/update, review recommendations, tasks. Admin: plus
 ## Frontend [planned]
 Typed API client per resource, `useResource` hook, shared `StatusBadge`, `DataTable`, `Dialog`, `EvidencePanel`, `AlertRow`, `PriorityBreakdown`. Pages: Dashboard (management overview + Today's 5), Action center (team workspace), Partners, Partner 360 (tabbed), Pipeline, Agreements, Projects, Finance, Reports, Import, Sign-in. Recharts and `motion` only when approved (Step 11).
 
-## Document-to-data pipeline [contract current — P1a; upload and page inspection current — P2a; extraction, review, export, addenda planned — P3–P4]
+## Document-to-data pipeline [contract current — P1a; upload and page inspection current — P2a; extraction to proposals current — P3a; review, export, addenda planned — P3b–P4]
 ```
 Upload PDF (staff) → FastAPI validates type/size → private storage (Firebase Storage or local folder outside git)
   → PyMuPDF: page count, text per page, low-text pages flagged (OCR/manual review; never silently skipped)
