@@ -29,7 +29,7 @@ Existing collection names and fields are preserved; new fields are optional for 
 | `agreements` | current | partner_id, title, reference_number, status, start_date, expiry_date, owner, document_url; **[planned]** project_id, opportunity_id, signed_copy, renewal_status |
 | `projects` | current | partner_id, name, status, owner, start_date, end_date, milestone_summary |
 | `milestones` | planned | project_id, partner_id, title, due_date, completed_date, status, owner |
-| `finance` | current | partner_id, project_id, record_type (budget / fund_received / invoice / utilization_certificate), amount, currency, due_date, status; **[planned]** issue_date, received_date, per-type status enums |
+| `finance` | current | partner_id, project_id, record_type (budget / fund_received / invoice / utilization_certificate), amount, currency, due_date, status (per-type allowed values, `FINANCE_STATUSES` in `models.py`); **[planned]** issue_date, received_date |
 | `reports` | current | partner_id, project_id, report_type (monthly / quarterly / impact / other), due_date, submitted_date, status, owner |
 | `actions` | current | title, priority, status, due_date, evidence, recommended_action, related_partner_id, owner; **[planned]** related_record, source_alert_id. Used as the task model |
 | `followups` | current | legacy; overlaps `actions` (freeze proposed, pending team decision) |

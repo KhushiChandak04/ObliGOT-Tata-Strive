@@ -8,7 +8,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 1 | Repository and API audit | Done — approved |
 | 2 | Architecture proposal | Done — approved |
 | 3 | Project instructions and custom skills | Done — approved |
-| 4 | Existing API route repairs (groups 4a–4f) | 4a, 4b approved; 4c done — awaiting review |
+| 4 | Existing API route repairs (groups 4a–4f) | 4a–4c approved; 4d done — awaiting review |
 | 5 | Application foundation | Not started |
 | 6 | Core partnership workflows | Not started |
 | 7 | Deadline engine and action center | Not started |
@@ -29,7 +29,6 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 2. Location of the sample partnership workbook and the official problem statement.
 3. Backend hosting: Cloud Run (recommended) or Render (`render.yaml` exists).
 4. Freeze `followups` and use `actions` as the only task model?
-5. Approve contract change 4d (per-type finance status enums). (4c approved.)
 
 ## Step 1 audit summary
 - Existing backend tests: 9 passed (`python -m pytest -q`, in-memory mode). Live Firestore, Gemini, auth flow, and frontend build untested (no credentials / `node_modules`).
@@ -69,6 +68,17 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 4d notes — per-type finance statuses
+- `FinanceCreate.status` is validated against `FINANCE_STATUSES[record_type]` (approved contract change). Default on create is the first entry:
+  - budget: `planned`, approved, revised, closed
+  - fund_received: `expected`, received, cancelled
+  - invoice: `raised`, draft, sent, paid, cancelled
+  - utilization_certificate: `pending`, submitted, accepted, rejected
+- Invalid or cross-type statuses → 422 on POST and PATCH; changing `record_type` requires a compatible status in the same request.
+- `FinanceRecord` (response) still accepts any string, so legacy records remain readable; editing one requires choosing a valid status.
+- Deadline rules unchanged: resolved finance statuses (`paid`, `received`, `submitted`, `accepted`, `cancelled`, …) already covered.
+- Verification: `python -m pytest -q` → 43 passed (12 new in `tests/test_finance_statuses.py`). Probe defect 9 (free-text status) → 422.
 
 ## Step 4c notes — referential integrity, auth init, store errors
 - `DELETE /api/partners/{id}` returns 409 listing linked record counts (agreements, projects, finance, reports via `partner_id`; actions, follow-ups via `related_partner_id`). Approved contract change.

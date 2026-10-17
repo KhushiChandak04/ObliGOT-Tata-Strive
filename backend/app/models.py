@@ -10,6 +10,15 @@ PartnerStatus = Literal["prospect", "qualification", "active", "on_hold", "close
 Priority = Literal["high", "medium", "low"]
 ActionStatus = Literal["open", "in_review", "done", "deferred"]
 RecordStatus = Literal["planned", "active", "on_hold", "completed", "closed"]
+FinanceType = Literal["budget", "fund_received", "invoice", "utilization_certificate"]
+
+# Allowed statuses per finance record type; the first entry is the default on create.
+FINANCE_STATUSES: dict[str, tuple[str, ...]] = {
+    "budget": ("planned", "approved", "revised", "closed"),
+    "fund_received": ("expected", "received", "cancelled"),
+    "invoice": ("raised", "draft", "sent", "paid", "cancelled"),
+    "utilization_certificate": ("pending", "submitted", "accepted", "rejected"),
+}
 
 class Partner(BaseModel):
     id: str
@@ -140,13 +149,22 @@ class FinanceRecord(BaseModel):
 class FinanceCreate(BaseModel):
     partner_id: str
     project_id: str | None = None
-    record_type: Literal["budget", "fund_received", "invoice", "utilization_certificate"]
+    record_type: FinanceType
     title: str = Field(min_length=2, max_length=200)
     amount: float | None = Field(default=None, ge=0)
     currency: str = "INR"
     due_date: date | None = None
-    status: str = "pending"
+    status: str | None = None
     reference_number: str | None = None
+
+    @model_validator(mode="after")
+    def status_matches_record_type(self):
+        allowed = FINANCE_STATUSES[self.record_type]
+        if self.status is None:
+            self.status = allowed[0]
+        elif self.status not in allowed:
+            raise ValueError(f"status for {self.record_type} must be one of: {', '.join(allowed)}")
+        return self
 
 class ReportRecord(BaseModel):
     id: str
