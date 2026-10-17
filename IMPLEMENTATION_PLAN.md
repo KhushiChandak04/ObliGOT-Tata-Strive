@@ -22,7 +22,8 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | P0 | Scope and repository audit | Done — approved |
 | P1 | Canonical schema and workbook contract (P1a models + contract) | P1a done — approved |
 | P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | P2a (backend) done — approved |
-| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | P3a (extraction backend) done — awaiting review; P3b review/approve, P3c export not started |
+| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | P3a (extraction backend) done — approved; P3b review/approve, P3c export not started |
+| F1 | Firebase connection: Firestore, demo seed, sign-in required (replaces 5b; roles 5c still open) | Done — awaiting review |
 | P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
 | P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
@@ -126,6 +127,14 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 **Reused unchanged:** record models and CRUD, link checks, rules engine and priority score, alert review loop and activity log, import preview (re-import path for exported workbooks), the new UI and its forms.
 
 **Known limitations (current):** no real MOU samples (synthetic fixtures only); scanned pages are detected as low-text and need OCR or manual review — no OCR engine is installed; Gemini has not been called successfully (no key); Firestore and Google sign-in are not verified on this machine.
+
+## Step F1 notes — Firebase connection and sign-in
+- Backend: new setting `FIREBASE_CREDENTIALS_FILE` (service-account JSON, relative paths resolve inside `backend/`) passed to the Admin SDK — a `GOOGLE_APPLICATION_CREDENTIALS` value written only in `.env` was never seen by the SDK. Locally: `backend/firebase-admin.json` (git-ignored), `FIREBASE_CREDENTIALS_FILE=firebase-admin.json`, `REQUIRE_FIREBASE_AUTH=true` in the ignored `backend/.env`. `firebase-admin` 7.7.0 installed from `requirements.txt`.
+- Firestore verified on project `obligot-95487`: temporary record written, read, deleted; the database was empty. `backend/scripts/seed_demo.py` loaded the 21 fictional demo records once (partners 3, actions 2, agreements 3, projects 1, finance 4, reports 2, opportunities 3, milestones 3); a second run added nothing. Seeded dates are fixed at 17 Oct 2026.
+- No Firebase Storage bucket exists in the project (`obligot-95487.firebasestorage.app` and `.appspot.com` both absent), so PDFs stay in the private local folder. Enabling Storage is needed before deploying the backend to Cloud Run.
+- Frontend (`lib/auth.tsx`, `App.tsx` Auth/AppShell; teammate's design kept): real email/password sign-in and sign-up (display name), Google sign-in kept (popup, redirect fallback); readable error messages; the read-only "Role: Manager" field removed (roles are not implemented); workspace routes require a signed-in user (`RequireAuth`, return to the requested page via `next`, only same-app paths accepted); signed-in user shown in the sidebar; Log out signs out of Firebase.
+- Verification: `pytest` → 217 passed (new test: credentials file reaches the Admin SDK). `npm run build` passes. Live backend on Firestore with auth required: health `firestore`/`auth_required: true`; no token and a bad token → 401. Headless Chrome with temporary Firebase users (created and deleted via the Admin SDK): signed-out `/dashboard` → `/auth?next=/dashboard`; wrong password → "Email or password is incorrect."; sign-in → dashboard from Firestore (8/2/1/0, user in sidebar); reload keeps the session; `/auth` while signed in → dashboard; log out → `/agreements` asks to sign in; sign-up → back to `/agreements` with live data; `next=//evil.example` ignored. A token-authenticated write records the user's email as the activity actor. Test task and activity entries removed afterwards. Only console error: the expected HTTP 400 from Firebase for the wrong password.
+- **Not verified:** Google sign-in (needs a real Google account in a visible browser — please try "Continue with Google" once; `localhost` must be an authorized domain). Roles (admin/manager/viewer) not implemented: any signed-in Firebase user has full access.
 
 ## Step P3a notes — evidence-linked extraction (backend)
 - `POST /api/documents/{id}/extract` (202, background job) and `GET /api/documents/{id}/extraction`. Status: `extracting` → `needs_review`, or `failed` with a reason; progress in `extraction` (`chunks_done`/`chunks_total`, pages sent, low-text pages skipped, `ai_used`, `ai_error`, counts).

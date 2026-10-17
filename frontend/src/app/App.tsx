@@ -13,8 +13,9 @@ import { MILESTONE_STATUSES } from "../lib/projects";
 import { api } from "../services/functions.service";
 import { useResource } from "../lib/useResource";
 import { CATEGORY_LABELS, todaysAlerts } from "../lib/alerts";
-import { getRedirectResult, signInWithPopup, signInWithRedirect } from "firebase/auth";
+import { createUserWithEmailAndPassword, getRedirectResult, signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, signOut, updateProfile } from "firebase/auth";
 import { firebaseAuth, googleProvider } from "../lib/firebase";
+import { RequireAuth, authErrorMessage, useAuthUser } from "../lib/auth";
 import type { ActionItem, Agreement, Alert as ApiAlert, AnalyzeResponse, AlertEvidence, ImportPreview, Milestone, Opportunity, Partner, Project } from "../types";
 
 /** View model for the reference UI, built from a rules-engine alert (GET /api/alerts). */
@@ -82,52 +83,85 @@ function InfoPanel({ className = "", tag, title, children }: { className?: strin
 
 function Auth() {
   const navigate = useNavigate();
-  const mode = new URLSearchParams(useLocation().search).get("mode") === "up";
+  const search = new URLSearchParams(useLocation().search);
+  const mode = search.get("mode") === "up";
+  // Only same-app paths are accepted as a return target (no open redirects).
+  const nextParam = search.get("next") ?? "";
+  const next = nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "/dashboard";
+  const { user, ready } = useAuthUser();
   const [signup, setSignup] = useState(mode);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleError, setGoogleError] = useState("");
+  const [formError, setFormError] = useState("");
+  useEffect(() => {
+    if (ready && user) navigate(next, { replace: true });
+  }, [ready, user, next, navigate]);
   useEffect(() => {
     if (!firebaseAuth) return;
-    void getRedirectResult(firebaseAuth).then((result) => {
-      if (result) navigate("/dashboard");
-    }).catch(() => setGoogleError("Google sign-in failed. Please try again."));
-  }, [navigate]);
+    void getRedirectResult(firebaseAuth).catch((error) => setGoogleError(authErrorMessage(error)));
+  }, []);
+  async function submit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    setFormError("");
+    if (!firebaseAuth) {
+      setFormError("Firebase is not configured for this build (frontend/.env).");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (signup) {
+        const created = await createUserWithEmailAndPassword(firebaseAuth, email.trim(), password);
+        if (name.trim()) await updateProfile(created.user, { displayName: name.trim() });
+      } else {
+        await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
+      }
+      // Navigation happens in the effect above once Firebase reports the signed-in user.
+    } catch (error) {
+      setFormError(authErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function continueWithGoogle(): Promise<void> {
     if (!firebaseAuth) {
-      setGoogleError("Google sign-in failed. Please try again.");
+      setGoogleError("Firebase is not configured for this build (frontend/.env).");
       return;
     }
     setGoogleLoading(true);
     setGoogleError("");
     try {
       await signInWithPopup(firebaseAuth, googleProvider);
-      navigate("/dashboard");
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
       if (code === "auth/popup-closed-by-user") return;
       if (code === "auth/popup-blocked") {
         try {
           await signInWithRedirect(firebaseAuth, googleProvider);
-        } catch {
-          setGoogleError("Google sign-in failed. Please try again.");
+        } catch (redirectError) {
+          setGoogleError(authErrorMessage(redirectError));
         }
         return;
       }
-      if (code === "auth/unauthorized-domain") {
-        setGoogleError("This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.");
-        return;
-      }
-      setGoogleError("Google sign-in failed. Please try again.");
+      setGoogleError(authErrorMessage(error));
     } finally {
       setGoogleLoading(false);
     }
   }
-  return <div className="auth-page"><div className="auth-left"><Link to="/"><Logo light /></Link><h2>From commitments to accountability.</h2><span className="mono">Prototype screen. Production build uses Firebase Authentication.</span></div><div className="auth-right"><form className="auth-form" onSubmit={(event) => { event.preventDefault(); navigate("/dashboard"); }}><h2>{signup ? "Join the team" : "Welcome back"}</h2><p>Sign in to your partnership workspace.</p><div className="tabs"><button type="button" className={!signup ? "active" : ""} onClick={() => setSignup(false)}>Sign in</button><button type="button" className={signup ? "active" : ""} onClick={() => setSignup(true)}>Sign up</button></div>{signup && <label>Full name<input placeholder="Your name" /></label>}<label>Work email<input type="email" placeholder="you@tatastrive.org" required /></label><label>Password<input type="password" placeholder="••••••••" required /></label>{signup && <label>Role<input value="Manager" readOnly /></label>}<button className="btn submit" type="submit">{signup ? "Create account" : "Sign in"}</button><div style={{ marginTop: 16 }}><div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--muted)", fontSize: 13 }}><span style={{ height: 1.5, flex: 1, background: "var(--line)" }} />or<span style={{ height: 1.5, flex: 1, background: "var(--line)" }} /></div><button className="btn outline" type="button" disabled={googleLoading} onClick={() => void continueWithGoogle()} style={{ width: "100%", marginTop: 12, gap: 10 }}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 3.5c1.45 0 2.43.63 2.99 1.16l2.18-2.13C12.84 1.2 11.14.5 9 .5 5.9.5 3.22 2.28 1.91 4.86l2.51 1.95C5.05 5.15 6.84 3.5 9 3.5Z" fill="currentColor"/><path d="M17.5 9.18c0-.61-.05-1.06-.16-1.53H9v2.9h4.88c-.1.72-.75 1.8-2.16 2.53l2.64 2.05c1.54-1.42 3.14-3.55 3.14-5.95Z" fill="currentColor"/><path d="M4.42 10.81A5.5 5.5 0 0 1 4.12 9c0-.63.11-1.24.3-1.81L1.91 5.24A8.5 8.5 0 0 0 .5 9c0 1.35.32 2.63.89 3.76l3.03-1.95Z" fill="currentColor"/><path d="M9 17.5c2.43 0 4.47-.8 5.96-2.17l-2.64-2.05c-.71.5-1.67.85-3.32.85-2.16 0-3.95-1.65-4.58-3.31l-3.03 1.95C2.7 15.72 5.9 17.5 9 17.5Z" fill="currentColor"/></svg>{googleLoading ? "Connecting…" : "Continue with Google"}</button>{googleError && <div role="alert" style={{ color: "var(--bordo)", font: "13px 'DM Sans', sans-serif", marginTop: 8 }}>{googleError}</div>}</div></form></div></div>;
+  return <div className="auth-page"><div className="auth-left"><Link to="/"><Logo light /></Link><h2>From commitments to accountability.</h2><span className="mono">Secured with Firebase Authentication.</span></div><div className="auth-right"><form className="auth-form" onSubmit={(event) => void submit(event)}><h2>{signup ? "Join the team" : "Welcome back"}</h2><p>Sign in to your partnership workspace.</p><div className="tabs"><button type="button" className={!signup ? "active" : ""} onClick={() => { setSignup(false); setFormError(""); }}>Sign in</button><button type="button" className={signup ? "active" : ""} onClick={() => { setSignup(true); setFormError(""); }}>Sign up</button></div>{signup && <label>Full name<input placeholder="Your name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} /></label>}<label>Work email<input type="email" placeholder="you@tatastrive.org" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label><label>Password<input type="password" placeholder="••••••••" autoComplete={signup ? "new-password" : "current-password"} minLength={signup ? 6 : undefined} required value={password} onChange={(e) => setPassword(e.target.value)} /></label><button className="btn submit" type="submit" disabled={busy}>{busy ? "Please wait…" : signup ? "Create account" : "Sign in"}</button>{formError && <div role="alert" style={{ color: "var(--bordo)", font: "13px 'DM Sans', sans-serif", marginTop: 8 }}>{formError}</div>}<div style={{ marginTop: 16 }}><div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--muted)", fontSize: 13 }}><span style={{ height: 1.5, flex: 1, background: "var(--line)" }} />or<span style={{ height: 1.5, flex: 1, background: "var(--line)" }} /></div><button className="btn outline" type="button" disabled={googleLoading} onClick={() => void continueWithGoogle()} style={{ width: "100%", marginTop: 12, gap: 10 }}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 3.5c1.45 0 2.43.63 2.99 1.16l2.18-2.13C12.84 1.2 11.14.5 9 .5 5.9.5 3.22 2.28 1.91 4.86l2.51 1.95C5.05 5.15 6.84 3.5 9 3.5Z" fill="currentColor"/><path d="M17.5 9.18c0-.61-.05-1.06-.16-1.53H9v2.9h4.88c-.1.72-.75 1.8-2.16 2.53l2.64 2.05c1.54-1.42 3.14-3.55 3.14-5.95Z" fill="currentColor"/><path d="M4.42 10.81A5.5 5.5 0 0 1 4.12 9c0-.63.11-1.24.3-1.81L1.91 5.24A8.5 8.5 0 0 0 .5 9c0 1.35.32 2.63.89 3.76l3.03-1.95Z" fill="currentColor"/><path d="M9 17.5c2.43 0 4.47-.8 5.96-2.17l-2.64-2.05c-.71.5-1.67.85-3.32.85-2.16 0-3.95-1.65-4.58-3.31l-3.03 1.95C2.7 15.72 5.9 17.5 9 17.5Z" fill="currentColor"/></svg>{googleLoading ? "Connecting…" : "Continue with Google"}</button>{googleError && <div role="alert" style={{ color: "var(--bordo)", font: "13px 'DM Sans', sans-serif", marginTop: 8 }}>{googleError}</div>}</div></form></div></div>;
 }
 
 function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuthUser();
+  const logOut = async () => {
+    if (firebaseAuth) await signOut(firebaseAuth);
+    navigate("/");
+  };
   const workspace = useResource(async () => {
     const [alerts, tasks, partners] = await Promise.all([api.alerts.list(), api.actions.list(), api.partners.list()]);
     return { alerts, tasks, partners };
@@ -148,7 +182,7 @@ function AppShell() {
   const title = page === "/action-center" ? "Action Center" : page === "/partner-360" ? (names.get(params.get("id") ?? "") ?? workspace.data?.partners[0]?.name ?? "Partner 360") : page === "/dashboard" ? "Good day, team." : page === "/pipeline" ? "Pipeline" : page === "/agreements" ? "Agreements" : page === "/projects" ? "Projects" : page === "/finance" ? "Finance" : page === "/reports" ? "Reports & UCs" : "Import";
   const eyebrow = page === "/dashboard" ? `Portfolio overview${workspace.data ? ` · rules evaluated ${formatDate(workspace.data.alerts.as_of)}` : ""}` : page === "/partner-360" ? "Partner 360" : page === "/action-center" ? "Live rule alerts" : ["/pipeline", "/agreements", "/projects"].includes(page) ? "Live records" : "Synthetic demo data";
   const usesApi = page === "/dashboard" || page === "/action-center";
-  return <div className="app-shell"><aside className="sidebar"><Logo light /><nav>{[{to:"/dashboard", label:"Dashboard"}, {to:"/action-center", label:"Action Center", count:open.length}, {to:"/partner-360", label:"Partner 360"}, {to:"/pipeline", label:"Pipeline"}, {to:"/agreements", label:"Agreements"}, {to:"/projects", label:"Projects"}, {to:"/finance", label:"Finance"}, {to:"/reports", label:"Reports & UCs"}, {to:"/import", label:"Import"}].map((item) => <NavLink key={item.to} to={item.to} className={({isActive}) => isActive ? "active" : ""}>{item.label}{item.count ? <span className="pill high">{item.count}</span> : null}</NavLink>)}</nav><button className="logout" onClick={() => navigate("/")}>↩ Log out</button><small>{workspace.data?.alerts.alerts.some((alert) => alert.source_label === "demo") ? "Fictional demo records" : "Synthetic demo data"}</small></aside><main className="app-main"><div className="page-header"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1></div>
+  return <div className="app-shell"><aside className="sidebar"><Logo light /><nav>{[{to:"/dashboard", label:"Dashboard"}, {to:"/action-center", label:"Action Center", count:open.length}, {to:"/partner-360", label:"Partner 360"}, {to:"/pipeline", label:"Pipeline"}, {to:"/agreements", label:"Agreements"}, {to:"/projects", label:"Projects"}, {to:"/finance", label:"Finance"}, {to:"/reports", label:"Reports & UCs"}, {to:"/import", label:"Import"}].map((item) => <NavLink key={item.to} to={item.to} className={({isActive}) => isActive ? "active" : ""}>{item.label}{item.count ? <span className="pill high">{item.count}</span> : null}</NavLink>)}</nav>{user && <small title={user.email ?? ""}>Signed in as {user.displayName || user.email}</small>}<button className="logout" onClick={() => void logOut()}>↩ Log out</button><small>{workspace.data?.alerts.alerts.some((alert) => alert.source_label === "demo") ? "Fictional demo records" : "Synthetic demo data"}</small></aside><main className="app-main"><div className="page-header"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1></div>
     {usesApi && workspace.error && <div className="api-state error" role="alert"><b>Could not reach the ObliGOT API.</b><span>{workspace.error.message}</span><button className="btn small-btn" onClick={workspace.reload}>Retry</button></div>}
     {usesApi && workspace.loading && !workspace.data && <p className="api-state" role="status">Evaluating rules on stored records…</p>}
     {usesApi && notice && <p className="api-state success" role="status">{notice}</p>}
@@ -367,5 +401,5 @@ function Drawer({ alert, asOf, onClose, onChanged }: { alert: Alert; asOf: strin
 function DrawerSection({ title, children, ai = false }: { title: string; children: ReactNode; ai?: boolean }) { return <section className={`drawer-section${ai ? " ai" : ""}`}><h4>{title}</h4>{children}</section>; }
 
 export default function App() {
-  return <Routes><Route path="/" element={<Landing />} /><Route path="/auth" element={<Auth />} /><Route path="*" element={<AppShell />} /></Routes>;
+  return <Routes><Route path="/" element={<Landing />} /><Route path="/auth" element={<Auth />} /><Route path="*" element={<RequireAuth><AppShell /></RequireAuth>} /></Routes>;
 }

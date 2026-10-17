@@ -52,8 +52,10 @@ Open http://127.0.0.1:5173.
 3. Enable Authentication providers you want to use (Email/Password and/or Google).
 4. The Firebase Web App is already registered and linked to the Hosting site.
 5. Set `FIREBASE_PROJECT_ID` in `backend/.env`.
-6. For local backend Firestore access, create a service account and store its JSON **outside the repository**. Set `GOOGLE_APPLICATION_CREDENTIALS` to its absolute path. Never commit the file.
-7. To require verified Firebase ID tokens on API calls, set `REQUIRE_FIREBASE_AUTH=true` in `backend/.env`. The frontend API client attaches the current user's ID token when signed in. Do not enable this until you have tested sign-in and backend credentials.
+6. For local backend Firestore access, put the service-account JSON at `backend/firebase-admin.json` (git-ignored) and set `FIREBASE_CREDENTIALS_FILE=firebase-admin.json` in `backend/.env` (relative paths resolve inside `backend/`; an absolute path also works). Never commit the file. Alternatively set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable — a value in `.env` alone is not seen by the Admin SDK.
+7. Check: `GET /api/health` must report `"database": "firestore"`.
+8. Load the fictional demo records once (optional; Firestore starts empty): `cd backend && python scripts/seed_demo.py`. It only adds records whose ID does not exist, so it never overwrites edits; dates are fixed at the time of seeding.
+9. Sign-in: the workspace requires a Firebase user (email/password or Google) whenever the web config is present. Set `REQUIRE_FIREBASE_AUTH=true` in `backend/.env` so the API rejects requests without a valid ID token (401). The frontend attaches the signed-in user's token; the activity log records the user's email.
 
 The Firebase Admin SDK uses Application Default Credentials in supported Google Cloud environments. Prefer attached service identity on Cloud Run instead of shipping service-account keys.
 

@@ -91,3 +91,20 @@ def test_verify_token_reports_unavailable_without_firebase_admin(monkeypatch):
     monkeypatch.setattr(auth, "get_firebase_app", missing)
     with pytest.raises(auth.AuthUnavailable):
         auth.verify_token("anything")
+
+
+def test_credentials_file_setting_is_used_and_resolved_inside_backend(monkeypatch):
+    """FIREBASE_CREDENTIALS_FILE in .env must reach the Admin SDK (pydantic settings do not set os.environ)."""
+    import firebase_admin
+    from firebase_admin import credentials
+    from app import firebase_app
+    seen = {}
+    monkeypatch.setattr(firebase_app, "_app", None)
+    monkeypatch.setattr(firebase_admin, "get_app", lambda: (_ for _ in ()).throw(ValueError("no app")))
+    monkeypatch.setattr(credentials, "Certificate", lambda path: seen.setdefault("path", path))
+    monkeypatch.setattr(firebase_admin, "initialize_app", lambda credential, options=None: seen.update(credential=credential, options=options) or "app")
+    monkeypatch.setattr(settings, "firebase_credentials_file", "service-account.json")
+    monkeypatch.setattr(settings, "firebase_project_id", "demo-project")
+    assert firebase_app.get_firebase_app() == "app"
+    assert seen["path"].replace("\\", "/").endswith("backend/service-account.json")
+    assert seen["credential"] == seen["path"] and seen["options"] == {"projectId": "demo-project"}

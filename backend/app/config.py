@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
     gemini_timeout_seconds: float = 20.0
     firebase_project_id: str = ""
+    # Path to a service-account JSON (git-ignored; relative paths resolve inside backend/). Empty = default credentials.
+    firebase_credentials_file: str = ""
     require_firebase_auth: bool = False
     # Business timezone offset used for "today" in deadline rules (IST = +330 minutes).
     business_utc_offset_minutes: int = 330
