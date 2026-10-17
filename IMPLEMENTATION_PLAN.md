@@ -31,7 +31,7 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | A2 | Finance and Reports & UCs on live data (old 8d); faster Gemini (fallback model, saved page readings) | Done |
 | R1 | Gemini resilience, resumable extraction, deterministic fallback | Done |
 | R2 | Deterministic validators (arithmetic, duplicates) and new alert rules | Done |
-| R3 | Backend-computed dashboard and options; remove remaining hardcoded frontend data | Not started |
+| R3 | Backend-computed dashboard and options; remove remaining hardcoded frontend data | Done |
 | S3 | Arithmetic consistency checks and workbook sheets for budgets/tranches/targets | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
 | P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
@@ -140,6 +140,13 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Three real MOUs are kept locally in `samples/` (git-ignored with `*.pdf`; never committed). Local inspection with PyMuPDF only (no content printed, nothing sent to Gemini): `MoU 1.pdf` 9 pages, `MoU 2.pdf` 27, `mou_3.pdf` 28 — every page is a single scanned image with no text layer. Before S1 the app would have blocked all three.
 - Sending real sample pages to Gemini awaits team confirmation of the API project's data terms (the key behaves like a free-tier key: Pro models return quota errors).
 - Gemini model: `gemini-2.5-flash` returns 404 for this key (no longer offered to new projects); default changed to `gemini-3.5-flash` (verified to answer).
+
+## Step R3 notes — backend-computed dashboard, dynamic options, no hardcoded business data
+- `GET /api/dashboard/summary` (new; `/api/dashboard` unchanged): open alerts by level and category, overdue items, MOUs expiring within 30 days, follow-ups from alerts, documents awaiting review / needing attention (failed, blocked, retry required) / addenda awaiting review, reporting (overdue reports and UCs from alerts, open reports, pending UCs), money to follow up (contractual releases due and overdue from approved terms without a linked receipt, unpaid invoices) summed per currency and per kind only, and coverage counts from approved programme scope. Computed from current records on every call.
+- `GET /api/options`: allowed values from the backend schema (statuses, stages, finance statuses per type, document kinds, import entity types) and current choices (partners, projects, agreements, states and programmes from approved scope).
+- Frontend: the dashboard shows only the summary's values (KPIs, document strip, alerts by category, money to follow up, reporting, coverage when approved data exists); Finance status options and Import entity types come from `/api/options`; the landing page no longer claims "214 stored records"; the export tab lists the real sheet names. Removed 22 unreachable files — the pre-redesign pages, `src/data/repository.ts` (synthetic sample records), and helpers only they used (verified with an import-graph check, `tsc -b`, and the build).
+- Remaining static lists in the frontend are presentation labels for backend enums (status and category names); they hold no business records or metrics.
+- Verification: `pytest` 299 passed (6 new in `tests/test_summary.py`: summary equals the alerts API, changes when a record changes, zeros on an empty store, per-currency/per-kind sums, overdue releases only from approved terms, options from schema and approved data). `npx tsc -b` clean; build passes. Browser: document flow (12 steps) and Finance/Reports drives pass; no sample partner appears; 0 px overflow at 390 px.
 
 ## Step R2 notes — deterministic validators and alert rules
 - `app/validators.py` (generic; nothing from the samples): table total rows vs the rows above (a grand total includes the previous total and the rows after it); period columns (Q1–Q4, months, years) vs a single total column; quantity × unit cost vs line total, identified by header wording; tranches vs the stated total commitment, per currency; exact duplicate proposals removed. Only readable numbers are compared (percentages, text, unreadable cells skipped); mismatches are reported with the numbers and the stated value is kept. Run during extraction; issues carry `field`, `page`, and `blocks_approval` (`info` issues never block).

@@ -45,6 +45,8 @@ import type {
   AlertsResponse,
   AnalyzeResponse,
   ClauseProposal,
+  CurrencyAmount,
+  DashboardSummary,
   DocumentEvidence,
   DocumentReview,
   FinanceRecord,
@@ -144,7 +146,7 @@ function Landing() {
   const navigate = useNavigate();
   const [trace, setTrace] = useState(0);
   const lines = [
-    "▸ Evaluating 214 stored records…",
+    "▸ Evaluating stored records…",
     "✓ Rule MOU-EXP-01 fired",
     "  agreement.endDate = today+14d ISO",
     "  renewalStatus = (empty)",
@@ -558,13 +560,14 @@ function AppShell() {
     navigate("/");
   };
   const workspace = useResource(async () => {
-    const [alerts, tasks, partners, documents] = await Promise.all([
+    const [alerts, tasks, partners, documents, summary] = await Promise.all([
       api.alerts.list(),
       api.actions.list(),
       api.partners.list(),
       api.documents.list(),
+      api.dashboardSummary(),
     ]);
-    return { alerts, tasks, partners, documents };
+    return { alerts, tasks, partners, documents, summary };
   }, []);
   // Live records only. While loading or when the API fails, pages show loading/error states — never sample data.
   const live = workspace.data;
@@ -704,11 +707,9 @@ function AppShell() {
         )}
         {page === "/dashboard" && live && (
           <Dashboard
-            open={open}
             sorted={today}
-            tasks={tasks}
             onSelect={select}
-            documents={live.documents}
+            summary={live.summary}
           />
         )}
         {page === "/action-center" && live && (
@@ -790,53 +791,41 @@ function AlertRow({
 }
 
 function Dashboard({
-  open,
   sorted,
-  tasks,
   onSelect,
-  documents,
+  summary,
 }: {
-  open: Alert[];
   sorted: Alert[];
-  tasks: ActionItem[];
   onSelect: (alert: Alert) => void;
-  documents: SourceDocument[];
+  summary: DashboardSummary;
 }) {
-  const overdue = open.filter(
-    (alert) => alert.days !== null && alert.days < 0,
-  ).length;
-  const expiring = open.filter(
-    (alert) =>
-      alert.rule === "MOU_EXPIRING" && alert.days !== null && alert.days <= 30,
-  ).length;
-  const followUps = tasks.filter((task) => task.source_alert_id).length;
-  const families = Object.entries(
-    open.reduce<Record<string, number>>((result, alert) => {
-      result[alert.category] = (result[alert.category] || 0) + 1;
-      return result;
-    }, {}),
+  // Every figure below is computed by the backend from current records (GET /api/dashboard/summary).
+  const families = Object.entries(summary.alerts.by_category).map(
+    ([name, count]) => [CATEGORY_LABELS[name as keyof typeof CATEGORY_LABELS] ?? name, count] as const,
   );
   const max = Math.max(1, ...families.map(([, count]) => count));
+  const money = (rows: CurrencyAmount[]) =>
+    rows.map((r) =>
+      `${new Intl.NumberFormat("en-IN", { style: "currency", currency: r.currency.length === 3 ? r.currency : "INR", maximumFractionDigits: 0 }).format(r.amount)} (${r.count})`,
+    ).join(" · ");
+  const coverage = summary.coverage.state.length ? summary.coverage.state : summary.coverage.location;
   return (
     <>
       <div className="kpis">
-        <Kpi value={open.length} label="Open alerts" />
-        <Kpi value={overdue} label="Overdue items" hot />
-        <Kpi value={expiring} label="MOUs expiring ≤30d" />
-        <Kpi value={followUps} label="Open follow-ups from alerts" />
+        <Kpi value={summary.alerts.open} label="Open alerts" />
+        <Kpi value={summary.alerts.overdue} label="Overdue items" hot />
+        <Kpi value={summary.alerts.mous_expiring_30d} label="MOUs expiring ≤30d" />
+        <Kpi value={summary.tasks.open_from_alerts} label="Open follow-ups from alerts" />
       </div>
       <div className="document-strip">
         <span>
-          <b>{documents.filter((d) => d.status === "needs_review").length}</b> Documents
-          awaiting review
+          <b>{summary.documents.awaiting_review}</b> Documents awaiting review
         </span>
         <span>
-          <b>{documents.filter((d) => d.status === "failed" || d.status === "blocked").length}</b> Extraction
-          failures / OCR
+          <b>{summary.documents.needs_attention}</b> Extraction failures / retry
         </span>
         <span>
-          <b>{documents.filter((d) => d.kind === "addendum" && d.status === "needs_review").length}</b> Pending
-          addendum approvals
+          <b>{summary.documents.addenda_awaiting_review}</b> Pending addendum approvals
         </span>
       </div>
       <div className="grid2">
@@ -867,6 +856,38 @@ function Dashboard({
             </div>
           ))}
           {!families.length && <p>No open alerts.</p>}
+        </section>
+      </div>
+      <div className="grid2">
+        <section className="box">
+          <h3>Money to follow up</h3>
+          <div className="detail-row">
+            <span>Contractual releases overdue</span>
+            <span>{summary.finance.fund_releases_overdue.length ? money(summary.finance.fund_releases_overdue) : "None recorded"}</span>
+          </div>
+          <div className="detail-row">
+            <span>Contractual releases not yet received</span>
+            <span>{summary.finance.fund_releases_due.length ? money(summary.finance.fund_releases_due) : "None recorded"}</span>
+          </div>
+          <div className="detail-row">
+            <span>Unpaid invoices</span>
+            <span>{summary.finance.unpaid_invoices.length ? money(summary.finance.unpaid_invoices) : "None recorded"}</span>
+          </div>
+          <small>Totals are per currency and per kind; they are never combined.</small>
+        </section>
+        <section className="box">
+          <h3>Reporting</h3>
+          <div className="detail-row"><span>Overdue reports and UCs</span><span>{summary.reporting.overdue}</span></div>
+          <div className="detail-row"><span>Open reports</span><span>{summary.reporting.open_reports}</span></div>
+          <div className="detail-row"><span>UCs pending</span><span>{summary.reporting.pending_ucs}</span></div>
+          {coverage.length > 0 && (
+            <>
+              <h3>Coverage in approved agreements</h3>
+              {coverage.map((c) => (
+                <div className="detail-row" key={c.label}><span>{c.label}</span><span>{c.count}</span></div>
+              ))}
+            </>
+          )}
         </section>
       </div>
     </>
@@ -1846,13 +1867,6 @@ function FinanceSection({
     </section>
   );
 }
-// Allowed statuses per finance record type (mirrors FINANCE_STATUSES in backend/app/models.py).
-const FINANCE_STATUS_OPTIONS: Record<FinanceRecord["record_type"], string[]> = {
-  budget: ["planned", "approved", "revised", "closed"],
-  fund_received: ["expected", "received", "cancelled"],
-  invoice: ["raised", "draft", "sent", "paid", "cancelled"],
-  utilization_certificate: ["pending", "submitted", "accepted", "rejected"],
-};
 const FINANCE_SECTIONS: { type: FinanceRecord["record_type"]; title: string }[] = [
   { type: "budget", title: "Budgets" },
   { type: "fund_received", title: "Funds received" },
@@ -1868,8 +1882,8 @@ const recordAmount = (record: FinanceRecord): string =>
 
 function FinancePage() {
   const data = useResource(async () => {
-    const [records, partners, alerts] = await Promise.all([api.finance.list(), api.partners.list(), api.alerts.list()]);
-    return { records, partners, alerts };
+    const [records, partners, alerts, options] = await Promise.all([api.finance.list(), api.partners.list(), api.alerts.list(), api.options()]);
+    return { records, partners, alerts, options };
   }, []);
   const [message, setMessage] = useState("");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
@@ -1916,7 +1930,7 @@ function FinancePage() {
                             value={record.status}
                             onChange={(event) => void setStatus(record, event.target.value)}
                           >
-                            {(FINANCE_STATUS_OPTIONS[record.record_type] ?? [record.status]).map((s) => (
+                            {(data.data!.options.enums.finance_status[record.record_type] ?? [record.status]).map((s) => (
                               <option key={s} value={s}>
                                 {s.replace("_", " ")}
                               </option>
@@ -2604,12 +2618,14 @@ function ImportPage() {
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"import" | "export">("import");
   const [exportMessage, setExportMessage] = useState("");
+  const options = useResource(() => api.options(), []);
+  const [entityType, setEntityType] = useState("projects");
   const parse = async (file: File) => {
     setBusy(true);
     setPreview(null);
     setMessage("");
     try {
-      const result = await api.importPreview(file, "projects");
+      const result = await api.importPreview(file, entityType);
       setPreview(result);
       setMessage(
         `${result.total_rows_detected} rows previewed from ${file.name}. No records were written.`,
@@ -2663,9 +2679,9 @@ function ImportPage() {
             Proposed AI values are never exported.
           </p>
           <p className="mono">
-            Sheets: Partners · Agreements · Programmes · Financial Terms ·
-            Obligations & Reporting · Clauses · Amendments & Change History ·
-            Validation Issues
+            Sheets: Partners · Agreements · Programmes_Projects · Programme_Scope ·
+            Financial_Terms · Obligations_Milestones · Clauses ·
+            Addenda_Change_History · Validation_Review_Issues · About
           </p>
           <button className="btn" onClick={() => void exportWorkbook()}>
             Download .xlsx
@@ -2678,6 +2694,18 @@ function ImportPage() {
         </section>
       ) : (
         <>
+          <div className="toolbar">
+            <label>
+              Records in the file{" "}
+              <select value={entityType} onChange={(event) => setEntityType(event.target.value)}>
+                {(options.data?.enums.import_entity_type ?? [entityType]).map((type) => (
+                  <option key={type} value={type}>
+                    {type.replaceAll("-", " ")}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <label className="dropzone">
             {busy
               ? "Reading file on the server…"

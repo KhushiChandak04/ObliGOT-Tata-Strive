@@ -3,7 +3,7 @@ import type {
   ActionItem, Activity, Agreement, Alert, AlertReview, AlertsResponse, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup,
   HealthResponse, ImportPreview, Milestone,
   Opportunity, Partner, Project, ReportRecord, SourceDocument, DocumentReview, AmendmentChange,
-  ApprovalCheck, ApprovalResult, ProposalCollection,
+  ApprovalCheck, ApprovalResult, ProposalCollection, DashboardSummary, AppOptions,
 } from "../types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -89,6 +89,8 @@ function partnerLinked<T>(path: string) {
 
 export const api = {
   health: () => request<HealthResponse>("/api/health"),
+  dashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
+  options: () => request<AppOptions>("/api/options"),
   dashboard: () => request<DashboardResponse>("/api/dashboard"),
   partners: {
     list: (q?: string) => request<Partner[]>(`/api/partners${query({ q })}`),

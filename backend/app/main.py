@@ -11,6 +11,7 @@ from app.routes import router
 from app.document_routes import router as document_router
 from app.document_review import router as document_review_router
 from app.amendments import router as amendments_router
+from app.summary_routes import router as summary_router
 
 logger = logging.getLogger("obligot")
 
@@ -49,6 +50,7 @@ app.include_router(router, prefix="/api")
 app.include_router(document_router, prefix="/api")
 app.include_router(document_review_router, prefix="/api")
 app.include_router(amendments_router, prefix="/api")
+app.include_router(summary_router, prefix="/api")
 
 @app.exception_handler(DataStoreUnavailable)
 async def data_store_unavailable(request, exc: DataStoreUnavailable) -> JSONResponse:

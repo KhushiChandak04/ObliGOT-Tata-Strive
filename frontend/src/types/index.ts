@@ -185,3 +185,28 @@ export interface HealthResponse {
 export interface AnalyzeResponse {
   summary: string; observations: string[]; recommendations: string[]; ai_used: boolean; ai_error?: string | null;
 }
+
+// Backend-computed management summary (GET /api/dashboard/summary) and options (GET /api/options).
+export interface CurrencyAmount { currency: string; amount: number; count: number }
+export interface DashboardSummary {
+  as_of: string;
+  alerts: { open: number; by_level: Record<"high" | "medium" | "low", number>; by_category: Record<string, number>; overdue: number; mous_expiring_30d: number };
+  tasks: { open: number; open_from_alerts: number };
+  partners: { total: number; active: number };
+  agreements: { active: number; expired: number };
+  documents: { awaiting_review: number; needs_attention: number; addenda_awaiting_review: number };
+  reporting: { overdue: number; open_reports: number; pending_ucs: number };
+  finance: { unpaid_invoices: CurrencyAmount[]; fund_releases_due: CurrencyAmount[]; fund_releases_overdue: CurrencyAmount[] };
+  coverage: Record<"state" | "region" | "course" | "location", { label: string; count: number }[]>;
+}
+export interface AppOptions {
+  enums: {
+    partner_status: string[]; agreement_status: string[]; signed_copy: string[]; renewal_status: string[]; project_status: string[];
+    milestone_status: string[]; opportunity_stage: string[]; finance_record_type: string[]; finance_status: Record<string, string[]>;
+    document_kind: string[]; scope_dimension: string[]; import_entity_type: string[];
+  };
+  partners: { id: string; name: string }[];
+  projects: { id: string; name: string; partner_id?: string | null }[];
+  agreements: { id: string; title: string; partner_id?: string | null }[];
+  states: string[]; programmes: string[];
+}

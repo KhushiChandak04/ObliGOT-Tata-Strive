@@ -85,6 +85,12 @@ Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previo
 |---|---|---|---|
 | POST | `/api/import/preview` | Validate JSON rows (`entity_type`, `rows`) or preview a CSV/XLSX upload (`file`, `entity_type`) | Never writes data (`committed: false`); 422 for unknown `entity_type`; XLSX reads the active sheet only; 5 MB limit |
 
+## Summary and options (Step R3)
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| GET | `/api/dashboard/summary` | Management summary computed from current records and alerts | Amounts summed per currency and per kind only; coverage from approved scope |
+| GET | `/api/options` | Allowed values (schema enums) and current partners, projects, agreements, states, programmes | For forms and filters |
+
 ## Documents (Step P2a)
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
