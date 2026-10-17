@@ -177,7 +177,7 @@ def approval_blockers(document: dict, proposals: dict[str, list[dict]], partner_
     pending = sum(1 for c in REVIEWABLE for r in proposals[c] if r["review_state"] in PENDING)
     if pending:
         blockers.append(f"{pending} extracted value{'s' if pending != 1 else ''} still need{'s' if pending == 1 else ''} a decision (approve, reject, or defer).")
-    open_issues = sum(1 for i in proposals["review_issues"] if i["status"] == "open")
+    open_issues = sum(1 for i in proposals["review_issues"] if i["status"] == "open" and i.get("blocks_approval", True))
     if open_issues:
         blockers.append(f"{open_issues} review issue{'s are' if open_issues != 1 else ' is'} still open (resolve or defer with a note).")
     values = approved_values(proposals)

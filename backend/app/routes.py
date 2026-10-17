@@ -201,6 +201,12 @@ def _check_agreement_links(data: dict) -> None:
 
 def _check_finance_links(data: dict) -> None:
     _check_links(data, ("project_id",))
+    if data.get("financial_term_id"):
+        term = get_record("financial_terms", data["financial_term_id"])
+        if not term or term.get("review_state") != "approved":
+            raise HTTPException(status_code=404, detail="Approved financial term not found")
+        if term.get("partner_id") and term["partner_id"] != data.get("partner_id"):
+            raise HTTPException(status_code=422, detail="Financial term belongs to a different partner")
 
 async def _read_json_object(request: Request) -> dict:
     try:
@@ -497,7 +503,7 @@ def update_followup(followup_id: str, payload: FollowupUpdate) -> dict:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     return record
 
-ALERT_SOURCES = ("agreements", "opportunities", "milestones", "reports", "finance", "actions")
+ALERT_SOURCES = ("agreements", "opportunities", "milestones", "reports", "finance", "actions", "financial_terms", "agreement_changes")
 
 def load_rule_config() -> RuleConfig:
     stored = get_record("config", "rules")

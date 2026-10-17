@@ -21,6 +21,10 @@ class RuleConfig(BaseModel):
     deadline_warning_days: int = Field(default=30, ge=1, le=180)
     stale_opportunity_days: int = Field(default=30, ge=7, le=365)
     invoice_aging_days: int = Field(default=30, ge=7, le=365)
+    # Impact (not likelihood): an alert about an amount at or above this, in this currency, gets an impact factor.
+    # Amounts in other currencies are never converted, so they do not get it.
+    material_amount: float = Field(default=1_000_000, ge=0)
+    material_currency: str = Field(default="INR", pattern=r"^[A-Z]{3}$")
 
 
 # Base points per severity. Overdue items outrank upcoming ones; data gaps rank lowest.
@@ -104,6 +108,18 @@ RULES: dict[str, dict[str, str]] = {
         "description": "An invoice that is raised or sent has neither a due date nor an issue date, so it cannot be called overdue and its age cannot be determined.",
         "why": "Payment follow-up cannot be scheduled without a due date.",
         "action": "Enter the due date from the invoice terms."},
+    "FUND_RELEASE_OVERDUE": {"title": "Contractual fund release overdue", "category": "finance", "severity": "overdue",
+        "description": "An approved tranche or payment term from an agreement is past its due date and no receipt is recorded against it.",
+        "why": "A missed release can stall programme delivery; it may also mean a receipt was not recorded.",
+        "action": "Confirm with the partner whether the tranche was released; record the receipt against the term or agree a revised date."},
+    "FUND_RELEASE_DUE_SOON": {"title": "Contractual fund release due soon", "category": "finance", "severity": "due_soon",
+        "description": "An approved tranche or payment term from an agreement is due within the deadline warning window and no receipt is recorded against it.",
+        "why": "Conditions for the release (reports, UCs, milestones) may need to be met first.",
+        "action": "Check the release conditions and confirm the expected date with the partner."},
+    "AMENDMENT_UNRESOLVED": {"title": "Amendment conflict unresolved", "category": "agreements", "severity": "risk",
+        "description": "An addendum change is marked unresolved (conflicting or unclear), so the agreement's effective terms are uncertain.",
+        "why": "Deadlines and amounts may rest on a term that has not been settled; unresolved changes are never applied automatically.",
+        "action": "Decide which value governs with the partner and approve or reject the change."},
     "TASK_OVERDUE": {"title": "Action overdue", "category": "tasks", "severity": "overdue",
         "description": "An open or in-review action is past its due date.",
         "why": "Overdue actions often hide the follow-ups that prevent other deadlines from slipping.",
@@ -132,7 +148,7 @@ class _Builder:
 
     def add(self, rule_id: str, record_type: str, record: dict, title: str, *, partner_id: str | None, owner: str | None,
             due: date | None = None, evidence: list[dict] | None = None, adjustments: list[tuple[str, int]] | None = None,
-            amount_recorded: bool = False) -> None:
+            amount_recorded: bool = False, amount: tuple[float, str] | None = None) -> None:
         rule = RULES[rule_id]
         days_remaining = _days(due, self.today) if due else None
         self.alerts.append({
@@ -144,18 +160,21 @@ class _Builder:
             "owner": owner or "Unassigned", "due_date": due.isoformat() if due else None, "days_remaining": days_remaining,
             "evidence": evidence or [], "why_it_matters": rule["why"], "recommended_action": rule["action"],
             "source_label": record.get("source_label", "user"),
-            "_adjustments": adjustments or [], "_amount_recorded": amount_recorded,
+            "_adjustments": adjustments or [], "_amount_recorded": amount_recorded or amount is not None, "_amount": amount,
         })
 
     def deadline(self, rule_overdue: str, rule_soon: str | None, record_type: str, record: dict, title: str, due: date, *,
-                 window: int, partner_id: str | None, owner: str | None, evidence: list[dict], amount_recorded: bool = False) -> None:
+                 window: int, partner_id: str | None, owner: str | None, evidence: list[dict], amount_recorded: bool = False,
+                 amount: tuple[float, str] | None = None) -> None:
         remaining = _days(due, self.today)
         if remaining < 0:
             evidence = evidence + [_ev("Days overdue", -remaining, "computed")]
-            self.add(rule_overdue, record_type, record, title, partner_id=partner_id, owner=owner, due=due, evidence=evidence, amount_recorded=amount_recorded)
+            self.add(rule_overdue, record_type, record, title, partner_id=partner_id, owner=owner, due=due, evidence=evidence,
+                     amount_recorded=amount_recorded, amount=amount)
         elif rule_soon and remaining <= window:
             evidence = evidence + [_ev("Days remaining", remaining, "computed")]
-            self.add(rule_soon, record_type, record, title, partner_id=partner_id, owner=owner, due=due, evidence=evidence, amount_recorded=amount_recorded)
+            self.add(rule_soon, record_type, record, title, partner_id=partner_id, owner=owner, due=due, evidence=evidence,
+                     amount_recorded=amount_recorded, amount=amount)
 
 
 def _agreement_rules(b: _Builder, agreements: list[dict]) -> None:
@@ -226,7 +245,8 @@ def _finance_rules(b: _Builder, finance: list[dict]) -> None:
         has_amount = f.get("amount") is not None
         evidence = [_ev("Type", kind), _ev("Status", status), _ev("Issue date", _parse_date(f.get("issue_date"))), _ev("Due date", due),
                     _ev("Amount", f"{f['amount']:,.2f} {f.get('currency', '')}".strip() if has_amount else None), _ev("Reference", f.get("reference_number"))]
-        common = {"partner_id": f.get("partner_id"), "owner": None, "amount_recorded": has_amount}
+        common = {"partner_id": f.get("partner_id"), "owner": None,
+                  "amount": (float(f["amount"]), f.get("currency") or "") if has_amount else None}
         if kind == "utilization_certificate" and status in {"pending", "rejected"}:
             if due:
                 b.deadline("UC_OVERDUE", "UC_DUE_SOON", "finance", f, title, due, window=b.config.deadline_warning_days, evidence=evidence, **common)
@@ -245,6 +265,40 @@ def _finance_rules(b: _Builder, finance: list[dict]) -> None:
                 b.add("INVOICE_DUE_DATE_MISSING", "finance", f, title, evidence=evidence, partner_id=f.get("partner_id"), owner=None)
 
 
+def _fund_release_rules(b: _Builder, terms: list[dict], finance: list[dict], agreements: list[dict]) -> None:
+    """Approved contractual tranches/payment terms with a due date, checked against receipts recorded for them."""
+    received = {f.get("financial_term_id") for f in finance
+                if f.get("record_type") == "fund_received" and f.get("status") == "received" and f.get("financial_term_id")}
+    by_id = {a["id"]: a for a in agreements}
+    for t in terms:
+        due = _parse_date(t.get("due_date"))
+        agreement = by_id.get(t.get("agreement_id") or "")
+        if (t.get("review_state") != "approved" or t.get("term_type") not in {"tranche", "payment_term"} or not due
+                or not agreement or agreement.get("status") in {"closed", "draft"} or t["id"] in received):
+            continue
+        amount = (float(t["amount"]), t.get("currency") or "") if t.get("amount") is not None else None
+        b.deadline("FUND_RELEASE_OVERDUE", "FUND_RELEASE_DUE_SOON", "financial_terms", t, t.get("description", t["id"]), due,
+                   window=b.config.deadline_warning_days, partner_id=t.get("partner_id") or agreement.get("partner_id"),
+                   owner=agreement.get("owner"), amount=amount,
+                   evidence=[_ev("Agreement", agreement.get("title")), _ev("Term", t.get("term_type")),
+                             _ev("Amount", f"{amount[0]:,.2f} {amount[1]}".strip() if amount else None), _ev("Basis", t.get("basis")),
+                             _ev("Due date", due), _ev("Condition", t.get("condition")),
+                             _ev("Receipts recorded against this term", 0, "computed")])
+
+
+def _amendment_rules(b: _Builder, changes: list[dict], agreements: list[dict]) -> None:
+    by_id = {a["id"]: a for a in agreements}
+    for c in changes:
+        agreement = by_id.get(c.get("agreement_id") or "")
+        if c.get("status") != "unresolved" or not agreement:
+            continue
+        b.add("AMENDMENT_UNRESOLVED", "agreement_changes", c, f"{c.get('field', 'term')} on {agreement.get('title', agreement['id'])}",
+              partner_id=agreement.get("partner_id"), owner=agreement.get("owner"),
+              evidence=[_ev("Agreement", agreement.get("title")), _ev("Term", c.get("field")), _ev("Current value", c.get("prior_value")),
+                        _ev("Proposed value", c.get("proposed_value")), _ev("Effective date", c.get("effective_date")),
+                        _ev("Reviewer note", c.get("note"))])
+
+
 def _task_rules(b: _Builder, actions: list[dict]) -> None:
     for t in actions:
         due = _parse_date(t.get("due_date"))
@@ -253,24 +307,31 @@ def _task_rules(b: _Builder, actions: list[dict]) -> None:
                   evidence=[_ev("Status", t.get("status")), _ev("Due date", due), _ev("Days overdue", _days(b.today, due), "computed")])
 
 
-def _score(alert: dict, related_count: int) -> dict[str, Any]:
-    factors = [{"label": f"Base: {alert['severity'].replace('_', ' ')}", "points": SEVERITY_POINTS[alert["severity"]]}]
+def _score(alert: dict, related_count: int, config: RuleConfig) -> dict[str, Any]:
+    """Transparent points. Each factor is tagged: `urgency` (how soon/late), `impact` (what is at stake), or
+    `context`. A large amount raises impact only; it is never treated as evidence of a partner's reliability."""
+    factors = [{"label": f"Base: {alert['severity'].replace('_', ' ')}", "points": SEVERITY_POINTS[alert["severity"]], "kind": "urgency"}]
     days = alert["days_remaining"]
     if days is not None and days < 0:
-        factors.append({"label": f"{-days} days overdue (max 30)", "points": min(30, -days)})
+        factors.append({"label": f"{-days} days overdue (max 30)", "points": min(30, -days), "kind": "urgency"})
     elif days is not None and alert["severity"] == "due_soon":
         if days <= 7:
-            factors.append({"label": "Due within 7 days", "points": 20})
+            factors.append({"label": "Due within 7 days", "points": 20, "kind": "urgency"})
         elif days <= 14:
-            factors.append({"label": "Due within 14 days", "points": 10})
+            factors.append({"label": "Due within 14 days", "points": 10, "kind": "urgency"})
     if related_count >= RELATED_ALERTS_THRESHOLD:
-        factors.append({"label": f"Partner has {related_count} other open alerts", "points": 10})
+        factors.append({"label": f"Partner has {related_count} other open alerts", "points": 10, "kind": "context"})
     if alert["_amount_recorded"]:
-        factors.append({"label": "Recorded amount at stake", "points": 5})
-    factors += [{"label": label, "points": points} for label, points in alert["_adjustments"]]
+        factors.append({"label": "Recorded amount at stake", "points": 5, "kind": "impact"})
+    amount = alert["_amount"]
+    if amount and amount[1] == config.material_currency and amount[0] >= config.material_amount:
+        factors.append({"label": f"Material amount (at least {config.material_currency} {config.material_amount:,.0f})", "points": 10, "kind": "impact"})
+    factors += [{"label": label, "points": points, "kind": "context"} for label, points in alert["_adjustments"]]
     score = max(0, sum(f["points"] for f in factors))
     level = "high" if score >= 60 else "medium" if score >= 35 else "low"
-    return {"score": score, "level": level, "factors": factors}
+    return {"score": score, "level": level, "factors": factors,
+            "urgency": sum(f["points"] for f in factors if f["kind"] == "urgency"),
+            "impact": sum(f["points"] for f in factors if f["kind"] == "impact")}
 
 
 def evaluate(records: dict[str, list[dict]], today: date, config: RuleConfig | None = None) -> list[dict[str, Any]]:
@@ -284,6 +345,8 @@ def evaluate(records: dict[str, list[dict]], today: date, config: RuleConfig | N
     _report_rules(b, get("reports"))
     _finance_rules(b, get("finance"))
     _task_rules(b, get("actions"))
+    _fund_release_rules(b, get("financial_terms"), get("finance"), get("agreements"))
+    _amendment_rules(b, get("agreement_changes"), get("agreements"))
 
     by_partner: dict[str | None, list[str]] = defaultdict(list)
     for alert in b.alerts:
@@ -291,8 +354,8 @@ def evaluate(records: dict[str, list[dict]], today: date, config: RuleConfig | N
     for alert in b.alerts:
         related = [i for i in by_partner[alert["partner_id"]] if i != alert["id"]] if alert["partner_id"] else []
         alert["related_alert_ids"] = related
-        alert["priority"] = _score(alert, len(related))
-        del alert["_adjustments"], alert["_amount_recorded"]
+        alert["priority"] = _score(alert, len(related), config)
+        del alert["_adjustments"], alert["_amount_recorded"], alert["_amount"]
     # Highest score first; then the most urgent date; then a stable id so ordering is deterministic.
     return sorted(b.alerts, key=lambda a: (-a["priority"]["score"], a["days_remaining"] if a["days_remaining"] is not None else 10**6, a["id"]))
 

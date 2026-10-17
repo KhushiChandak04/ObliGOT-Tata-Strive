@@ -41,7 +41,7 @@ export interface FinanceRecord {
   id: string; partner_id: string; project_id?: string | null; record_type: FinanceType; title: string;
   amount?: number | null; currency: string; issue_date?: string | null; due_date?: string | null;
   received_date?: string | null; status: string;
-  reference_number?: string | null; source_label?: SourceLabel;
+  reference_number?: string | null; financial_term_id?: string | null; source_label?: SourceLabel;
 }
 export interface ReportRecord {
   id: string; partner_id: string; project_id?: string | null; title: string; report_type: ReportType;
@@ -125,8 +125,8 @@ export interface TableProposal extends ProposalBase {
   currency?: string | null; unit_notes: string[]; notes: string[]; continues_across_pages: boolean;
 }
 export interface DocumentIssue {
-  id: string; document_id: string; severity: "error" | "warning"; code: string; message: string;
-  related_id?: string | null; status: "open" | "resolved" | "deferred"; resolution?: string | null;
+  id: string; document_id: string; severity: "error" | "warning" | "info"; code: string; message: string;
+  related_id?: string | null; field?: string | null; page?: number | null; blocks_approval?: boolean; status: "open" | "resolved" | "deferred"; resolution?: string | null;
 }
 export type ProposalCollection = "extracted_fields" | "clauses" | "financial_terms" | "obligations" | "programme_scope" | "tables";
 export interface DocumentReview {
@@ -149,7 +149,8 @@ export interface AmendmentChange {
 export type AlertSeverity = "overdue" | "risk" | "due_soon" | "missing_data";
 export type AlertCategory = "agreements" | "pipeline" | "projects" | "reporting" | "finance" | "tasks" | "data_quality";
 export interface AlertEvidence { label: string; value: string | number; source: "record" | "computed" }
-export interface PriorityFactor { label: string; points: number }
+/** kind: urgency (how soon/late), impact (what is at stake), context (other alerts, adjustments). */
+export interface PriorityFactor { label: string; points: number; kind?: "urgency" | "impact" | "context" }
 export type ReviewDecision = "acknowledged" | "deferred" | "dismissed" | "task_created";
 export interface AlertReview {
   id: string; decision: ReviewDecision; deferred_until?: string | null; reason?: string | null; note?: string | null;
@@ -160,7 +161,7 @@ export interface Alert {
   record_type: string; record_id: string; record_title: string; partner_id?: string | null; project_id?: string | null;
   owner: string; due_date?: string | null; days_remaining?: number | null; evidence: AlertEvidence[];
   why_it_matters: string; recommended_action: string; source_label?: SourceLabel; related_alert_ids: string[];
-  priority: { score: number; level: Priority; factors: PriorityFactor[] };
+  priority: { score: number; level: Priority; factors: PriorityFactor[]; urgency?: number; impact?: number };
   review: AlertReview | null; previous_review?: AlertReview; hidden_by_review: boolean;
 }
 export interface AlertsResponse {

@@ -169,6 +169,7 @@ class FinanceRecord(BaseModel):
     due_date: date | None = None
     received_date: date | None = None
     status: str = "pending"
+    financial_term_id: str | None = None  # the contractual tranche/payment term this receipt or invoice settles
     reference_number: str | None = None
     source_label: str = "demo"
 
@@ -183,6 +184,7 @@ class FinanceCreate(BaseModel):
     due_date: date | None = None
     received_date: date | None = None
     status: str | None = None
+    financial_term_id: str | None = None
     reference_number: str | None = Field(default=None, max_length=100)
 
     @model_validator(mode="after")

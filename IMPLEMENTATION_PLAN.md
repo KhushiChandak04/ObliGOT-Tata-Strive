@@ -30,7 +30,7 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | A1 | Align the teammate's document screens (merged 9da70ea) with the backend API | Done — approved |
 | A2 | Finance and Reports & UCs on live data (old 8d); faster Gemini (fallback model, saved page readings) | Done |
 | R1 | Gemini resilience, resumable extraction, deterministic fallback | Done |
-| R2 | Deterministic validators (arithmetic, duplicates) and new alert rules | In progress |
+| R2 | Deterministic validators (arithmetic, duplicates) and new alert rules | Done |
 | R3 | Backend-computed dashboard and options; remove remaining hardcoded frontend data | Not started |
 | S3 | Arithmetic consistency checks and workbook sheets for budgets/tranches/targets | Not started |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
@@ -140,6 +140,12 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Three real MOUs are kept locally in `samples/` (git-ignored with `*.pdf`; never committed). Local inspection with PyMuPDF only (no content printed, nothing sent to Gemini): `MoU 1.pdf` 9 pages, `MoU 2.pdf` 27, `mou_3.pdf` 28 — every page is a single scanned image with no text layer. Before S1 the app would have blocked all three.
 - Sending real sample pages to Gemini awaits team confirmation of the API project's data terms (the key behaves like a free-tier key: Pro models return quota errors).
 - Gemini model: `gemini-2.5-flash` returns 404 for this key (no longer offered to new projects); default changed to `gemini-3.5-flash` (verified to answer).
+
+## Step R2 notes — deterministic validators and alert rules
+- `app/validators.py` (generic; nothing from the samples): table total rows vs the rows above (a grand total includes the previous total and the rows after it); period columns (Q1–Q4, months, years) vs a single total column; quantity × unit cost vs line total, identified by header wording; tranches vs the stated total commitment, per currency; exact duplicate proposals removed. Only readable numbers are compared (percentages, text, unreadable cells skipped); mismatches are reported with the numbers and the stated value is kept. Run during extraction; issues carry `field`, `page`, and `blocks_approval` (`info` issues never block).
+- Rules engine: `FUND_RELEASE_OVERDUE` / `FUND_RELEASE_DUE_SOON` from approved contractual tranches/payment terms with a due date, resolved by a `fund_received` record (status received) linked through the new optional `FinanceRecord.financial_term_id` (validated: approved term, same partner); no due date → no alert (nothing invented). `AMENDMENT_UNRESOLVED` for unresolved addendum changes. Priority factors are tagged urgency / impact / context and the breakdown reports `urgency` and `impact` totals; a configurable material amount (`material_amount`, `material_currency`, default INR 10,00,000) adds impact only — other currencies are never converted, and amounts say nothing about partner reliability.
+- Frontend: types for the new fields; the alert drawer shows urgency vs impact.
+- Verification: `pytest` 293 passed (12 new in `tests/test_validators.py`); existing scores unchanged; `npm run build` passes.
 
 ## Step R1 notes — Gemini resilience and deterministic fallback
 - Error handling (`extraction.gemini_structured`, `classify_error`): invalid request (400) and bad key (400 "API key"/401/403) are never retried; model not available (404), overload (5xx), per-minute rate limit, and exhausted daily quota (429 with a per-day quota id) switch to the next model in `GEMINI_FALLBACK_MODELS`; retryable errors (rate limit, overload, timeout) are retried up to `GEMINI_MAX_RETRIES` with exponential backoff (`GEMINI_BACKOFF_BASE_SECONDS`), using Google's `retryDelay` when given, capped by `GEMINI_MAX_RETRY_WAIT_SECONDS`; at most `GEMINI_MAX_CONCURRENCY` calls at once. No token or quota values are hard-coded. Logs carry the error class only.

@@ -22,6 +22,7 @@ from app.documents import (
     ClauseType, CommitmentBasis, Evidence, FinancialTermType, ObligationFrequency, ObligationType, ScopeDimension,
     normalize_text, verify_evidence,
 )
+from app.validators import remove_duplicates, table_checks, tranche_checks
 
 logger = logging.getLogger("obligot.extraction")
 
@@ -357,10 +358,12 @@ class _Builder:
         self._n[prefix] = self._n.get(prefix, 0) + 1
         return f"{self.doc['id']}-{prefix}{self._n[prefix]:03d}"
 
-    def issue(self, severity: str, code: str, message: str, related_id: str | None = None) -> None:
+    def issue(self, severity: str, code: str, message: str, related_id: str | None = None,
+              field: str | None = None, page: int | None = None) -> None:
         self.out["review_issues"].append({
             "id": self._id("i"), "document_id": self.doc["id"], "severity": severity, "code": code,
-            "message": message[:1000], "related_id": related_id, "status": "open", "resolution": None})
+            "message": message[:1000], "related_id": related_id, "field": field, "page": page,
+            "blocks_approval": severity != "info", "status": "open", "resolution": None})
 
     def evidence(self, item: _Cited, related_id: str, warnings: list[str]) -> dict | None:
         quote = item.quote.strip()[:1000]
@@ -573,6 +576,19 @@ class _Builder:
         start, expiry = single("start_date") or single("effective_date"), single("expiry_date")
         if start and expiry and expiry < start:
             self.issue("error", "DATE_ORDER", f"Expiry date {expiry} is before start/effective date {start}.")
+
+        # Arithmetic consistency (generic; values are reported, never changed) and duplicate proposals.
+        for table in self.out["tables"]:
+            for code, message, field in table_checks(table):
+                table["warnings"].append(message)
+                table["review_state"] = "needs_review"
+                self.issue("warning", code, message, table["id"], field=field, page=table["pages"][0])
+        for code, message, field in tranche_checks(self.out["financial_terms"]):
+            self.issue("warning", code, message, field=field)
+        dropped = remove_duplicates(self.out)
+        if dropped:
+            self.issue("info", "DUPLICATES_REMOVED", f"{dropped} proposal{'s' if dropped != 1 else ''} identical to another (same kind, values, and quote) "
+                       "were removed.")
 
         # Similar deliverables with different relative deadlines for the same trigger (e.g. 15 vs 20 days after
         # year end): keep both, flag for review, never pick one.

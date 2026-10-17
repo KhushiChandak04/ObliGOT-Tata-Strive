@@ -73,6 +73,8 @@ type Alert = {
   priority: "High" | "Medium" | "Low";
   score: number;
   factors: { label: string; points: number }[];
+  urgency?: number;
+  impact?: number;
   days: number | null;
   owner: string;
   category: string;
@@ -105,6 +107,8 @@ const toViewAlert = (
         : "Low",
   score: alert.priority.score,
   factors: alert.priority.factors,
+  urgency: alert.priority.urgency,
+  impact: alert.priority.impact,
   days: alert.days_remaining ?? null,
   owner: alert.owner,
   category: CATEGORY_LABELS[alert.category] ?? alert.category,
@@ -2956,6 +2960,13 @@ function Drawer({
             </b>
           </div>
         ))}
+        {alert.urgency !== undefined && (
+          <small>
+            Urgency {alert.urgency} · Impact {alert.impact ?? 0}. A large
+            amount raises impact only; it says nothing about the partner's
+            reliability.
+          </small>
+        )}
         <small>
           Priority is a transparent business rule, not a prediction.
         </small>

@@ -35,7 +35,7 @@ ObligationType = Literal[
 ObligationFrequency = Literal["once", "monthly", "quarterly", "half_yearly", "annual", "unspecified"]
 ScopeDimension = Literal["state", "region", "course", "training_type", "beneficiary_group", "target"]
 ChangeStatus = Literal["proposed", "approved", "rejected", "unresolved"]
-IssueSeverity = Literal["error", "warning"]
+IssueSeverity = Literal["error", "warning", "info"]  # info never blocks approval
 IssueStatus = Literal["open", "resolved", "deferred"]
 
 # Statuses a reviewer must sign off; the model rejects them without reviewer metadata.
@@ -359,6 +359,9 @@ class ReviewIssue(BaseModel):
     code: str = Field(min_length=1, max_length=60)
     message: str = Field(min_length=1, max_length=1000)
     related_id: str | None = None
+    field: str | None = Field(default=None, max_length=200)  # affected field or column, when known
+    page: int | None = Field(default=None, ge=1)  # source page, when known
+    blocks_approval: bool = True  # while open; info issues never block
     status: IssueStatus = "open"
     resolution: str | None = Field(default=None, max_length=1000)
 
@@ -366,6 +369,8 @@ class ReviewIssue(BaseModel):
     def resolution_is_explained(self):
         if self.status in ("resolved", "deferred") and not self.resolution:
             raise ValueError(f"a {self.status} issue requires a resolution note")
+        if self.severity == "info":
+            self.blocks_approval = False
         return self
 
 

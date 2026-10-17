@@ -43,7 +43,7 @@ def test_renewal_in_progress_still_alerts_with_lower_priority():
     plain = run(agreements=[agreement(expiry_date=d(10))])[0]["priority"]
     in_progress = run(agreements=[agreement(expiry_date=d(10), renewal_status="in_progress")])[0]["priority"]
     assert in_progress["score"] == plain["score"] - 10
-    assert {"label": "Renewal already in progress", "points": -10} in in_progress["factors"]
+    assert {"label": "Renewal already in progress", "points": -10, "kind": "context"} in in_progress["factors"]
 
 
 @pytest.mark.parametrize("status", ["draft", "under_review", "closed"])
@@ -143,8 +143,10 @@ def test_tasks(status, days, expected):
 
 def test_priority_breakdown_sums_to_score_and_levels():
     alert = run(reports=[{"id": "r1", "partner_id": "p1", "title": "R", "status": "due", "due_date": d(-45)}])[0]
-    assert alert["priority"]["factors"] == [{"label": "Base: overdue", "points": 50}, {"label": "45 days overdue (max 30)", "points": 30}]
+    assert alert["priority"]["factors"] == [{"label": "Base: overdue", "points": 50, "kind": "urgency"},
+                                            {"label": "45 days overdue (max 30)", "points": 30, "kind": "urgency"}]
     assert alert["priority"]["score"] == 80 and alert["priority"]["level"] == "high"
+    assert alert["priority"]["urgency"] == 80 and alert["priority"]["impact"] == 0
     soon = run(reports=[{"id": "r1", "partner_id": "p1", "title": "R", "status": "due", "due_date": d(5)}])[0]["priority"]
     assert soon["score"] == 45 and soon["level"] == "medium"
     for a in run(reports=[{"id": "r1", "partner_id": "p1", "title": "R", "status": "due", "due_date": d(25)}]):

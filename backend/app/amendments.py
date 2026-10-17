@@ -297,7 +297,7 @@ def addendum_blockers(document: dict) -> list[str]:
     pending = sum(1 for c in changes if c["status"] == "proposed")
     if pending:
         blockers.append(f"{pending} proposed change{'s' if pending != 1 else ''} still need{'s' if pending == 1 else ''} a decision.")
-    open_issues = sum(1 for i in _proposals_for(document["id"])["review_issues"] if i["status"] == "open")
+    open_issues = sum(1 for i in _proposals_for(document["id"])["review_issues"] if i["status"] == "open" and i.get("blocks_approval", True))
     if open_issues:
         blockers.append(f"{open_issues} review issue{'s are' if open_issues != 1 else ' is'} still open (resolve or defer with a note).")
     return blockers
