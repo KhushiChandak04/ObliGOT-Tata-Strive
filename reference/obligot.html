@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ObliGOT — Obligations? Got them.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#F5DABF;--bg2:#efcfae;--card:#fbeedd;--ink:#14231f;--mut:#5c5a4c;--g:#0F3D3A;--g2:#17524e;--b:#6C151E;--line:#0f3d3a26;--on:#F5DABF;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;margin:0}html,body{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--bg);color:var(--ink);font:400 15px/1.55 'DM Sans',system-ui,sans-serif;overflow-x:hidden}
+h1,h2,h3,.d{font-family:'Bricolage Grotesque','Arial Narrow',sans-serif;letter-spacing:-.02em;line-height:1}
+.mono{font-family:'JetBrains Mono',monospace;font-size:12px}
+button{font:inherit;cursor:pointer;border:0}
+.btn{background:var(--g);color:var(--on);padding:12px 20px;border-radius:999px;font-weight:700;transition:.2s}.btn:hover{transform:translateY(-2px);box-shadow:4px 4px 0 var(--b)}
+.btn.o{background:none;color:var(--g);border:1.5px solid var(--g)}.btn.b{background:var(--b);color:#F5DABF}
+.view{display:none}.view.on{display:block}
+nav.top{display:flex;align-items:center;justify-content:space-between;padding:18px 5vw;position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px)}
+.logo{font:800 26px 'Bricolage Grotesque';color:var(--g)}.logo i{font-style:normal;color:var(--b)}
+nav.top a{margin:0 14px;color:var(--ink);text-decoration:none;font-weight:500}
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;padding:48px 5vw 64px;align-items:center}
+.eyebrow{display:inline-block;border:1.5px solid var(--g);color:var(--g);border-radius:999px;padding:4px 12px;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:22px}
+.hero h1{font-size:clamp(48px,8.4vw,116px);font-weight:800;color:var(--g);text-transform:uppercase}
+.got{position:relative;color:var(--b);display:inline-block}
+.stamp{position:absolute;right:-8px;top:-18px;transform:rotate(12deg) scale(0);border:3px solid var(--b);color:var(--b);font:800 14px 'Bricolage Grotesque';padding:3px 9px;border-radius:6px;letter-spacing:.1em;animation:st .5s 1.4s cubic-bezier(.2,2,.4,1) forwards}
+@keyframes st{to{transform:rotate(12deg) scale(1)}}
+.hero p.l{max-width:520px;margin:22px 0 28px;font-size:18px;color:var(--mut)}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.agent{background:var(--g);color:#F5DABF;border-radius:18px;padding:0;box-shadow:10px 10px 0 var(--b);overflow:hidden}
+.agent .bar{display:flex;gap:6px;padding:12px 16px;border-bottom:1px solid #f5dabf30;align-items:center}
+.agent .bar span{width:9px;height:9px;border-radius:50%;background:#F5DABF;opacity:.5}.agent .bar b{margin-left:auto;font-size:11px;opacity:.7}
+.trace{padding:16px 18px;min-height:300px;color:#F5DABF}.trace div{margin-bottom:9px;opacity:0;animation:in .4s forwards}
+@keyframes in{from{transform:translateY(6px)}to{opacity:1;transform:none}}
+.trace .ok{color:#9fdcb4}.trace .w{display:inline-block;background:#F5DABF;color:#6C151E;font-weight:600;padding:1px 6px;border-radius:4px}.cur{display:inline-block;width:7px;height:14px;background:#F5DABF;vertical-align:-2px;animation:bl 1s steps(1) infinite}@keyframes bl{50%{opacity:0}}
+.mq{background:var(--b);color:#F5DABF;overflow:hidden;white-space:nowrap;padding:14px 0;transform:rotate(-1deg);margin:0 -2vw}
+.mq div{display:inline-block;animation:mq 28s linear infinite;font:800 20px 'Bricolage Grotesque';text-transform:uppercase}
+@keyframes mq{to{transform:translateX(-50%)}}
+section.s{padding:72px 5vw}
+section.s h2{font-size:clamp(34px,5vw,64px);color:var(--g);text-transform:uppercase;max-width:800px;margin-bottom:34px}
+.flow{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.step{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;transition:.25s}.step:hover{background:var(--g);color:#F5DABF;transform:translateY(-6px)}
+.step b{font:800 34px 'Bricolage Grotesque';color:var(--b);display:block}.step:hover b{color:#F5DABF}.step small{display:block;color:var(--mut);margin-top:6px}.step:hover small{color:#F5DABF}
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.pan{border-radius:20px;padding:26px;min-height:200px}.pan h3{font-size:26px;margin-bottom:10px}
+.pg{background:var(--g);color:#F5DABF}.pc{background:var(--card);border:1.5px solid var(--line)}.pb{background:var(--b);color:#F5DABF}
+.tag{display:inline-block;font:600 11px 'JetBrains Mono';padding:2px 8px;border-radius:5px;border:1px solid currentColor;margin-bottom:12px}
+footer{padding:36px 5vw;background:var(--g);color:#F5DABF;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+/* auth */
+.auth{display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
+.auth .l{background:var(--g);color:#F5DABF;padding:48px;display:flex;flex-direction:column;justify-content:space-between}
+.auth .l h2{font-size:clamp(36px,4.5vw,60px);text-transform:uppercase}.auth .l .logo{color:#F5DABF}.auth .l .logo i{background:#F5DABF;color:#6C151E;padding:0 6px;border-radius:6px;margin-left:2px}
+.auth .r{display:flex;align-items:center;justify-content:center;padding:32px}
+.fm{width:100%;max-width:380px}.fm h2{font-size:40px;color:var(--g);margin-bottom:8px}
+.tabs{display:flex;background:var(--bg2);border-radius:999px;padding:4px;margin:20px 0}.tabs button{flex:1;padding:9px;border-radius:999px;background:none;color:var(--ink);font-weight:700}.tabs button.on{background:var(--g);color:var(--on)}
+label{display:block;font-weight:700;font-size:13px;margin:14px 0 5px}
+input{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);font:inherit}input:focus{outline:2px solid var(--b)}
+/* app */
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+aside{background:var(--g);color:#F5DABF;padding:22px 14px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:4px}
+aside .logo{color:#F5DABF;padding:0 10px 18px}aside .logo i{background:#F5DABF;color:#6C151E;padding:0 6px;border-radius:6px;margin-left:2px}
+aside a{padding:10px 12px;border-radius:10px;color:#F5DABF;text-decoration:none;cursor:pointer;opacity:.8;display:flex;justify-content:space-between}
+aside a:hover,aside a.on{background:#f5dabf1f;opacity:1}aside a.on{box-shadow:inset 3px 0 0 #F5DABF}
+aside .syn{font-size:11px;opacity:.65;padding:6px 10px}aside .out{margin-top:auto;background:none;border:1.5px solid #F5DABF66;color:#F5DABF;border-radius:10px;padding:10px 12px;font-weight:700;text-align:left;transition:.2s;white-space:nowrap}aside .out:hover{background:var(--b);border-color:var(--b)}
+main{padding:28px 3vw 60px;min-width:0}
+.hd{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;flex-wrap:wrap;gap:12px}.hd h1{font-size:44px;color:var(--g)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.k{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:16px}.k b{font:800 42px 'Bricolage Grotesque';color:var(--g);display:block}.k span{color:var(--mut);font-size:13px}.k.hot{background:var(--b);border-color:var(--b)}.k.hot b,.k.hot span{color:#F5DABF}
+.grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px}
+.box{background:var(--card);border:1.5px solid var(--line);border-radius:18px;padding:20px;min-width:0}.box h3{font-size:22px;color:var(--g);margin-bottom:14px}
+.al{display:flex;gap:12px;align-items:center;padding:12px;border-radius:12px;cursor:pointer;border:1.5px solid transparent;transition:.2s}.al:hover{background:var(--bg);border-color:var(--g);transform:translateX(4px)}
+.al .n{font:800 24px 'Bricolage Grotesque';color:var(--b);width:26px}.al .t{flex:1;min-width:0}.al .t b{display:block}.al .t small{color:var(--mut)}
+.pill{font:600 11px 'JetBrains Mono';padding:3px 9px;border-radius:999px;background:var(--g);color:var(--on);white-space:nowrap}.pill.h{background:var(--b);color:#F5DABF}.pill.d{background:none;color:var(--g);border:1px solid var(--g)}
+.bars .r{display:flex;align-items:center;gap:10px;margin:9px 0}.bars .r span{width:96px;font-size:13px}.bars .r i{height:12px;background:var(--g);border-radius:6px;transition:width .8s}.bars .r b{font-size:13px}
+.dr{position:fixed;inset:0 0 0 auto;width:min(480px,100%);background:var(--bg);border-left:2px solid var(--g);transform:translateX(105%);transition:.35s;z-index:20;overflow:auto;padding:26px;padding-top:calc(26px + env(safe-area-inset-top,0px))}.dr.on{transform:none}
+.dr h2{font-size:30px;color:var(--g);margin:8px 0 14px}.sec{border-left:4px solid var(--g);padding:4px 0 4px 14px;margin:16px 0}.sec.ai{border-color:var(--b)}.sec h4{font:700 11px 'DM Sans';letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:6px}
+.ev{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px dashed var(--line)}
+.ai-out{background:var(--card);border:1.5px dashed var(--b);border-radius:12px;padding:12px;min-height:60px;margin-top:8px}
+.x{float:right;background:none;font-size:22px;color:var(--ink)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,90px);background:var(--b);color:#F5DABF;padding:12px 20px;border-radius:999px;font-weight:700;transition:.3s;z-index:30}.toast.on{transform:translate(-50%,0)}
+.tl{position:relative;height:10px;background:var(--bg2);border-radius:5px;margin:22px 0 8px}.tl i{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:var(--g);width:88%}.tl em{position:absolute;right:12%;top:-6px;width:22px;height:22px;border-radius:50%;background:var(--b);border:3px solid var(--bg);animation:pu 1.6s infinite}
+@keyframes pu{50%{box-shadow:0 0 0 8px #6c151e30}}
+@media(max-width:860px){.hero,.auth,.grid2{grid-template-columns:1fr}.flow,.three,.kpis{grid-template-columns:1fr 1fr}.three{grid-template-columns:1fr}.app{grid-template-columns:1fr}aside{position:static;height:auto;flex-direction:row;overflow-x:auto}aside .syn,aside .logo{display:none}aside .out{margin-top:0;margin-left:auto}aside a{white-space:nowrap}nav.top a{display:none}.auth .l{display:none}}
+@media(prefers-reduced-motion:reduce){*{animation-duration:.01s!important;transition:none!important}}
+</style></head><body>
+
+<div class="view on" id="v-land">
+<nav class="top"><div class="logo">Obli<i>GOT</i></div><div><a href="#how">How it works</a><a href="#why">Why ObliGOT</a><button class="btn o" onclick="go('auth')">Sign in</button> <button class="btn" onclick="go('auth','up')">Get started</button></div></nav>
+<div class="hero"><div>
+<span class="eyebrow">Partnership intelligence · Tata STRIVE</span>
+<h1>Obligations? <span class="got">Got them.<span class="stamp">GOT IT ✓</span></span></h1>
+<p class="l">MOUs, reports, invoices and UCs live in a dozen trackers. ObliGOT watches them all, explains what needs attention, and drafts the next move. Your team approves it.</p>
+<div class="row"><button class="btn" onclick="go('auth')">Open the workspace →</button><button class="btn o" onclick="document.getElementById('how').scrollIntoView({behavior:'smooth'})">See the agent think</button></div></div>
+<div class="agent"><div class="bar"><span></span><span></span><span></span><b class="mono">obligot-agent · live trace</b></div><div class="trace mono" id="trace"></div></div></div>
+<div class="mq"><div id="mq"></div></div>
+<section class="s" id="how"><h2>Every alert answers five questions</h2>
+<div class="flow"><div class="step"><b>01</b>Issue<small>What was flagged by a rule</small></div><div class="step"><b>02</b>Evidence<small>The exact fields and dates</small></div><div class="step"><b>03</b>Why it matters<small>Plain-language impact</small></div><div class="step"><b>04</b>Next action<small>AI suggests, you decide</small></div><div class="step"><b>05</b>Owner + due<small>Tracked until resolved</small></div></div></section>
+<section class="s" id="why" style="padding-top:0"><div class="three">
+<div class="pan pg"><span class="tag">DETERMINISTIC</span><h3>Rules decide facts</h3><p>Dates, deadlines and amounts are computed by code, never guessed by a model.</p></div>
+<div class="pan pc"><span class="tag" style="color:var(--b)">GEMINI</span><h3>AI explains &amp; drafts</h3><p>Summaries and follow-ups, clearly labelled as AI interpretation with uncertainty shown.</p></div>
+<div class="pan pb"><span class="tag">HUMAN-IN-THE-LOOP</span><h3>You approve</h3><p>Nothing happens until a person reviews it. Every decision lands in the audit trail.</p></div></div></section>
+<footer><div class="logo" style="color:#F5DABF">Obli<i style="background:#F5DABF;color:#6C151E;padding:0 6px;border-radius:6px;margin-left:2px">GOT</i></div><div class="mono">Built for Tata STRIVE Code Odyssey 5.0 · Demo uses synthetic data</div></footer></div>
+
+<div class="view" id="v-auth"><div class="auth"><div class="l"><div class="logo" style="cursor:pointer" onclick="go('land')">Obli<i>GOT</i></div><h2>From commitments to accountability.</h2><div class="mono">Prototype screen. Production build uses Firebase Authentication.</div></div>
+<div class="r"><div class="fm"><h2 id="ft">Welcome back</h2><p style="color:var(--mut)">Sign in to your partnership workspace.</p>
+<div class="tabs"><button class="on" id="t-in" onclick="tab('in')">Sign in</button><button id="t-up" onclick="tab('up')">Sign up</button></div>
+<div id="nm" style="display:none"><label>Full name</label><input placeholder="Your name"></div>
+<label>Work email</label><input type="email" placeholder="you@tatastrive.org"><label>Password</label><input type="password" placeholder="••••••••">
+<div id="rl" style="display:none"><label>Role</label><input value="Manager" readonly></div>
+<button class="btn" style="width:100%;margin-top:22px" onclick="go('app')" id="sb">Sign in</button></div></div></div></div>
+
+<div class="view" id="v-app"><div class="app"><aside><div class="logo">Obli<i>GOT</i></div>
+<a class="on" data-p="dash">Dashboard</a><a data-p="act">Action Center <span class="pill h" id="nb"></span></a><a data-p="p360">Partner 360</a><a data-p="soon">Pipeline</a><a data-p="soon">Agreements</a><a data-p="soon">Projects</a><a data-p="soon">Finance</a><a data-p="soon">Reports &amp; UCs</a><a data-p="soon">Import</a>
+<button class="out" onclick="logout()">↩ Log out</button><div class="syn">Synthetic demo data</div></aside>
+<main id="main"></main></div>
+<div class="dr" id="dr"></div><div class="toast" id="toast"></div></div>
+
+<script>
+const $=s=>document.querySelector(s),fd=d=>new Date(Date.now()+d*864e5).toISOString().slice(0,10);
+const A=[
+{id:'A1',rule:'RPT-OVD-01',p:'Greenleaf Skills Foundation',t:'Quarterly report 9 days overdue',pri:'High',d:-9,own:'Anita R.',st:'Open',ev:[['report.type','Quarterly Progress'],['report.dueDate',fd(-9)],['report.status','Pending'],['submittedAt','— (empty)']],why:'Late reports can delay the next fund release and weaken partner trust.',ai:'Greenleaf’s quarterly report is overdue by 9 days. Suggest a courteous reminder to the programme lead and a firm new date. No contact attempt is recorded, so confirm no one has already reached out.'},
+{id:'A2',rule:'MOU-EXP-01',p:'Kaveri Retail Academy',t:'MOU expires in 14 days, no renewal',pri:'High',d:14,own:'Rahul S.',st:'Open',ev:[['agreement.endDate',fd(14)],['agreement.status','Active'],['renewalStatus','— (empty)']],why:'An expired MOU leaves training activities without a signed basis.',ai:'The MOU ends in 14 days with no renewal recorded. Suggest scheduling a renewal call this week. Whether the partner wants to renew is unknown from the records.'},
+{id:'A3',rule:'UC-OVD-02',p:'Sahyadri Agro Trust',t:'Utilization certificate 21 days overdue',pri:'High',d:-21,own:'Meera K.',st:'Open',ev:[['uc.dueDate',fd(-21)],['uc.status','Pending'],['project','Agri Skilling Cohort 3']],why:'Pending UCs block further disbursement on funded projects.',ai:'UC is three weeks overdue. Suggest escalating to the finance contact and asking for an expected submission date.'},
+{id:'A4',rule:'MS-OVD-01',p:'Northgate Logistics',t:'Milestone “Cohort 2 placements” past due',pri:'Medium',d:-4,own:'Rahul S.',st:'Open',ev:[['milestone.dueDate',fd(-4)],['milestone.status','In progress']],why:'Placement milestones drive reporting and renewal conversations.',ai:'Milestone is 4 days late but still in progress. Suggest asking for a revised completion date before treating it as a risk.'},
+{id:'A5',rule:'MOU-DOC-01',p:'Lotus Healthcare Skills',t:'Signed MOU copy missing',pri:'Medium',d:0,own:'Anita R.',st:'Open',ev:[['agreement.signedCopyStatus','Missing'],['agreement.status','Active']],why:'Without the signed copy, obligations cannot be verified in audits.',ai:'The record shows no signed copy. This may be a data gap rather than a real absence. Suggest checking the shared drive first.'},
+{id:'A6',rule:'MOU-EXP-01',p:'Brahma Textile Mills',t:'MOU expires in 27 days',pri:'Low',d:27,own:'Meera K.',st:'Open',ev:[['agreement.endDate',fd(27)],['renewalStatus','In discussion']],why:'Renewal is in discussion, so this is for visibility.',ai:'Renewal talks are underway. Suggest a check-in note to confirm timelines.'}];
+let T=[],page='dash';
+const open=()=>A.filter(a=>a.st!=='Resolved'),sorted=()=>[...open()].sort((x,y)=>(x.pri=='High'?0:x.pri=='Medium'?1:2)-(y.pri=='High'?0:y.pri=='Medium'?1:2)||x.d-y.d);
+const dl=a=>a.d<0?Math.abs(a.d)+'d overdue':a.d==0?'Today':'in '+a.d+'d';
+function go(v,m){document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));$('#v-'+v).classList.add('on');scrollTo(0,0);if(v==='auth')tab(m||'in');if(v==='app')render();if(v==='land')trace()}
+function logout(){$('#dr').classList.remove('on');page='dash';go('land')}
+function tab(m){const up=m==='up';$('#t-in').classList.toggle('on',!up);$('#t-up').classList.toggle('on',up);$('#nm').style.display=$('#rl').style.display=up?'block':'none';$('#sb').textContent=up?'Create account':'Sign in';$('#ft').textContent=up?'Join the team':'Welcome back'}
+function row(a,i){return `<div class="al" onclick="drawer('${a.id}')"><span class="n">${i+1}</span><div class="t"><b>${a.p}</b><small>${a.t} · ${a.own}</small></div><span class="pill ${a.pri=='High'?'h':'d'}">${a.pri}</span><span class="pill d">${dl(a)}</span></div>`}
+function render(){const o=open(),od=o.filter(a=>a.d<0).length,ex=o.filter(a=>a.rule.startsWith('MOU-EXP')&&a.d<=30).length,s=sorted();$('#nb').textContent=o.length;
+document.querySelectorAll('aside a').forEach(x=>x.classList.toggle('on',x.dataset.p===page));
+let h='';
+if(page==='dash'){const by={};o.forEach(a=>by[a.rule.split('-')[0]]=(by[a.rule.split('-')[0]]||0)+1);const mx=Math.max(1,...Object.values(by));
+h=`<div class="hd"><div><span class="eyebrow">Portfolio overview</span><h1>Good day, team.</h1></div></div>
+<div class="kpis"><div class="k"><b>${o.length}</b><span>Open alerts</span></div><div class="k hot"><b>${od}</b><span>Overdue items</span></div><div class="k"><b>${ex}</b><span>MOUs expiring ≤30d</span></div><div class="k"><b>${T.length}</b><span>Follow-ups created</span></div></div>
+<div class="grid2"><div class="box"><h3>Today’s 5</h3>${s.slice(0,5).map(row).join('')||'<p>All clear. Obligations: got them.</p>'}</div>
+<div class="box"><h3>Alerts by rule family</h3><div class="bars">${Object.entries(by).map(([k,v])=>`<div class="r"><span>${k}</span><i style="width:${v/mx*55}%"></i><b>${v}</b></div>`).join('')}</div></div></div>`}
+if(page==='act'){h=`<div class="hd"><h1>Action Center</h1></div><div class="box"><h3>All outstanding (${o.length})</h3>${s.map(row).join('')}</div><div class="box" style="margin-top:16px"><h3>Follow-up tasks</h3>${T.map(t=>`<div class="ev"><span>${t}</span><span class="pill">Assigned</span></div>`).join('')||'<small>None yet. Approve a recommendation to create one.</small>'}</div>`}
+if(page==='p360'){h=`<div class="hd"><div><span class="eyebrow">Partner 360</span><h1>Kaveri Retail Academy</h1></div></div><div class="grid2"><div class="box"><h3>MOU timeline</h3><div class="tl"><i></i><em></em></div><div class="ev"><span>Start</span><span>${fd(-350)}</span></div><div class="ev"><span>End</span><span>${fd(14)}</span></div><div class="ev"><span>Renewal</span><span>— not recorded</span></div></div><div class="box"><h3>Open alerts</h3>${o.filter(a=>a.p.startsWith('Kaveri')).map(row).join('')||'<small>None</small>'}</div></div>`}
+if(page==='soon'){h=`<div class="hd"><h1>Coming in the React build</h1></div><div class="box"><p>This screen is specified in the Copilot prompt and shares the same design system.</p></div>`}
+$('#main').innerHTML=h}
+document.querySelectorAll('aside a').forEach(a=>a.onclick=()=>{page=a.dataset.p;render()});
+function drawer(id){const a=A.find(x=>x.id===id),d=$('#dr');
+d.innerHTML=`<button class="x" onclick="$('#dr').classList.remove('on')">×</button><span class="pill ${a.pri=='High'?'h':'d'}">${a.pri} · ${a.st}</span><h2>${a.p}: ${a.t}</h2>
+<div class="sec"><h4>Verified record facts</h4>${a.ev.map(e=>`<div class="ev"><span class="mono">${e[0]}</span><b class="mono">${e[1]}</b></div>`).join('')}<div class="ev"><span>Owner</span><b>${a.own}</b></div></div>
+<div class="sec"><h4>Rule explanation · ${a.rule}</h4><p>${a.why}</p></div>
+<div class="sec ai"><h4>AI assistance · generated, not verified</h4><button class="btn b" id="gen">Ask Gemini for a recommendation</button><div class="ai-out mono" id="aiout">No recommendation requested. (Sample text in this prototype.)</div></div>
+<div class="sec"><h4>Human decision</h4><div class="row"><button class="btn" id="ap" disabled style="opacity:.4">Approve &amp; create task</button><button class="btn o" onclick="$('#dr').classList.remove('on')">Defer</button></div></div>`;
+d.classList.add('on');
+$('#gen').onclick=()=>{const o=$('#aiout');o.innerHTML='';const L=['▸ Reading '+a.ev.length+' linked fields…','▸ Checking for contact history…','▸ Drafting suggestion…'];let i=0;(function n(){if(i<L.length){o.insertAdjacentHTML('beforeend','<div>'+L[i++]+'</div>');setTimeout(n,650)}else{let j=0;const s=document.createElement('div');s.style.cssText='margin-top:10px;font:15px DM Sans;color:var(--ink)';o.append(s);(function ty(){s.textContent=a.ai.slice(0,j+=3);if(j<a.ai.length+3)setTimeout(ty,18);else{const b=$('#ap');b.disabled=false;b.style.opacity=1}})()}})()};
+$('#ap').onclick=()=>{a.st='Resolved';T.push(a.p+': '+a.t);$('#dr').classList.remove('on');render();const t=$('#toast');t.textContent='Task created and logged ✓';t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2400)}}
+/* landing agent trace */
+const TR=[['▸ Evaluating 214 stored records…',''],['✓ Rule MOU-EXP-01 fired','ok'],['  agreement.endDate = '+fd(14),''],['  renewalStatus = (empty)',''],['⚠ Rule RPT-OVD-01 fired','w'],['✓ Priority: HIGH (deterministic)','ok'],['▸ Gemini drafting follow-up…',''],['⏸ Waiting for human approval <span class="cur"></span>','']];
+let tt;function trace(){const el=$('#trace');if(!el)return;clearTimeout(tt);el.innerHTML='';let i=0;(function n(){if(i<TR.length){const d=document.createElement('div');d.className=TR[i][1];d.innerHTML=TR[i][0];el.append(d);i++;tt=setTimeout(n,750)}else tt=setTimeout(trace,5000)})()}
+$('#mq').innerHTML=Array(2).fill('MOU expiring ✦ Report overdue ✦ UC pending ✦ Invoice aging ✦ Milestone slipped ✦ Renewal due ✦ ').join('').repeat(2);
+trace();
+</script></body></html>

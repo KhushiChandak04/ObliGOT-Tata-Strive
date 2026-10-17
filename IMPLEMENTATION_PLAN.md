@@ -3,34 +3,54 @@
 Each step ends with a checkpoint report and requires explicit team approval before the next step begins. Approved steps are committed and pushed to `origin/main` at the end of the step (fetch first; stop and ask if teammates have pushed).
 
 ## Step log
-| Step | Name | Status |
-|---|---|---|
-| 1 | Repository and API audit | Done — approved |
-| 2 | Architecture proposal | Done — approved |
-| 3 | Project instructions and custom skills | Done — approved |
-| 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
-| 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
-| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | Done — approved |
-| 7 | Deadline engine and action center (7a engine, 7b review loop, 7c UI) | 7a approved; 7b done — awaiting review |
-| 8 | Funding and compliance | Not started |
-| 9 | Gemini AI integration | Not started |
-| 10 | Spreadsheet import | Not started |
-| 11 | Management dashboard and UI polish (+ motion) | Not started |
-| 12 | Testing and review | Not started |
-| 13 | Deployment and demo preparation | Not started |
+
+| Step | Name                                          | Status                                    |
+| ---- | --------------------------------------------- | ----------------------------------------- |
+| 1    | Repository and API audit                      | Done — approved                           |
+| 2    | Architecture proposal                         | Done — approved                           |
+| 3    | Project instructions and custom skills        | Done — approved                           |
+| 4    | Existing API route repairs (groups 4a–4f)     | 4a–4c approved; 4d done — awaiting review |
+| 5    | Application foundation                        | Not started                               |
+| 6    | Core partnership workflows                    | Not started                               |
+| 7    | Deadline engine and action center             | Not started                               |
+| 8    | Funding and compliance                        | Not started                               |
+| 9    | Gemini AI integration                         | Not started                               |
+| 10   | Spreadsheet import                            | Not started                               |
+| 11   | Management dashboard and UI polish (+ motion) | Not started                               |
+| 12   | Testing and review                            | Not started                               |
+| 13   | Deployment and demo preparation               | Not started                               |
+
+## Step 5 notes — React application foundation
+
+- Rebuilt the frontend shell from `reference/obligot.html`: landing page, animated agent trace, auth tabs, responsive app sidebar, dashboard, Action Center, Partner 360, alert drawer, and placeholder routes.
+- Preserved the FastAPI API contracts; this step uses the fictional reference alert set for the approved UI foundation and does not persist demo decisions.
+- Added `frontend/src/vite-env.d.ts`, raised the TypeScript library target to ES2021 for existing `replaceAll` usage, and typed an existing `titleCase` callback.
+- Verification: `cd frontend && npm install` completed successfully (npm reported 9 existing audit vulnerabilities); `cd frontend && npm run build` completed successfully with Vite production output.
+- Review note: Firebase sign-in remains the existing integration boundary; the reference auth form navigates to the dashboard until the auth workflow is wired to the backend in a later approved step.
+
+## Step 6 notes — Core workflow screens
+
+- Replaced the placeholder route surfaces with typed synthetic repository-backed Pipeline, Agreements, Projects, Finance, Reports & UCs, and SheetJS Import screens.
+- Added deterministic counts, renewal radar buckets, project milestone progress, separated finance totals, missing invoice due-date wording, report tabs, pipeline stage movement, and import preview/confirmation state.
+- Corrected the frontend to a light-only reference palette; removed dark-mode and pink/rose values, added cream GOT chips on green surfaces, and made the warning trace line a cream/bordo chip.
+- Verification: `cd frontend && npm run build` passed; repository scan for `prefers-color-scheme`, `data-theme`, `dark:`, pink/rose values returned no matches. Vite reported only the existing chunk-size warning.
+- API/data impact: no backend routes or contracts changed; demo records remain client-side, typed, fictional, and labelled `source_label="demo"`.
 
 ## Team decisions (recorded only when actually made)
+
 - Keep FastAPI as the single backend (Step 2 approval).
 - Step 2 architecture approved: computed-on-read alerts with persisted review decisions, data model and rule set in `ARCHITECTURE.md`.
 - Commit and push to GitHub at the end of each approved step; no AI attribution in commits.
 
 ## Open questions (awaiting team input)
+
 1. Firebase project ID, web-app config, service account, and Gemini key availability (needed by Step 5).
 2. Location of the sample partnership workbook and the official problem statement.
 3. Backend hosting: Cloud Run (recommended) or Render (`render.yaml` exists).
 4. Freeze `followups` and use `actions` as the only task model?
 
 ## Step 1 audit summary
+
 - Existing backend tests: 9 passed (`python -m pytest -q`, in-memory mode). Live Firestore, Gemini, auth flow, and frontend build untested (no credentials / `node_modules`).
 - Verified defects (probe script, in-memory mode):
   1. Deadline findings ignore status — a submitted report is still "Overdue".
@@ -47,29 +67,32 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 - Cleanup candidates: committed `.bak` files, unmounted SQLite `domain_store.py`/`domain_routes.py` (the earlier "removed" note was inaccurate), `OBLIGOT_DB_PATH` in `docker-compose.yml`, unused `xlsx@0.18.5` (known advisories), outdated `docs/API_ENDPOINTS.md`.
 
 ## Step 4 repair groups (proposed)
+
 - **4a** Status-aware deadline findings, no missing-date noise on finance, Asia/Kolkata "today".
 - **4b** PATCH null-clearing, date-order validation, import `entity_type` validation, `GET /followups`.
-- **4c** Partner DELETE 409 with children *(contract change — needs approval)*, auth init fix, Firestore errors → 503.
-- **4d** Per-type finance statuses *(contract change — needs approval)*.
+- **4c** Partner DELETE 409 with children _(contract change — needs approval)_, auth init fix, Firestore errors → 503.
+- **4d** Per-type finance statuses _(contract change — needs approval)_.
 - **4e** Non-blocking Gemini call with honest error reporting.
 - **4f** Cleanup (`.bak`, legacy SQLite, `OBLIGOT_DB_PATH`, `xlsx`), refresh `docs/API_ENDPOINTS.md`.
 
 ## Acceptance criteria
-| Scenario | Pass condition |
-|---|---|
-| A MOU expiry | Active MOU 30 days out → `MOU_EXPIRING` with dates as evidence; mark renewed → alert gone on next evaluation |
-| B Overdue report | Pending report past due → `REPORT_OVERDUE`, high priority; submit → alert gone |
-| C AI | Output cites only supplied fact ids; failure → `ai_used=false` with reason, alerts intact |
-| D Human action | Task from alert → assign → complete; status persists, activity logged, dashboard updates |
-| E Missing data | Active MOU without expiry → `DATA_MISSING`; nothing invented |
-| F Finance | Invoice without due date shown by age, never "overdue"; no cross-currency/type totals |
-| G Dashboard | KPIs change only via records; no hard-coded numbers |
-| H Import | Preview writes nothing; duplicates/invalid rows counted; commit only on confirmation |
-| API | Each existing route tested for success, 404, 422, 401/403 |
+
+| Scenario         | Pass condition                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| A MOU expiry     | Active MOU 30 days out → `MOU_EXPIRING` with dates as evidence; mark renewed → alert gone on next evaluation |
+| B Overdue report | Pending report past due → `REPORT_OVERDUE`, high priority; submit → alert gone                               |
+| C AI             | Output cites only supplied fact ids; failure → `ai_used=false` with reason, alerts intact                    |
+| D Human action   | Task from alert → assign → complete; status persists, activity logged, dashboard updates                     |
+| E Missing data   | Active MOU without expiry → `DATA_MISSING`; nothing invented                                                 |
+| F Finance        | Invoice without due date shown by age, never "overdue"; no cross-currency/type totals                        |
+| G Dashboard      | KPIs change only via records; no hard-coded numbers                                                          |
+| H Import         | Preview writes nothing; duplicates/invalid rows counted; commit only on confirmation                         |
+| API              | Each existing route tested for success, 404, 422, 401/403                                                    |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
 
 ## Step 7b notes — review loop and activity log
+
 - `app/reviews.py`: review model and validation, fact fingerprint, review attachment (hide dismissed / still-deferred), activity logging, actor resolution.
 - Routes: `POST|DELETE /api/alerts/{id}/review`, `POST /api/alerts/{id}/task` (prefilled from alert, `source_alert_id`, duplicate open task → 409), `GET /api/activities`; `GET /api/alerts` gains `include_reviewed`, per-alert `review` / `previous_review` / `hidden_by_review`, and `counts.hidden_by_review`. Actions log creation, status changes, and reassignment. `ActionItem` gains optional `source_alert_id` (additive).
 - Bug found by tests and fixed: activity timestamps had one-second precision, so events in the same second could be listed out of order; now microsecond timestamps plus a per-process sequence tie-breaker.
@@ -77,6 +100,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Not in 7b: UI (7c); role restrictions on who may dismiss or change config (5c).
 
 ## Step 7a notes — deterministic rules engine
+
 - New `app/engine.py`: 19 rules with stable ids, descriptions, why-it-matters text, and recommended actions; alerts computed on read with id `{rule_id}:{record_type}:{record_id}`; evidence lists stored values (`source: record`) and derived values (`source: computed`); `related_alert_ids` link alerts for the same partner; transparent priority breakdown; deterministic ordering.
 - Renewal-aware: `renewed`/`not_renewing` suppress expiry alerts; `in_progress` keeps the alert with −10 priority.
 - Invoices without a due date are reported as missing data (age cannot be determined without an issue date); never called overdue.
@@ -86,6 +110,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Verification: `pytest` → 132 passed (55 new in `tests/test_engine.py`: every rule's boundaries and non-firing statuses, config thresholds, score arithmetic and levels, cross-record threshold, evidence shape, determinism, API filters, resolve-clears-alert, config validation); also passes run alone and in reverse file order.
 
 ## Step 6d notes — projects and milestones
+
 - New `milestones` collection and routes. `partner_id` is always derived server-side from the milestone's project (client value ignored), so milestones cannot drift from their project's partner. Status `planned`/`in_progress`/`completed`/`missed`/`cancelled`; `completed_date` is required for and only allowed on `completed`.
 - Integrity: `DELETE /api/projects/{id}` → 409 while milestones, agreements, finance, or reports reference it; changing a project's partner → 409 while such records exist; partner delete also counts milestones.
 - Demo milestones on demo-project-001: one completed, one in progress and past due, one planned.
@@ -94,6 +119,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Not in 6d: overdue-milestone rule (Step 7).
 
 ## Step 6c notes — agreements/MOU register
+
 - Agreement fields added (optional, backward compatible): `signed_copy` (default `unknown`), `renewal_status` (default `none`), `project_id`, `opportunity_id`. Links must exist (404) and belong to the agreement's partner (422), checked on create and PATCH (including when the partner changes).
 - Security: `document_url` restricted to http(s) server-side (blocks `javascript:`/`data:` links that the UI renders as anchors); the UI renders only http(s) links, opened with `rel="noopener noreferrer"`.
 - `GET /api/agreements?expiring_within_days=N` filter evaluated on the backend against the IST business date (inclusive window, active agreements only), so the browser does no deadline date math.
@@ -104,6 +130,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Not in 6c: signed-copy-missing, expired-without-renewal, and renewal-aware expiry rules (Step 7).
 
 ## Step 6b notes — partnership pipeline
+
 - New `opportunities` collection and routes (`GET/POST /api/opportunities`, `GET/PATCH/DELETE /api/opportunities/{id}`); stages `identified → qualification → proposal → approval → agreement → active → renewal → closed` validated server-side; `updated_at` set on create and every PATCH; partner must exist. Additive — no existing contract changed.
 - Partner DELETE 409 now also counts opportunities.
 - Shared `_read_json_object`: malformed JSON on PATCH routes (agreements, projects, finance, reports, opportunities) and JSON import preview now returns 422 instead of 500.
@@ -113,6 +140,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Not in 6b: stale next-step and approved-without-MOU rules (Step 7); dashboard pipeline chart (Step 11).
 
 ## Step 6a notes — partner directory and Partner 360
+
 - Demo dataset (in-memory fallback only; all `source_label=demo`, fictional, dates relative to the IST business date) in `backend/app/demo_data.py`. demo-001 produces exactly five findings: MOU expiring in 21 days, active addendum missing expiry, monthly report 6 days overdue, invoice without due date, UC due in 10 days; a submitted report and received/approved finance records produce none. demo-002 has a draft MOU only; demo-003 has no linked records.
 - `GET /api/actions` gains optional `related_partner_id` filter (additive).
 - Tests: new `tests/conftest.py` isolates the in-memory store per test (restores collections after each test) — previously tests leaked records into each other; `tests/test_demo_data.py` checks labels, references, create-model validity, and the exact expected findings.
@@ -121,6 +149,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Not done in 6a: creating/editing agreements, projects, finance, reports from Partner 360 (6c/6d/Step 8); activity history and AI summary (Steps 7/9); role restrictions (5c).
 
 ## Step 5a notes — frontend foundation
+
 - `npm install` (npm 11.16, Node 26.3); `package-lock.json` committed. npm 11 skipped install scripts for esbuild, @firebase/util, protobufjs (not approved); build works without them.
 - Build was failing (verified): untyped `import.meta.env` and `replaceAll` vs ES2020 lib. Added `src/vite-env.d.ts`; tsconfig target/lib → ES2021. `npm run build` now passes.
 - Typed API client per resource (`api.partners|actions|agreements|projects|finance|reports|followups`, `dashboard`, `health`, `analyze`) with `ApiError(status)`; status 0 = backend unreachable. JSON `Content-Type` only on requests with a body. FastAPI validation errors are flattened to readable messages.
@@ -133,6 +162,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - `npm audit`: 8 advisories (5 high, 3 moderate) in firebase→@grpc/grpc-js, vite/esbuild (dev server), react-router; every fix is a major upgrade (Vite 8, React Router 7) — awaiting team decision.
 
 ## Step 4f notes — cleanup
+
 - Removed (verified unreferenced with `git grep`): `backend/app/models.py.bak`, `routes.py.bak`, `routes.routes-fix.bak`, legacy SQLite `domain_store.py` and `domain_routes.py` (never mounted).
 - `docker-compose.yml`: removed `OBLIGOT_DB_PATH` and the `obligot_data` volume (SQLite only); set `PORT: "8000"` because the Dockerfile defaults to 8080 while compose publishes 8000 (found by reading; Docker not run).
 - `frontend/package.json`: removed unused `xlsx@0.18.5` (no imports; known advisories). No lockfile is tracked.
@@ -142,6 +172,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Step 4 route repair is complete. Remaining verified defect from Step 1: projects/milestones not evaluated (Step 7).
 
 ## Step 4e notes — non-blocking Gemini with honest errors
+
 - `analyze_context` uses `client.aio.models.generate_content` under `asyncio.wait_for` (`GEMINI_TIMEOUT_SECONDS`, default 20), so a slow Gemini call no longer blocks other requests.
 - `AnalyzeResponse` gains optional `ai_error` (additive): `not_configured`, `timeout`, `empty_response`, `api_error:<code>`, `error:<ExceptionType>`. Summary text states the reason. Errors are logged by type/code only.
 - Frontend `api.analyze` return type updated with `ai_error`.
@@ -150,6 +181,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Note: `requirements.txt` pins `google-genai<2.0.0` while this machine has 2.23.0; the code uses APIs present in both. Align in 4f.
 
 ## Step 4d notes — per-type finance statuses
+
 - `FinanceCreate.status` is validated against `FINANCE_STATUSES[record_type]` (approved contract change). Default on create is the first entry:
   - budget: `planned`, approved, revised, closed
   - fund_received: `expected`, received, cancelled
@@ -161,6 +193,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Verification: `python -m pytest -q` → 43 passed (12 new in `tests/test_finance_statuses.py`). Probe defect 9 (free-text status) → 422.
 
 ## Step 4c notes — referential integrity, auth init, store errors
+
 - `DELETE /api/partners/{id}` returns 409 listing linked record counts (agreements, projects, finance, reports via `partner_id`; actions, follow-ups via `related_partner_id`). Approved contract change.
 - New `app/firebase_app.py` creates the Firebase Admin app once; Firestore and token verification share it, so token checks no longer depend on a prior repository call.
 - `app/auth.py` now exposes `verify_token` (unused `verify_bearer_token` dependency removed). Middleware: missing/invalid token → 401; Firebase not configured, not installed, or certificates unreachable → 503.
@@ -169,6 +202,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Untested: real `firebase_admin` token verification and live Firestore (package and credentials not available locally). Auth outcomes are covered with monkeypatched `verify_token`.
 
 ## Step 4b notes — validation and missing routes
+
 - PATCH `/api/partners/{id}` and `/api/actions/{id}` now apply explicit `null` to clear optional fields. The merged record is validated against the full model, so clearing a required field (e.g. partner `name`) returns 422 instead of corrupting the record. Omitted fields are unchanged; unknown stored fields are preserved.
 - `AgreementCreate` (expiry ≥ start) and `ProjectCreate` (end ≥ start) validate date order → 422 on POST and PATCH.
 - `POST /api/import/preview` multipart uploads now reject unknown `entity_type` with 422 (checked before reading the file), same set as the JSON path; default remains `projects`.
@@ -177,6 +211,7 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Verification: `python -m pytest -q` → 22 passed (8 new in `tests/test_route_repairs.py`). Probe: defects 4–7 fixed.
 
 ## Step 4a notes — status-aware deadline findings
+
 - `scan_deadlines` now skips resolved records: reports `submitted`/`accepted`; finance `paid`/`received`/`submitted`/`accepted`/`completed`/`closed`/`cancelled` (case-insensitive, finance status is still free text until 4d); agreements `closed`.
 - Agreements are evaluated only when `active` or `expired`, with "Expired"/"Expiring soon"/"Missing expiry date" wording. Drafts and under-review agreements are skipped.
 - Finance: only `invoice` and `utilization_certificate` are evaluated; budgets and fund receipts no longer produce "Missing due date" noise.
@@ -186,5 +221,6 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 - Verification: `python -m pytest -q` → 14 passed (5 new tests). Probe: defects 1 and 2 fixed; defect 3 (projects/milestones) deferred to Step 7 as planned.
 
 ## Step 3 notes
+
 - Created `CLAUDE.md` and seven project skills in `.claude/skills/` (`build-feature`, `firebase-workflow`, `review`, `ui-polish`, `motion`, `data-import`, `demo-check`).
 - Risk: the project skill `/review` shares its name with a Claude Code built-in review command; verify which one `/review` invokes. Renaming requires team approval.
