@@ -98,6 +98,18 @@ Malformed JSON bodies on PATCH routes and JSON import preview return 422 (previo
 | POST | `/api/documents/{id}/approve` | Approve a reviewed MOU. Body: `partner_id`, `create_partner`, `owner`, `overwrite_existing` | 409 with `blockers`, or with `conflicts` when approved values differ from an already linked agreement (nothing written). Creates/fills the agreement (`source_document_id`), a project when milestones/scope/programme are approved, and milestones, reports, and UC finance records from approved obligations; fund releases and other obligations stay register-only. The document becomes `approved` and locked. |
 | GET | `/api/documents/{id}/extraction` | Proposals for review: `extracted_fields`, `clauses`, `financial_terms`, `obligations`, `programme_scope`, `review_issues`, plus `document` | None of these are approved or operational. |
 
+## Addenda (Step P4a)
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| GET | `/api/documents/{id}/agreement-candidates` | Agreements an addendum may amend, with reasons (same partner, reference number found) | Suggestion only; nothing is linked automatically |
+| PATCH | `/api/documents/{id}/link` | Choose the agreement an addendum amends (`agreement_id`) | Addenda only (422 for an MOU); 422 other partner; 409 once changes were decided or after approval |
+| POST | `/api/documents/{id}/changes` | Compare the extracted addendum with the agreement's current values; create proposed changes (prior → proposed, amendment/effective dates, evidence) | Restated values are reported as `unchanged`; two values for one term, or a different value from another addendum with the same effective date → `unresolved`. 409 before linking/extraction or after decisions |
+| GET | `/api/documents/{id}/changes` | The addendum's changes in effective-date order | |
+| PATCH | `/api/agreement-changes/{id}` | `decision` approve / reject / unresolved / reset; optional `effective_date`, `amendment_date`, corrected `proposed_value` (with `note`) | Approve needs a known effective date and verified evidence (422); 409 when a different value is already approved for the same term and effective date; unresolved needs a note |
+| GET | `/api/agreements/{id}/history` | Original values, every change, current effective values, counts (proposed/approved/rejected/unresolved/applied/scheduled) | |
+
+`POST /api/documents/{id}/approve` also approves an addendum once it is linked, compared, every change decided, and issues closed: approved changes in force are applied to the agreement (latest effective date wins per term; status recomputed from the new expiry), future-dated ones are applied when their date arrives (checked when alerts or agreements are read), unresolved and rejected changes are never applied; approved added obligations become operational records.
+
 ## Export (Step P3c)
 | Method | Path | Purpose | Notes |
 |---|---|---|---|

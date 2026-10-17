@@ -22,9 +22,9 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 | P0 | Scope and repository audit | Done — approved |
 | P1 | Canonical schema and workbook contract (P1a models + contract) | P1a done — approved |
 | P2 | PDF extraction foundation (upload, private storage, PyMuPDF page text, low-text detection, document status) | P2a (backend) done — approved |
-| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | P3a, P3b done — approved; P3c (export) done — awaiting review |
+| P3 | Evidence-linked extraction (Gemini structured output), review/approve, multi-sheet XLSX export | Done — approved |
 | F1 | Firebase connection: Firestore, demo seed, sign-in required (replaces 5b; roles 5c still open) | Done — approved |
-| P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | Not started |
+| P4 | Addendum reconciliation (link to agreement, old vs proposed, approval, history) | P4a (backend) done — awaiting review. Validated on synthetic addenda only; no real addendum sample yet |
 | P5 | Rules engine on approved records only (+ amendment-conflict and contractual fund-release rules) | Mostly existing; additions not started |
 | P6 | Frontend integration (documents, review workspace, addendum review, export; Finance/Reports live) | Not started |
 | P7 | Grounded AI summaries and alert explanations | Scaffolded (no key; free-text output) |
@@ -127,6 +127,15 @@ Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm
 **Reused unchanged:** record models and CRUD, link checks, rules engine and priority score, alert review loop and activity log, import preview (re-import path for exported workbooks), the new UI and its forms.
 
 **Known limitations (current):** no real MOU samples (synthetic fixtures only); scanned pages are detected as low-text and need OCR or manual review — no OCR engine is installed; Gemini has not been called successfully (no key); Firestore and Google sign-in are not verified on this machine.
+
+## Step P4a notes — addenda (backend)
+- New `app/amendments.py`: agreement candidates (suggestions with reasons, never auto-linked), `link`, change building against the agreement's current values, per-change decisions, addendum approval, application in effective-date order, and `GET /api/agreements/{id}/history`.
+- Rules: the addendum's `execution_date` is the amendment date and its `effective_date` the date of effect. Changeable terms: expiry and start dates (on the agreement record; drive alerts) and renewal/termination terms, duration, scope, programme name (effective view and workbook). Additions (new obligations, financial terms, clauses) are separate "add" changes. Approval needs verified evidence and a known effective date (the reviewer may enter it from the document). Two values in one addendum, or a different value with the same effective date in another addendum, are `unresolved` and never applied. Originals are never overwritten: every change keeps prior and proposed values; `history` reports the original values.
+- Application: on addendum approval, approved changes already in effect are applied (latest effective date wins per term; agreement status recomputed as active/expired from the new expiry); future-dated ones are applied when the date arrives — checked whenever alerts or agreements are read (idempotent, logged as "System (effective date reached)"). Alerts follow because they are computed from records.
+- Workbook: `amended`, `unresolved_changes`, renewal terms from the effective view, and the `Addenda_Change_History` sheet.
+- Shared helpers moved into `document_review.py` (`create_operational`, `ensure_project`) so MOU and addendum obligations follow the same rules. The P3b test "addenda cannot be approved" was replaced by "an unlinked addendum cannot be approved".
+- Verification: `pytest` → 246 passed (10 new in `tests/test_amendments.py`, "today" fixed at 17 Oct 2026: one partner with two independent MOUs; candidates suggested not linked; linking rules; prior/proposed comparison; restated value not a change; approval applies the change, clears `MOU_EXPIRING`, keeps the original, creates the added impact report, updates the workbook; effective date required and future changes applied only when due; two addenda applied in effective-date order regardless of approval order; conflicting addenda unresolved and not applied; two values in one addendum unresolved; unverified evidence cannot be approved; decided changes lock the link).
+- **Validation limit:** tested only with synthetic addenda. Real addendum formats are unvalidated until a sample is available.
 
 ## Step P3c notes — workbook export
 - `GET /api/export/workbook` (`app/workbook_export.py`, openpyxl, off the event loop): nine contract sheets plus `About`, built from the persisted records only — operational records and approved document values; pending/rejected/deferred proposals excluded. Values are written as stored with contract types (real dates, numbers, booleans); missing values stay empty; no storage paths or hashes.

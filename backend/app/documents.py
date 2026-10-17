@@ -84,6 +84,7 @@ class SourceDocument(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
     extraction: ExtractionRun | None = None
+    changes_built_at: datetime | None = None  # addenda: when proposed changes were compared with the agreement
     approved_by: str | None = None
     approved_at: datetime | None = None
     source_label: str = "user"
@@ -236,6 +237,9 @@ class AgreementChange(BaseModel):
     id: str
     agreement_id: str
     addendum_document_id: str
+    kind: Literal["modify", "add"] = "modify"  # modify an agreement term, or add an obligation/term/clause
+    created_at: datetime | None = None
+    applied_at: datetime | None = None  # set when the approved change is in force (effective date reached)
     target: ExtractionTarget
     target_id: str | None = None
     field: str = Field(min_length=1, max_length=80)

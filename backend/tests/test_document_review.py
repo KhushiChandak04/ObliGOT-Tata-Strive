@@ -247,11 +247,13 @@ def test_linked_agreement_conflicts_need_explicit_overwrite(monkeypatch):
     assert updated["title"] == "Existing MOU (fictional)"
 
 
-def test_addenda_cannot_be_approved_here(monkeypatch):
+def test_unlinked_addendum_cannot_be_approved(monkeypatch):
     doc = extracted(monkeypatch, partner_id="demo-003", kind="addendum")
     approve_all(doc["id"])
     response = client.post(f"/api/documents/{doc['id']}/approve", json={})
-    assert response.status_code == 409 and any("Addendum" in b for b in response.json()["detail"]["blockers"])
+    assert response.status_code == 409
+    blockers = response.json()["detail"]["blockers"]
+    assert blockers[0] == "Choose the agreement this addendum amends." and "Compare the addendum" in blockers[1]
 
 
 def test_conflicting_approved_values_block_approval(monkeypatch):

@@ -15,6 +15,7 @@ from app.models import (
 from app.repository import (
     firestore_enabled, get_record, list_records, patch_record, put_record, delete_record,
 )
+from app.amendments import apply_due_changes
 from app.engine import RuleConfig, evaluate, rule_catalog
 from app.reviews import ReviewCreate, TaskFromAlert, actor, attach_reviews, fingerprint, log_activity, now_iso
 from app.rules import build_deadline_finding, business_today, scan_deadlines
@@ -160,7 +161,8 @@ def delete_action(action_id: str):
 def list_agreements(partner_id: str | None = None,
                     expiring_within_days: int | None = Query(default=None, ge=0, le=3650)) -> list[dict]:
     """`expiring_within_days`: active agreements whose expiry falls between today (IST) and today + N days, inclusive."""
-    records = [r for r in list_records("agreements") if not partner_id or r.get("partner_id") == partner_id]
+    apply_due_changes(business_today())
+    records =[r for r in list_records("agreements") if not partner_id or r.get("partner_id") == partner_id]
     if expiring_within_days is not None:
         today = business_today()
         horizon = today + timedelta(days=expiring_within_days)
@@ -499,6 +501,7 @@ def load_rule_config() -> RuleConfig:
 
 def _current_alerts() -> tuple:
     config, today = load_rule_config(), business_today()
+    apply_due_changes(today)  # approved addendum changes whose effective date has arrived
     alerts = evaluate({name: list_records(name) for name in ALERT_SOURCES}, today, config)
     reviews = {r["id"]: r for r in list_records("alert_reviews")}
     active, _ = attach_reviews(alerts, reviews, today)

@@ -11,6 +11,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
 
+from app.amendments import addendum_blockers, approve_addendum
 from app.document_routes import PROPOSAL_COLLECTIONS, _proposals_for
 from app.documents import Clause, ExtractedField, FinancialTerm, Obligation, ProgrammeScope, ReviewIssue, ScalarValue
 from app.extraction import AGREEMENT_FIELDS
@@ -169,7 +170,7 @@ def approval_blockers(document: dict, proposals: dict[str, list[dict]], partner_
     if document["status"] != "needs_review":
         blockers.append(f"The document is {document['status'].replace('_', ' ')}, not awaiting review.")
     if document["kind"] == "addendum":
-        blockers.append("Addendum changes are reviewed against their agreement (Phase P4); addenda cannot be approved here yet.")
+        return blockers + addendum_blockers(document)  # addenda are reviewed change by change
     pending = sum(1 for c in REVIEWABLE for r in proposals[c] if r["review_state"] in PENDING)
     if pending:
         blockers.append(f"{pending} extracted value{'s' if pending != 1 else ''} still need{'s' if pending == 1 else ''} a decision (approve, reject, or defer).")
@@ -207,6 +208,47 @@ def _as_date(value: Any) -> date | None:
     return value if isinstance(value, date) else date.fromisoformat(str(value))
 
 
+def ensure_project(agreement: dict, obligation: dict, owner: str) -> str | None:
+    """The agreement's project; created (and linked) only when a milestone needs one."""
+    if agreement.get("project_id") or obligation["obligation_type"] not in ("milestone", "deliverable"):
+        return agreement.get("project_id")
+    expiry = _as_date(agreement.get("expiry_date"))
+    data = _validated(ProjectCreate, partner_id=agreement["partner_id"], name=agreement["title"], owner=owner,
+                      status="completed" if expiry and expiry < business_today() else "active",
+                      start_date=_as_date(agreement.get("start_date")), end_date=expiry)
+    project_id = put_record("projects", {**data, "source_label": "user"})["id"]
+    patch_record("agreements", agreement["id"], {"project_id": project_id})
+    agreement["project_id"] = project_id
+    return project_id
+
+
+def validate_obligation_target(obligation: dict, project_id: str | None) -> None:
+    if obligation["obligation_type"] in ("milestone", "deliverable") and not project_id:
+        raise HTTPException(status_code=422, detail="A milestone needs a project")
+
+
+def create_operational(obligation: dict, partner_id: str, project_id: str | None, owner: str) -> dict | None:
+    """Turn one approved obligation into the operational record the rules engine evaluates.
+    Fund releases and other obligations stay in the obligations register only (no money record is invented)."""
+    due = _as_date(obligation.get("due_date"))
+    kind = obligation["obligation_type"]
+    if kind in ("milestone", "deliverable"):
+        validate_obligation_target(obligation, project_id)
+        data = _validated(MilestoneCreate, project_id=project_id, title=obligation["title"][:200], due_date=due,
+                          owner=obligation.get("owner") or owner)
+        return {"collection": "milestones", "id": put_record("milestones", {**data, "partner_id": partner_id, "source_label": "user"})["id"]}
+    if kind in ("progress_report", "impact_report"):
+        report_type = "impact" if kind == "impact_report" else {"monthly": "monthly", "quarterly": "quarterly"}.get(obligation["frequency"], "other")
+        data = _validated(ReportCreate, partner_id=partner_id, project_id=project_id, title=obligation["title"][:200],
+                          report_type=report_type, due_date=due, owner=obligation.get("owner") or owner)
+        return {"collection": "reports", "id": put_record("reports", {**data, "source_label": "user"})["id"]}
+    if kind == "utilization_certificate":
+        data = _validated(FinanceCreate, partner_id=partner_id, project_id=project_id, record_type="utilization_certificate",
+                          title=obligation["title"][:200], due_date=due)
+        return {"collection": "finance", "id": put_record("finance", {**data, "source_label": "user"})["id"]}
+    return None
+
+
 def _validated(model, **data) -> dict:
     try:
         return model(**data).model_dump(mode="json")
@@ -229,6 +271,16 @@ def approve_document(document_id: str, payload: DocumentApproval, request: Reque
 
     who, today = actor(request), business_today()
     owner = payload.owner or who
+    if document["kind"] == "addendum":
+        result = approve_addendum(document, who, owner)
+        document = patch_record("documents", document_id, {"status": "approved", "approved_by": who, "approved_at": now_iso()})
+        log_activity(actor_name=who, event="document_approved",
+                     summary=f"Approved addendum “{document['filename']}”: {len(result['applied'])} changes in force, "
+                             f"{len(result['scheduled'])} scheduled for their effective date",
+                     entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"),
+                     details={"agreement_id": result["agreement_id"], "applied": result["applied"], "scheduled": result["scheduled"]})
+        return {"document": document, "agreement_id": result["agreement_id"], "partner_id": document.get("partner_id"),
+                "applied_changes": result["applied"], "scheduled_changes": result["scheduled"], "created": result["added"]}
     values = approved_values(proposals)
     start, expiry = _as_date(values.get("effective_date") or values.get("start_date")), _as_date(values.get("expiry_date"))
     title = values.get("title") or values.get("programme_name") or PurePath(document["filename"]).stem
@@ -299,23 +351,7 @@ def approve_document(document_id: str, payload: DocumentApproval, request: Reque
 
     created = {"milestones": 0, "reports": 0, "finance": 0, "register_only": 0}
     for obligation in approved["obligations"]:
-        due = _as_date(obligation.get("due_date"))
-        kind = obligation["obligation_type"]
-        ref = None
-        if kind in ("milestone", "deliverable"):
-            data = _validated(MilestoneCreate, project_id=project_id, title=obligation["title"][:200], due_date=due,
-                              owner=obligation.get("owner") or owner)
-            ref = {"collection": "milestones", "id": put_record("milestones", {**data, "partner_id": partner_id, "source_label": "user"})["id"]}
-        elif kind in ("progress_report", "impact_report"):
-            report_type = "impact" if kind == "impact_report" else {"monthly": "monthly", "quarterly": "quarterly"}.get(obligation["frequency"], "other")
-            data = _validated(ReportCreate, partner_id=partner_id, project_id=project_id, title=obligation["title"][:200],
-                              report_type=report_type, due_date=due, owner=obligation.get("owner") or owner)
-            ref = {"collection": "reports", "id": put_record("reports", {**data, "source_label": "user"})["id"]}
-        elif kind == "utilization_certificate":
-            data = _validated(FinanceCreate, partner_id=partner_id, project_id=project_id, record_type="utilization_certificate",
-                              title=obligation["title"][:200], due_date=due)
-            ref = {"collection": "finance", "id": put_record("finance", {**data, "source_label": "user"})["id"]}
-        # Fund releases and other obligations stay in the obligations register only (no money record is invented).
+        ref = create_operational(obligation, partner_id, project_id, owner)
         created[ref["collection"] if ref else "register_only"] += 1
         patch_record("obligations", obligation["id"], {"agreement_id": agreement_id, "partner_id": partner_id,
                                                        "project_id": project_id, "operational_ref": ref})

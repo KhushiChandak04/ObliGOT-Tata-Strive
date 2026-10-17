@@ -34,6 +34,7 @@ _COLLECTIONS = {
     "obligations": {},
     "programme_scope": {},
     "review_issues": {},
+    "agreement_changes": {},
 }
 _firestore_client = None
 _firestore_attempted = False

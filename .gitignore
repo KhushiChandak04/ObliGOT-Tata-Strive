@@ -12,3 +12,6 @@ __pycache__/
 *.tsbuildinfo
 backend/firebase-admin.json
 backend/.document_store/
+# Real MOU samples and other private PDFs stay local
+samples/
+*.pdf

@@ -80,7 +80,7 @@ Viewer: read. Manager: create/update, review recommendations, tasks. Admin: plus
 ## Frontend [planned]
 Typed API client per resource, `useResource` hook, shared `StatusBadge`, `DataTable`, `Dialog`, `EvidencePanel`, `AlertRow`, `PriorityBreakdown`. Pages: Dashboard (management overview + Today's 5), Action center (team workspace), Partners, Partner 360 (tabbed), Pipeline, Agreements, Projects, Finance, Reports, Import, Sign-in. Recharts and `motion` only when approved (Step 11).
 
-## Document-to-data pipeline [contract current — P1a; upload and page inspection current — P2a; extraction to proposals — P3a; review and approval gate — P3b; export, addenda planned — P3c–P4]
+## Document-to-data pipeline [contract current — P1a; upload and page inspection current — P2a; extraction to proposals — P3a; review and approval gate — P3b; export — P3c; addenda — P4a (synthetic fixtures only)]
 ```
 Upload PDF (staff) → FastAPI validates type/size → private storage (Firebase Storage or local folder outside git)
   → PyMuPDF: page count, text per page, low-text pages flagged (OCR/manual review; never silently skipped)

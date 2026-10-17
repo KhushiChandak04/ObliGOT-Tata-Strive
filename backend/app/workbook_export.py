@@ -12,6 +12,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from app.amendments import current_terms
 from app.repository import list_records
 from app.rules import business_today
 from app.workbook import SHEETS, Column
@@ -48,13 +49,20 @@ def collect_rows(today: date | None = None) -> dict[str, list[dict[str, Any]]]:
     rows: dict[str, list[dict[str, Any]]] = {sheet: [] for sheet in SHEETS}
     for p in partners:
         rows["Partners"].append({**p, "partner_id": p["id"], "legal_entity_name": legal_names.get(p["id"])})
+    changes = list_records("agreement_changes")
     for a in agreements:
         source = by_document.get(a.get("source_document_id") or "", {})
+        own = [c for c in changes if c["agreement_id"] == a["id"]]
         rows["Agreements"].append({
             **a, "agreement_id": a["id"], "execution_date": source.get("execution_date"),
-            "effective_date": source.get("effective_date"), "renewal_terms": source.get("renewal_terms"),
-            "amended": False, "unresolved_changes": 0,  # addendum history arrives in Phase P4
+            "effective_date": source.get("effective_date"), "renewal_terms": current_terms(a).get("renewal_terms"),
+            "amended": any(c.get("applied_at") for c in own),
+            "unresolved_changes": sum(1 for c in own if c["status"] == "unresolved"),
             "source_document_id": a.get("source_document_id"), "review_state": "approved"})
+    for c in changes:
+        rows["Addenda_Change_History"].append({
+            **c, "change_id": c["id"], "source_page": (c.get("evidence") or {}).get("page"),
+            "source_quote": (c.get("evidence") or {}).get("quote")})
     for p in projects:
         rows["Programmes_Projects"].append({**p, "project_id": p["id"], "agreement_id": agreement_by_project.get(p["id"])})
     for s in _approved("programme_scope"):

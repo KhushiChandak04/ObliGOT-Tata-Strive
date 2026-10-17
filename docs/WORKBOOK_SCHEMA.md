@@ -7,7 +7,7 @@ Standard Excel representation of **approved, normalized** partnership data. Gene
 - Missing values are left empty, never filled with guesses. Amounts are never summed across currencies or record types.
 - `source_document_id`, `source_page`, `source_quote` point to the evidence for PDF-derived rows.
 - Content: operational records (staff-entered, or created by approving a document) plus approved document values; pending, rejected, and deferred proposals are never exported. `Obligations_Milestones` lists approved document obligations (with the status of the record each created) and the other milestones, reports, and utilization certificates; invoices, budgets, and receipts are financial records, not obligations, and are not in this workbook. `Validation_Review_Issues` lists every review issue with its status.
-- Until addenda are handled (P4), `amended` is FALSE, `unresolved_changes` is 0, and `Addenda_Change_History` is empty.
+- `amended` is TRUE when an approved addendum change has been applied to the agreement; `unresolved_changes` counts its unresolved changes; `Addenda_Change_History` lists every change (prior and proposed value, dates, page, quote, status, reviewer). Operational columns show the current effective values.
 - Formatting: frozen header row, filters, `yyyy-mm-dd` dates, `#,##0.00` numbers, sized columns, an `About` sheet. `Partners` is the first (active) sheet, so it re-imports through `POST /api/import/preview`.
 
 ## Partners
