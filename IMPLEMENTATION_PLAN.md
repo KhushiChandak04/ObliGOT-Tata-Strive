@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Each step ends with a checkpoint report and requires explicit team approval before the next step begins. Approved steps are committed at the end of the step (no push unless requested).
+Each step ends with a checkpoint report and requires explicit team approval before the next step begins. Approved steps are committed and pushed to `origin/main` at the end of the step (fetch first; stop and ask if teammates have pushed).
 
 ## Step log
 | Step | Name | Status |
@@ -8,7 +8,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 1 | Repository and API audit | Done — approved |
 | 2 | Architecture proposal | Done — approved |
 | 3 | Project instructions and custom skills | Done — approved |
-| 4 | Existing API route repairs (groups 4a–4f) | 4a done — awaiting review |
+| 4 | Existing API route repairs (groups 4a–4f) | 4a approved; 4b done — awaiting review |
 | 5 | Application foundation | Not started |
 | 6 | Core partnership workflows | Not started |
 | 7 | Deadline engine and action center | Not started |
@@ -22,7 +22,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 ## Team decisions (recorded only when actually made)
 - Keep FastAPI as the single backend (Step 2 approval).
 - Step 2 architecture approved: computed-on-read alerts with persisted review decisions, data model and rule set in `ARCHITECTURE.md`.
-- Commit at the end of each approved step; no AI attribution in commits.
+- Commit and push to GitHub at the end of each approved step; no AI attribution in commits.
 
 ## Open questions (awaiting team input)
 1. Firebase project ID, web-app config, service account, and Gemini key availability (needed by Step 5).
@@ -69,6 +69,14 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 4b notes — validation and missing routes
+- PATCH `/api/partners/{id}` and `/api/actions/{id}` now apply explicit `null` to clear optional fields. The merged record is validated against the full model, so clearing a required field (e.g. partner `name`) returns 422 instead of corrupting the record. Omitted fields are unchanged; unknown stored fields are preserved.
+- `AgreementCreate` (expiry ≥ start) and `ProjectCreate` (end ≥ start) validate date order → 422 on POST and PATCH.
+- `POST /api/import/preview` multipart uploads now reject unknown `entity_type` with 422 (checked before reading the file), same set as the JSON path; default remains `projects`.
+- New `GET /api/followups` with optional `status` and `related_partner_id` filters.
+- Contract impact: inverted dates and bad upload `entity_type` now return 422 (previously accepted). No frontend callers affected.
+- Verification: `python -m pytest -q` → 22 passed (8 new in `tests/test_route_repairs.py`). Probe: defects 4–7 fixed.
 
 ## Step 4a notes — status-aware deadline findings
 - `scan_deadlines` now skips resolved records: reports `submitted`/`accepted`; finance `paid`/`received`/`submitted`/`accepted`/`completed`/`closed`/`cancelled` (case-insensitive, finance status is still free text until 4d); agreements `closed`.

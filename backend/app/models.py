@@ -1,6 +1,10 @@
 from datetime import date
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+def _check_date_order(start: date | None, end: date | None, end_label: str) -> None:
+    if start and end and end < start:
+        raise ValueError(f"{end_label} must be on or after start_date")
 
 PartnerStatus = Literal["prospect", "qualification", "active", "on_hold", "closed"]
 Priority = Literal["high", "medium", "low"]
@@ -90,6 +94,11 @@ class AgreementCreate(BaseModel):
     owner: str = "Unassigned"
     document_url: str | None = None
 
+    @model_validator(mode="after")
+    def expiry_after_start(self):
+        _check_date_order(self.start_date, self.expiry_date, "expiry_date")
+        return self
+
 class Project(BaseModel):
     id: str
     partner_id: str | None = None
@@ -109,6 +118,11 @@ class ProjectCreate(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     milestone_summary: str = ""
+
+    @model_validator(mode="after")
+    def end_after_start(self):
+        _check_date_order(self.start_date, self.end_date, "end_date")
+        return self
 
 class FinanceRecord(BaseModel):
     id: str

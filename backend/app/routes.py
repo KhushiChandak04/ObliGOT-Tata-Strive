@@ -1,6 +1,7 @@
 from datetime import date
 from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import ValidationError
 
 from app.config import settings
 from app.demo_data import PARTNERS, ACTIONS
@@ -17,6 +18,8 @@ from app.repository import (
 from app.rules import build_deadline_finding, business_today, scan_deadlines
 
 router = APIRouter()
+
+IMPORT_ENTITY_TYPES = {"agreements", "projects", "finance", "finance-records", "reports", "partners"}
 
 @router.get("/health", tags=["system"])
 def health() -> dict:
@@ -69,14 +72,23 @@ def get_partner(partner_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Partner not found")
     return record
 
+def _patch_validated(collection: str, record_id: str, changes: dict, model, label: str) -> dict:
+    """Apply explicit changes, including nulls that clear optional fields, and validate the merged record."""
+    current = get_record(collection, record_id)
+    if not current:
+        raise HTTPException(status_code=404, detail=f"{label} not found")
+    merged = {**current, **changes}
+    try:
+        model.model_validate(merged)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return put_record(collection, merged, record_id)
+
 @router.patch("/partners/{partner_id}", response_model=Partner, tags=["partners"])
 def update_partner(partner_id: str, payload: PartnerUpdate) -> dict:
     changes = payload.model_dump(exclude_unset=True, mode="json")
     changes["updated_at"] = business_today().isoformat()
-    record = patch_record("partners", partner_id, changes)
-    if not record:
-        raise HTTPException(status_code=404, detail="Partner not found")
-    return record
+    return _patch_validated("partners", partner_id, changes, Partner, "Partner")
 
 @router.delete("/partners/{partner_id}", status_code=204, tags=["partners"])
 def remove_partner(partner_id: str):
@@ -106,10 +118,7 @@ def get_action(action_id: str) -> dict:
 
 @router.patch("/actions/{action_id}", response_model=ActionItem, tags=["actions"])
 def update_action(action_id: str, payload: ActionUpdate) -> dict:
-    record = patch_record("actions", action_id, payload.model_dump(exclude_unset=True, mode="json"))
-    if not record:
-        raise HTTPException(status_code=404, detail="Action not found")
-    return record
+    return _patch_validated("actions", action_id, payload.model_dump(exclude_unset=True, mode="json"), ActionItem, "Action")
 
 @router.delete("/actions/{action_id}", status_code=204, tags=["actions"])
 def delete_action(action_id: str):
@@ -268,6 +277,13 @@ def create_report(payload: ReportCreate) -> dict:
         raise HTTPException(status_code=404, detail="Partner not found")
     return put_record("reports", {**payload.model_dump(mode="json"), "source_label": "user"})
 
+@router.get("/followups", tags=["follow-ups"])
+def list_followups(status: str | None = None, related_partner_id: str | None = None) -> list[dict]:
+    records = list_records("followups")
+    return [r for r in records
+            if (not status or r.get("status", "open") == status)
+            and (not related_partner_id or r.get("related_partner_id") == related_partner_id)]
+
 @router.get("/followups/{followup_id}", tags=["follow-ups"])
 def get_followup(followup_id: str) -> dict:
     record = get_record("followups", followup_id)
@@ -325,14 +341,16 @@ async def import_preview(request: Request) -> dict:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=422, detail="JSON body must be an object")
         entity_type = payload.get("entity_type")
-        allowed_types = {"agreements", "projects", "finance", "finance-records", "reports", "partners"}
-        if entity_type not in allowed_types:
+        if entity_type not in IMPORT_ENTITY_TYPES:
             raise HTTPException(status_code=422, detail="Unsupported entity_type")
         rows = payload.get("rows")
         if not isinstance(rows, list) or not rows or len(rows) > 500:
             raise HTTPException(status_code=422, detail="rows must contain between 1 and 500 records")
     elif "multipart/form-data" in content_type:
         form = await request.form()
+        entity_type = form.get("entity_type", "projects")
+        if entity_type not in IMPORT_ENTITY_TYPES:
+            raise HTTPException(status_code=422, detail="Unsupported entity_type")
         upload = form.get("file")
         if upload is None or not hasattr(upload, "read"):
             raise HTTPException(status_code=422, detail="A file field is required")
@@ -364,7 +382,6 @@ async def import_preview(request: Request) -> dict:
             raise
         except Exception as exc:
             raise HTTPException(status_code=400, detail="Could not read this file; check its format") from exc
-        entity_type = form.get("entity_type", "projects")
     else:
         raise HTTPException(status_code=415, detail="Send JSON rows or upload a CSV/XLSX file")
 
