@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     page_render_dpi: int = 150
     # Waits (seconds) before retrying a Gemini call that hit a rate limit; one retry per entry.
     gemini_retry_delays: list[float] = [20.0, 40.0]
-    # Tried in order when the main model answers "overloaded" (503).
+    # Tried in order when the main model answers "overloaded" (503) or its quota is used up (429).
     gemini_fallback_models: list[str] = ["gemini-flash-latest"]
 
     model_config = SettingsConfigDict(

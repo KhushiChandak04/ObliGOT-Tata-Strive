@@ -240,9 +240,10 @@ async def gemini_structured(contents, schema: type[BaseModel]) -> str:
             raise ExtractionFailed("timeout", f"Gemini did not respond within {settings.gemini_extraction_timeout_seconds:g} seconds") from exc
         except Exception as exc:
             code = getattr(exc, "code", None)
-            if code == 503 and current + 1 < len(models):
+            if code in (429, 503) and current + 1 < len(models):
+                # Overloaded, or this model's quota is used up (free-tier quotas are per model): try the next model.
                 current += 1
-                logger.warning("Gemini model overloaded; switching to %s", models[current])
+                logger.warning("Gemini returned %s; switching to %s", code, models[current])
                 continue
             if code in (429, 503) and delays:  # rate limit or temporarily overloaded: wait and retry
                 logger.warning("Gemini returned %s; retrying in %ss", code, delays[0])
