@@ -10,6 +10,7 @@ def local_settings_do_not_apply(monkeypatch):
     monkeypatch.setattr(settings, "require_firebase_auth", False)
     monkeypatch.setattr(settings, "firebase_credentials_file", "")
     monkeypatch.setattr(settings, "groq_api_key", "")
+    monkeypatch.setattr(settings, "gemini_api_key", "")
     monkeypatch.setattr(settings, "ocr_enabled", False)  # OCR tests switch it on with a fake; results never depend on the machine
 
 

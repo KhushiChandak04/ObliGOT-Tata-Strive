@@ -79,6 +79,14 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 - Verification: targeted Groq/demo tests → **13 passed**; extraction/Gemini-gating tests → **57 passed, 4 skipped**; full backend `python -m pytest -q .\\tests` → **306 passed, 4 skipped**, one existing Starlette/httpx warning; frontend `npm run build` → passed (TypeScript and Vite, 1,611 modules). Actual Groq smoke request with generic synthetic text → `ai_used=true`, no error. Runtime check confirms `demo-memory-fallback`, Groq configured, Gemini unavailable, and `auth_required=true`; frontend and backend development servers respond on ports 5173 and 8000. The unauthenticated Documents API call returned 401 as expected; browser remained at `/auth`, so signed-in workspace rendering was not verified.
 - Security note: the Groq credential was provided in chat and added only to ignored local `backend/.env`. Rotate it in Groq after this session, then update that local file. `git check-ignore` confirms the `.env` is not tracked; no key is present in source or `.env.example`.
 
+### Gemini alert recommendations and concise Action Center (18 Oct 2026)
+
+- `/api/intelligence/analyze` now calls Gemini `generateContent` with the server-side `GEMINI_API_KEY` and `GEMINI_MODEL`. The existing request/response contract and explicit `ai_used=false` failure behavior are preserved. Groq remains unchanged for document extraction and scanned-page reading.
+- Recommendations are constrained to at most four concise points. The alert drawer now shows up to two evidence facts, why the alert matters, and the next step; priority and human decision controls remain. Removed the separate Action Center follow-up task list and its extra task-list API request; creating a task from the alert remains available.
+- Added Gemini environment variable names to `.env.example`; no credentials or new dependencies were added.
+- Verification: focused `test_intelligence.py` → **10 passed**; full backend `.venv\Scripts\python.exe -m pytest -q .\tests` → **302 passed, 4 skipped**, one existing Starlette/httpx deprecation warning; frontend `npm run build` → **passed**, TypeScript and Vite production build (1,609 modules).
+- Live synthetic smoke reached Gemini but was rejected with HTTP 400 / `API_KEY_INVALID`; no recommendation success is claimed. `GEMINI_API_KEY` is present locally but invalid at the provider. Replace it in ignored `backend/.env` with a valid rotated key and restart the backend before testing again. The key previously pasted in chat should be revoked/rotated; do not paste its replacement into chat or source.
+
 ### Groq document extraction provider switch (current approved step)
 
 - The user chose Groq instead of Gemini for document extraction. New scanned-page readings use `groq_vision`, and new extraction runs use `groq`; historical Gemini mode/method values remain readable but no Gemini client/configuration is used for new work.
@@ -91,6 +99,18 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 - The existing port-8000 listener PID is not visible as a process to this terminal, so it could not be safely restarted here. The screenshot also shows demo-memory mode: restarting that process can clear its in-memory document record. Re-upload the same local PDF after restart if its record is lost; the stored PDF itself may remain in the private document folder. No real MOU was sent to Groq.
 - The user approved restarting the demo backend and re-uploading the original PDF if needed. Port 8000 still responds with the old health payload under PID 14016, but that listener is not represented by a process visible to this terminal (`Get-Process`/`Stop-Process` reports no such local process); it cannot safely be restarted by this session. The backend must be stopped with Ctrl+C in the terminal that launched it, then relaunched from `backend/`. Current code's direct `/api/health` function reports Groq vision/structured extraction and `ai_configured=true`.
 - Status: code and automated verification complete; runtime verification awaits the user's local restart and re-upload. Do not claim the uploaded real MOU has completed extraction until the new backend runs and the exported workbook is checked.
+
+### Partner detail removal and opportunity register (18 Oct 2026)
+
+- Removed Partner 360 from the authenticated workspace and sidebar; legacy `/partner-360` URLs redirect to Dashboard. No backend route, collection, or stored partner/opportunity data was removed.
+- Decision: retain the pipeline as **Opportunities**, a tabular register of partner, opportunity, current stage, owner, next step, and date. Do not auto-advance business stages: they represent confirmed decisions/events not safely inferable from generic activity. Removed the one-click “Move to next stage” card-board control; the existing edit form remains the explicit stage update path.
+- Verification: `npm run build` → passed (TypeScript and Vite; 1,609 modules); direct browser navigation to `/partner-360` redirected unauthenticated user to `/auth?next=%2Fpartner-360`. Signed-in rendering of Opportunities was not browser-tested because no authenticated workspace session was available. API contracts and backend data were unchanged.
+
+### Finance page removal (18 Oct 2026)
+
+- Removed the Finance page from the authenticated navigation and frontend, including its standalone record-list/status-edit UI and page-only styles. Legacy `/finance` URLs redirect to Reports & UCs.
+- Kept finance API/data support intact because Reports & UCs still lists utilization certificates and the dashboard still displays finance-related alerts/summary values. No backend routes, persisted records, or API contracts changed.
+- Verification: `Set-Location frontend; npm run build` → passed (TypeScript and Vite production build, 1,609 modules); `git diff --check` → exit code 0; source search found no remaining Finance page/component/navigation/style references. Browser verification was not performed because no browser page was shared.
 
 ### Opt-in Firestore-to-demo fallback (18 Oct 2026)
 

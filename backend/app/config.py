@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     groq_backoff_base_seconds: float = 2.0
     groq_max_retry_wait_seconds: float = 30.0
     groq_max_concurrency: int = 2
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_recommendation_timeout_seconds: float = 30.0
     firebase_project_id: str = ""
     # Path to a service-account JSON (git-ignored; relative paths resolve inside backend/). Empty = default credentials.
     firebase_credentials_file: str = ""
@@ -45,6 +48,10 @@ class Settings(BaseSettings):
     @property
     def groq_available(self) -> bool:
         return bool(self.groq_api_key)
+
+    @property
+    def gemini_available(self) -> bool:
+        return bool(self.gemini_api_key)
 
     model_config = SettingsConfigDict(
         env_file=".env",

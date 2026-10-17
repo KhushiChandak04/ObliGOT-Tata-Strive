@@ -12,18 +12,26 @@ from app.main import app
 
 def install_fake_client(monkeypatch, behaviour):
     class FakeResponse:
-        def __init__(self, status_code=200, content="Summary line\nObservation A\nObservation B"):
+        def __init__(self, status_code=200, content="Summary line\nObservation A\nRecommended action"):
             self.status_code = status_code
             self.content = content
 
         def raise_for_status(self):
             if self.status_code >= 400:
-                request = httpx.Request("POST", intelligence.GROQ_CHAT_COMPLETIONS_URL)
+                request = httpx.Request("POST", intelligence.GEMINI_GENERATE_CONTENT_URL)
                 response = httpx.Response(self.status_code, request=request)
                 raise httpx.HTTPStatusError("request failed", request=request, response=response)
 
         def json(self):
-            return {"choices": [{"message": {"content": self.content}}]}
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": self.content}],
+                        }
+                    }
+                ]
+            }
 
     class FakeClient:
         def __init__(self, timeout):
@@ -36,15 +44,15 @@ def install_fake_client(monkeypatch, behaviour):
             return None
 
         async def post(self, url, headers, json):
-            assert url == intelligence.GROQ_CHAT_COMPLETIONS_URL
-            assert headers["Authorization"].startswith("Bearer ")
-            assert json["model"] == "test-model"
-            assert json["messages"][0]["role"] == "user"
+            assert url == intelligence.GEMINI_GENERATE_CONTENT_URL.format(model="test-model")
+            assert headers["x-goog-api-key"] == "test-key"
+            assert json["generationConfig"]["temperature"] == 0.2
+            assert json["contents"][0]["parts"][0]["text"]
             return await behaviour(FakeResponse)
 
     monkeypatch.setattr(intelligence.httpx, "AsyncClient", FakeClient)
-    monkeypatch.setattr(settings, "groq_api_key", "test-key")
-    monkeypatch.setattr(settings, "groq_model", "test-model")
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(settings, "gemini_model", "test-model")
 
 
 def run(coro):
@@ -52,13 +60,13 @@ def run(coro):
 
 
 def test_not_configured_reports_reason(monkeypatch):
-    monkeypatch.setattr(settings, "groq_api_key", "")
+    monkeypatch.setattr(settings, "gemini_api_key", "")
     result = run(intelligence.analyze_context("ctx"))
     assert result.ai_used is False and result.ai_error == "not_configured"
-    assert "Groq is not configured" in result.summary
+    assert "Gemini is not configured" in result.summary
 
 
-def test_success_uses_groq_and_parses_text(monkeypatch):
+def test_success_uses_gemini_and_parses_concise_points(monkeypatch):
     async def ok(response):
         return response()
 
@@ -66,7 +74,17 @@ def test_success_uses_groq_and_parses_text(monkeypatch):
     result = run(intelligence.analyze_context("ctx", "Fictional Partner"))
     assert result.ai_used is True and result.ai_error is None
     assert result.summary == "Summary line"
-    assert result.observations == ["Observation A", "Observation B"]
+    assert result.observations == ["Observation A"]
+    assert result.recommendations == ["Recommended action"]
+
+
+def test_recommendation_output_is_limited_to_four_points(monkeypatch):
+    async def many_points(response):
+        return response(content="\n".join(f"Point {index}" for index in range(1, 8)))
+
+    install_fake_client(monkeypatch, many_points)
+    result = run(intelligence.analyze_context("ctx"))
+    assert len([result.summary, *result.observations, *result.recommendations]) == 4
 
 
 def test_timeout_is_reported(monkeypatch):
@@ -75,7 +93,7 @@ def test_timeout_is_reported(monkeypatch):
         return response()
 
     install_fake_client(monkeypatch, slow)
-    monkeypatch.setattr(settings, "groq_timeout_seconds", 0.05)
+    monkeypatch.setattr(settings, "gemini_recommendation_timeout_seconds", 0.05)
     result = run(intelligence.analyze_context("ctx"))
     assert result.ai_used is False and result.ai_error == "timeout"
     assert "0.05 seconds" in result.summary
@@ -89,6 +107,16 @@ def test_http_error_code_is_reported_without_secret(monkeypatch):
     result = run(intelligence.analyze_context("ctx"))
     assert result.ai_used is False and result.ai_error == "api_error:429"
     assert "test-key" not in result.summary
+
+
+def test_model_not_found_explains_configuration_issue(monkeypatch):
+    async def missing_model(response):
+        return response(status_code=404)
+
+    install_fake_client(monkeypatch, missing_model)
+    result = run(intelligence.analyze_context("ctx"))
+    assert result.ai_error == "api_error:404"
+    assert "check GEMINI_MODEL" in result.summary
 
 
 def test_other_error_type_is_reported(monkeypatch):
@@ -127,7 +155,7 @@ def test_concurrent_requests_do_not_block_each_other(monkeypatch):
 def test_route_exposes_ai_error(monkeypatch):
     repository._firestore_client = None
     repository._firestore_attempted = True
-    monkeypatch.setattr(settings, "groq_api_key", "")
+    monkeypatch.setattr(settings, "gemini_api_key", "")
     response = TestClient(app).post("/api/intelligence/analyze", json={"partner_id": "demo-001"})
     assert response.status_code == 200
     body = response.json()

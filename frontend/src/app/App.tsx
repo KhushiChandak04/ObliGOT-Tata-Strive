@@ -1,21 +1,19 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   Link,
+  Navigate,
   NavLink,
   Route,
   Routes,
   useLocation,
   useNavigate,
-  useSearchParams,
 } from "react-router-dom";
 import Dialog from "../components/ui/Dialog";
 import AgreementForm from "../features/agreements/AgreementForm";
-import PartnerForm from "../features/partners/PartnerForm";
 import OpportunityForm from "../features/pipeline/OpportunityForm";
 import MilestoneForm from "../features/projects/MilestoneForm";
 import ProjectForm from "../features/projects/ProjectForm";
 import { isWebLink } from "../lib/agreements";
-import { nextStage } from "../lib/pipeline";
 import { EnumLabel, EnumOptions, OptionsProvider, useEnum, useLabel } from "../lib/options";
 import { api } from "../services/functions.service";
 import { useResource } from "../lib/useResource";
@@ -32,7 +30,6 @@ import {
 import { firebaseAuth, googleProvider } from "../lib/firebase";
 import { RequireAuth, authErrorMessage, useAuthUser } from "../lib/auth";
 import type {
-  ActionItem,
   Agreement,
   Alert as ApiAlert,
   AlertEvidence,
@@ -43,7 +40,6 @@ import type {
   DashboardSummary,
   DocumentEvidence,
   DocumentReview,
-  FinanceRecord,
   FinancialTermProposal,
   ImportPreview,
   Milestone,
@@ -128,9 +124,6 @@ const timing = (alert: Alert) =>
       : alert.days === 0
         ? "Today"
         : `in ${alert.days}d`;
-const isOpenTask = (task: ActionItem) =>
-  task.status === "open" || task.status === "in_review";
-
 function Logo({ light = false }: { light?: boolean }) {
   return (
     <span className={`logo${light ? " light" : ""}`}>
@@ -150,7 +143,7 @@ function Landing() {
     "▸ Checking quotes, dates, and totals…",
     "⚠ Unclear values are highlighted with source pages",
     "✓ Export an editable workbook with evidence",
-    "▸ Groq explains the alert…",
+    "▸ Gemini explains the alert…",
   ];
   useEffect(() => {
     const timer = window.setInterval(
@@ -571,13 +564,12 @@ function AppShell() {
     return () => window.removeEventListener("obligot:storage-mode", updateMode);
   }, []);
   const workspace = useResource(async () => {
-    const [alerts, tasks, partners, summary] = await Promise.all([
+    const [alerts, partners, summary] = await Promise.all([
       api.alerts.list(),
-      api.actions.list(),
       api.partners.list(),
       api.dashboardSummary(),
     ]);
-    return { alerts, tasks, partners, summary };
+    return { alerts, partners, summary };
   }, []);
   useEffect(() => {
     if (location.pathname === "/dashboard" && previousPath.current !== "/dashboard") {
@@ -591,7 +583,6 @@ function AppShell() {
   const label = useLabel();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
-  const [params] = useSearchParams();
   const names = new Map(livePartners.map((p) => [p.id, p.name]));
   const apiAlerts = live?.alerts.alerts ?? [];
   const sorted = apiAlerts.map((alert) =>
@@ -601,7 +592,6 @@ function AppShell() {
     toViewAlert(alert, (id) => names.get(id), (c) => label("alert_category", c)),
   );
   const open = sorted;
-  const tasks = (live?.tasks ?? []).filter(isOpenTask);
   const selected = sorted.find((alert) => alert.id === selectedId) ?? null;
   const select = (alert: Alert) => {
     setNotice("");
@@ -619,37 +609,29 @@ function AppShell() {
       ? "Documents"
       : page === "/action-center"
         ? "Action Center"
-        : page === "/partner-360"
-          ? (names.get(params.get("id") ?? "") ??
-            livePartners[0]?.name ??
-            "Partner 360")
-          : page === "/dashboard"
-            ? "Good day, team."
-            : page === "/pipeline"
-              ? "Pipeline"
-              : page === "/agreements"
-                ? "Agreements"
-                : page === "/projects"
-                  ? "Projects"
-                  : page === "/finance"
-                    ? "Finance"
-                    : page === "/reports"
-                      ? "Reports & UCs"
-                      : "Import";
+        : page === "/dashboard"
+          ? "Good day, team."
+          : page === "/pipeline"
+            ? "Opportunities"
+            : page === "/agreements"
+              ? "Agreements"
+              : page === "/projects"
+                ? "Projects"
+                : page === "/reports"
+                  ? "Reports & UCs"
+                  : "Import";
   const eyebrow =
     page === "/dashboard"
       ? `Portfolio overview${workspace.data ? ` · rules evaluated ${formatDate(workspace.data.alerts.as_of)}` : ""}`
       : page === "/documents" || page.startsWith("/documents/")
         ? "MOU and addendum intake"
-        : page === "/partner-360"
-          ? "Partner 360"
-          : page === "/action-center"
-            ? "Live rule alerts"
-            : ["/pipeline", "/agreements", "/projects"].includes(page)
-              ? "Live records"
-              : runtimeMode === "demo-memory-fallback"
-                ? "Synthetic demo data"
-                : "Live records";
+        : page === "/action-center"
+          ? "Live rule alerts"
+          : ["/pipeline", "/agreements", "/projects"].includes(page)
+            ? "Live records"
+            : runtimeMode === "demo-memory-fallback"
+              ? "Synthetic demo data"
+              : "Live records";
   const usesApi = page === "/dashboard" || page === "/action-center";
   return (
     <div className="app-shell">
@@ -664,11 +646,9 @@ function AppShell() {
               label: "Action Center",
               count: open.length,
             },
-            { to: "/partner-360", label: "Partner 360" },
-            { to: "/pipeline", label: "Pipeline" },
+            { to: "/pipeline", label: "Opportunities" },
             { to: "/agreements", label: "Agreements" },
             { to: "/projects", label: "Projects" },
-            { to: "/finance", label: "Finance" },
             { to: "/reports", label: "Reports & UCs" },
             { to: "/import", label: "Import" },
           ].map((item) => (
@@ -748,18 +728,8 @@ function AppShell() {
           <ActionCenter
             open={open}
             sorted={sorted}
-            tasks={tasks}
             hidden={live.alerts.counts.hidden_by_review}
             onSelect={select}
-            onChanged={changed}
-          />
-        )}
-        {page === "/partner-360" && live && (
-          <Partner360
-            partners={live.partners}
-            open={open}
-            onSelect={select}
-            onChanged={workspace.reload}
           />
         )}
         {page === "/documents" && (
@@ -773,7 +743,6 @@ function AppShell() {
           <AgreementsPage onChanged={workspace.reload} />
         )}
         {page === "/projects" && <ProjectsPage onChanged={workspace.reload} />}
-        {page === "/finance" && <FinancePage />}
         {page === "/reports" && <ReportsPage />}
         {page === "/import" && <ImportPage />}
       </main>
@@ -958,38 +927,14 @@ function Kpi({
 function ActionCenter({
   open,
   sorted,
-  tasks,
   hidden,
   onSelect,
-  onChanged,
 }: {
   open: Alert[];
   sorted: Alert[];
-  tasks: ActionItem[];
   hidden: number;
   onSelect: (alert: Alert) => void;
-  onChanged: (message: string) => void;
 }) {
-  const [error, setError] = useState("");
-  const done = async (task: ActionItem) => {
-    setError("");
-    if (task.source_label === "demo") {
-      setError(
-        "Synthetic demo task only. Connect the backend to update this task.",
-      );
-      return;
-    }
-    try {
-      await api.actions.update(task.id, { status: "done" });
-      onChanged(
-        `Marked “${task.title}” done. The alert clears when the underlying record is updated.`,
-      );
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not update the task.",
-      );
-    }
-  };
   return (
     <>
       <section className="box">
@@ -1010,311 +955,9 @@ function ActionCenter({
         ))}
         {!sorted.length && <p>No open alerts.</p>}
       </section>
-      <section className="box task-box">
-        <h3>Follow-up tasks</h3>
-        {error && (
-          <p className="api-state error" role="alert">
-            {error}
-          </p>
-        )}
-        {tasks.map((task) => (
-          <div className="task-row" key={task.id}>
-            <span>
-              {task.title}
-              <small>
-                {" "}
-                · {task.owner ?? "Unassigned"}
-                {task.due_date ? ` · due ${formatDate(task.due_date)}` : ""}
-              </small>
-            </span>
-            <button
-              className="btn small-btn"
-              onClick={() => void done(task)}
-              aria-label={`Mark ${task.title} done`}
-            >
-              Mark done
-            </button>
-          </div>
-        ))}
-        {!tasks.length && <small>None yet. Create one from an alert.</small>}
-      </section>
     </>
   );
 }
-/** Partner 360: profile, MOU timeline, open alerts, linked record counts, and activity for one partner. */
-function Partner360({
-  partners,
-  open,
-  onSelect,
-  onChanged,
-}: {
-  partners: Partner[];
-  open: Alert[];
-  onSelect: (alert: Alert) => void;
-  onChanged: () => void;
-}) {
-  const [params, setParams] = useSearchParams();
-  const selectablePartners = partners.filter((partner) => partner.source_label !== "demo");
-  const requestedPartnerId = params.get("id");
-  const partnerId = selectablePartners.some((partner) => partner.id === requestedPartnerId)
-    ? requestedPartnerId!
-    : selectablePartners[0]?.id ?? "";
-  const [editing, setEditing] = useState(false);
-  const data = useResource(async () => {
-    if (!partnerId) return null;
-    const [
-      partner,
-      agreements,
-      projects,
-      milestones,
-      finance,
-      reports,
-      opportunities,
-      activities,
-      alerts,
-    ] = await Promise.all([
-      api.partners.get(partnerId),
-      api.agreements.list(partnerId),
-      api.projects.list(partnerId),
-      api.milestones.list({ partnerId }),
-      api.finance.list(partnerId),
-      api.reports.list(partnerId),
-      api.opportunities.list(partnerId),
-      api.activities.list({ partnerId, limit: 6 }),
-      api.alerts.list({ partnerId }),
-    ]);
-    return {
-      partner,
-      agreements,
-      projects,
-      milestones,
-      finance,
-      reports,
-      opportunities,
-      activities,
-      asOf: alerts.as_of,
-    };
-  }, [partnerId]);
-  if (!selectablePartners.length)
-    return (
-      <section className="box">
-        <h3>No verified partners available</h3>
-        <p>Fictional demo partners are not selectable. Add a verified partner record to use Partner 360.</p>
-      </section>
-    );
-  const d = data.data;
-  // The MOU shown on the timeline: the active agreement with the nearest expiry, else the most recent one with dates.
-  const mou = d
-    ? [...d.agreements]
-        .filter((a) => a.start_date && a.expiry_date)
-        .sort(
-          (a, b) =>
-            Number(b.status === "active") - Number(a.status === "active") ||
-            (a.expiry_date ?? "").localeCompare(b.expiry_date ?? ""),
-        )[0]
-    : undefined;
-  const elapsed =
-    mou && d
-      ? Math.min(
-          100,
-          Math.max(
-            0,
-            ((Date.parse(d.asOf) - Date.parse(mou.start_date!)) /
-              (Date.parse(mou.expiry_date!) - Date.parse(mou.start_date!))) *
-              100,
-          ),
-        )
-      : 0;
-  const partnerAlerts = open.filter((alert) => alert.partnerId === partnerId);
-  const done = d
-    ? d.milestones.filter((m) => m.status === "completed").length
-    : 0;
-  return (
-    <>
-      <div className="toolbar">
-        <select
-          value={partnerId}
-          onChange={(event) => setParams({ id: event.target.value })}
-          aria-label="Choose partner"
-        >
-          {selectablePartners.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        {d && (
-          <button className="btn small-btn" onClick={() => setEditing(true)}>
-            Edit partner
-          </button>
-        )}
-      </div>
-      {data.error && (
-        <div className="api-state error" role="alert">
-          <b>Could not load this partner.</b>
-          <span>{data.error.message}</span>
-          <button className="btn small-btn" onClick={data.reload}>
-            Retry
-          </button>
-        </div>
-      )}
-      {data.loading && !d && (
-        <p className="api-state" role="status">
-          Loading partner records…
-        </p>
-      )}
-      {d && (
-        <div className="grid2">
-          <section className="box">
-            <h3>Profile</h3>
-            <div className="detail-row">
-              <span>Category</span>
-              <span>{d.partner.category}</span>
-            </div>
-            <div className="detail-row">
-              <span>Relationship status</span>
-              <span>{d.partner.status.replace("_", " ")}</span>
-            </div>
-            <div className="detail-row">
-              <span>Owner</span>
-              <span>{d.partner.owner}</span>
-            </div>
-            <div className="detail-row">
-              <span>Contact</span>
-              <span>
-                {d.partner.contact_name || "Not recorded"}
-                {d.partner.contact_email ? ` · ${d.partner.contact_email}` : ""}
-              </span>
-            </div>
-            <p>{d.partner.summary || "No summary recorded."}</p>
-            {d.partner.source_label === "demo" && (
-              <small>Fictional demo record.</small>
-            )}
-          </section>
-          <section className="box">
-            <h3>MOU timeline</h3>
-            {mou ? (
-              <>
-                <div
-                  className="timeline"
-                  role="img"
-                  aria-label={`${Math.round(elapsed)}% of the agreement term elapsed`}
-                >
-                  <i style={{ right: `${100 - elapsed}%` }} />
-                  <em style={{ right: `calc(${100 - elapsed}% - 11px)` }} />
-                </div>
-                <div className="detail-row">
-                  <span>Agreement</span>
-                  <span>{mou.title}</span>
-                </div>
-                <div className="detail-row">
-                  <span>Start</span>
-                  <span>{formatDate(mou.start_date ?? null)}</span>
-                </div>
-                <div className="detail-row">
-                  <span>End</span>
-                  <span>{formatDate(mou.expiry_date ?? null)}</span>
-                </div>
-                <div className="detail-row">
-                  <span>Renewal</span>
-                  <span><EnumLabel group="renewal_status" value={mou.renewal_status} /></span>
-                </div>
-                <div className="detail-row">
-                  <span>Signed copy</span>
-                  <span><EnumLabel group="signed_copy" value={mou.signed_copy} /></span>
-                </div>
-              </>
-            ) : (
-              <p>
-                No agreement with start and end dates is recorded for this
-                partner.
-              </p>
-            )}
-          </section>
-          <section className="box">
-            <h3>Open alerts ({partnerAlerts.length})</h3>
-            {partnerAlerts.map((alert, index) => (
-              <AlertRow
-                key={alert.id}
-                alert={alert}
-                index={index}
-                onSelect={onSelect}
-              />
-            ))}
-            {!partnerAlerts.length && (
-              <p>No record linked to this partner triggers a rule.</p>
-            )}
-          </section>
-          <section className="box">
-            <h3>Linked records</h3>
-            <div className="detail-row">
-              <span>Pipeline</span>
-              <Link to="/pipeline">
-                {d.opportunities.length} opportunit
-                {d.opportunities.length === 1 ? "y" : "ies"}
-              </Link>
-            </div>
-            <div className="detail-row">
-              <span>Agreements</span>
-              <Link to="/agreements">{d.agreements.length}</Link>
-            </div>
-            <div className="detail-row">
-              <span>Projects</span>
-              <Link to="/projects">
-                {d.projects.length} · {done} of {d.milestones.length} milestones
-                complete
-              </Link>
-            </div>
-            <div className="detail-row">
-              <span>Finance records</span>
-              <Link to="/finance">{d.finance.length}</Link>
-            </div>
-            <div className="detail-row">
-              <span>Reports not yet submitted</span>
-              <Link to="/reports">
-                {
-                  d.reports.filter(
-                    (r) => r.status !== "submitted" && r.status !== "accepted",
-                  ).length
-                }
-              </Link>
-            </div>
-          </section>
-          <section className="box">
-            <h3>Recent activity</h3>
-            {d.activities.map((a) => (
-              <div className="detail-row" key={a.id}>
-                <span>{a.summary}</span>
-                <span className="mono">{a.at.slice(0, 10)}</span>
-              </div>
-            ))}
-            {!d.activities.length && (
-              <p>No reviews, tasks, or status changes recorded yet.</p>
-            )}
-          </section>
-        </div>
-      )}
-      <Dialog
-        open={editing}
-        title="Edit partner"
-        onClose={() => setEditing(false)}
-      >
-        {d && (
-          <PartnerForm
-            partner={d.partner}
-            onCancel={() => setEditing(false)}
-            onSaved={() => {
-              setEditing(false);
-              data.reload();
-              onChanged();
-            }}
-          />
-        )}
-      </Dialog>
-    </>
-  );
-}
-
 const formatDate = (value: string | null): string =>
   value
     ? new Intl.DateTimeFormat("en-IN", {
@@ -1337,11 +980,9 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
   const [dialog, setDialog] = useState<{ opportunity?: Opportunity } | null>(
     null,
   );
-  const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
   const label = useLabel();
-  const stages = useEnum("opportunity_stage");
   const stageName = (stage: string) => label("opportunity_stage", stage);
   const refresh = (text: string) => {
     setDialog(null);
@@ -1349,27 +990,11 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
     data.reload();
     onChanged();
   };
-  const move = async (item: Opportunity) => {
-    const next = nextStage(stages, item.stage) as Opportunity["stage"] | null;
-    if (!next) return;
-    setBusy(item.id);
-    setMessage("");
-    try {
-      await api.opportunities.update(item.id, { stage: next });
-      refresh(`Moved “${item.title}” to ${stageName(next)}.`);
-    } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : "Could not move the opportunity.",
-      );
-    } finally {
-      setBusy(null);
-    }
-  };
   return (
     <>
       <RegisterState
         resource={data}
-        label="pipeline"
+        label="opportunities"
         message={message}
         action={
           <button
@@ -1382,57 +1007,31 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
         }
       />
       {data.data && (
-        <div className="pipeline-grid">
-          {stages.map((stage) => {
-            const column = data.data!.opportunities.filter(
-              (item) => item.stage === stage,
-            );
-            return (
-              <section className="pipeline-column" key={stage}>
-                <h3>
-                  {stageName(stage)}
-                  <span className="pill">{column.length}</span>
-                </h3>
-                {column.length ? (
-                  column.map((item) => (
-                    <div className="pipeline-card" key={item.id}>
-                      <b>{names.get(item.partner_id) ?? item.partner_id}</b>
-                      <small>
-                        {item.title} · {item.owner}
-                      </small>
-                      <p>{item.next_step || "No next step recorded"}</p>
-                      <span className="mono">
-                        {item.next_step_date
-                          ? formatDate(item.next_step_date)
-                          : "No date"}
-                      </span>
-                      {stage !== "closed" && (
-                        <button
-                          className="btn small-btn"
-                          onClick={() => void move(item)}
-                          disabled={busy === item.id}
-                        >
-                          {busy === item.id
-                            ? "Moving…"
-                            : `Move to ${stageName(nextStage(stages, stage) ?? stage)}`}
-                        </button>
-                      )}
-                      <button
-                        className="text-button"
-                        onClick={() => setDialog({ opportunity: item })}
-                        aria-label={`Edit ${item.title}`}
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <TableState message="No opportunities" />
-                )}
-              </section>
-            );
-          })}
-        </div>
+        <>
+          <p className="muted-copy">
+            Stages record confirmed business progress. Update them when the
+            opportunity’s status actually changes.
+          </p>
+          <DataTable
+            headers={["Partner", "Opportunity", "Stage", "Owner", "Next step", "Next step date", ""]}
+            rows={data.data.opportunities.map((item) => [
+              names.get(item.partner_id) ?? item.partner_id,
+              item.title,
+              stageName(item.stage),
+              item.owner,
+              item.next_step || "Not recorded",
+              formatDate(item.next_step_date ?? null),
+              <button
+                className="text-button"
+                onClick={() => setDialog({ opportunity: item })}
+                aria-label={`Edit ${item.title}`}
+              >
+                Edit
+              </button>,
+            ])}
+            empty="No opportunities recorded yet."
+          />
+        </>
       )}
       <Dialog
         open={dialog !== null}
@@ -1886,106 +1485,12 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
   );
 }
 
-function FinanceSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="box">
-      <h3>{title}</h3>
-      {children}
-    </section>
-  );
-}
-/** Amount in the record's own currency; amounts are never added across records, types, or currencies. */
-const recordAmount = (record: FinanceRecord): string =>
-  record.amount == null ? "Amount not recorded" : formatAmount(record.amount, record.currency);
-
 /** An amount in its own currency; without a valid currency code the number is shown with a note, never as rupees. */
 function formatAmount(amount: number, currency?: string | null): string {
   if (currency && /^[A-Z]{3}$/.test(currency)) {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
   }
   return `${new Intl.NumberFormat("en-IN").format(amount)} (currency not recorded)`;
-}
-
-function FinancePage() {
-  const data = useResource(async () => {
-    const [records, partners, alerts, options] = await Promise.all([api.finance.list(), api.partners.list(), api.alerts.list(), api.options()]);
-    return { records, partners, alerts, options };
-  }, []);
-  const [message, setMessage] = useState("");
-  const label = useLabel();
-  const recordTypes = useEnum("finance_record_type");
-  const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
-  // Ageing and overdue wording come from the rules engine (alerts), not from date maths in the browser.
-  const alertFor = new Map((data.data?.alerts.alerts ?? []).filter((a) => a.record_type === "finance").map((a) => [a.record_id, a]));
-  const setStatus = async (record: FinanceRecord, status: string) => {
-    setMessage("");
-    try {
-      await api.finance.update(record.id, { status });
-      setMessage(`“${record.title}” is now ${status.replace("_", " ")}.`);
-      data.reload();
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not update the record.");
-    }
-  };
-  return (
-    <>
-      <RegisterState resource={data} label="finance records" message={message} />
-      {data.data && (
-        <div className="finance-sections">
-          {recordTypes.map((type) => {
-            const title = label("finance_record_type", type);
-            const records = data.data!.records.filter((r) => r.record_type === type);
-            return (
-              <FinanceSection title={title} key={type}>
-                {records.length ? (
-                  records.map((record) => {
-                    const alert = alertFor.get(record.id);
-                    const dates = [
-                      record.issue_date && `issued ${formatDate(record.issue_date)}`,
-                      record.due_date ? `due ${formatDate(record.due_date)}` : type === "invoice" || type === "utilization_certificate" ? "due date not recorded" : "",
-                      record.received_date && `received ${formatDate(record.received_date)}`,
-                    ].filter(Boolean);
-                    return (
-                      <div className="finance-row" key={record.id}>
-                        <span>
-                          <b>{`${names.get(record.partner_id) ?? record.partner_id} · ${record.title}`}</b>
-                          <small>
-                            {dates.join(" · ")}
-                            {alert ? ` · ⚠ ${alert.rule_title}` : ""}
-                            {record.source_label === "demo" ? " · fictional demo record" : ""}
-                          </small>
-                          <select
-                            aria-label={`Status of ${record.title}`}
-                            value={record.status}
-                            onChange={(event) => void setStatus(record, event.target.value)}
-                          >
-                            {(data.data!.options.enums.finance_status[record.record_type] ?? [record.status]).map((s) => (
-                              <option key={s} value={s}>
-                                {s.replace("_", " ")}
-                              </option>
-                            ))}
-                          </select>
-                        </span>
-                        <strong className="mono">{recordAmount(record)}</strong>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p>No {title.toLowerCase()} recorded.</p>
-                )}
-              </FinanceSection>
-            );
-          })}
-        </div>
-      )}
-    </>
-  );
 }
 
 type ObligationRow = {
@@ -2888,6 +2393,7 @@ function Drawer({
     d.setUTCDate(d.getUTCDate() + 1);
     return d.toISOString().slice(0, 10);
   })();
+  const keyFacts = [...alert.facts, ...alert.computed].slice(0, 2);
   return (
     <div
       className="drawer"
@@ -2911,55 +2417,22 @@ function Drawer({
       <h2 id="drawer-title">
         {alert.partner}: {alert.title}
       </h2>
-      <DrawerSection title="Verified record facts">
-        {alert.facts.map((fact) => (
+      <DrawerSection title="Key details">
+        {keyFacts.map((fact) => (
           <div className="evidence" key={fact.label}>
             <span className="mono">{fact.label}</span>
             <b className="mono">{String(fact.value)}</b>
           </div>
         ))}
         <div className="evidence">
-          <span>Owner</span>
-          <b>{alert.owner}</b>
+          <span>Why it matters</span>
+          <b>{alert.why}</b>
+        </div>
+        <div className="evidence">
+          <span>Next step</span>
+          <b>{alert.recommendation}</b>
         </div>
         {alert.demo && <small>From a fictional demo record.</small>}
-      </DrawerSection>
-      {alert.computed.length > 0 && (
-        <DrawerSection
-          title={`Computed by the rule · as of ${formatDate(asOf)}`}
-        >
-          {alert.computed.map((fact) => (
-            <div className="evidence" key={fact.label}>
-              <span className="mono">{fact.label}</span>
-              <b className="mono">{String(fact.value)}</b>
-            </div>
-          ))}
-        </DrawerSection>
-      )}
-      <DrawerSection title={`Rule explanation · ${alert.rule}`}>
-        <p>{alert.ruleDescription}</p>
-        <p>{alert.why}</p>
-        {alert.factors.map((factor) => (
-          <div className="evidence" key={factor.label}>
-            <span>{factor.label}</span>
-            <b className="mono">
-              {factor.points > 0 ? `+${factor.points}` : factor.points}
-            </b>
-          </div>
-        ))}
-        {alert.urgency !== undefined && (
-          <small>
-            Urgency {alert.urgency} · Impact {alert.impact ?? 0}. A large
-            amount raises impact only; it says nothing about the partner's
-            reliability.
-          </small>
-        )}
-        <small>
-          Priority is a transparent business rule, not a prediction.
-        </small>
-      </DrawerSection>
-      <DrawerSection title="Rule-based next step">
-        <p>{alert.recommendation}</p>
       </DrawerSection>
       <DrawerSection title="AI assistance · generated, not verified" ai>
         <button
@@ -2967,7 +2440,7 @@ function Drawer({
           onClick={() => void run()}
           disabled={running}
         >
-          {running ? "Asking Groq…" : "Ask Groq for a recommendation"}
+          {running ? "Asking Gemini…" : "Ask Gemini for a recommendation"}
         </button>
         <div className="ai-output mono" aria-live="polite">
           {!running && !ai && "No recommendation requested."}
@@ -3151,6 +2624,22 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/auth" element={<Auth />} />
+      <Route
+        path="/finance"
+        element={
+          <RequireAuth>
+            <Navigate to="/reports" replace />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/partner-360"
+        element={
+          <RequireAuth>
+            <Navigate to="/dashboard" replace />
+          </RequireAuth>
+        }
+      />
       <Route
         path="*"
         element={

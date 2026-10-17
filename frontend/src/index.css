@@ -966,46 +966,6 @@ input:focus {
   white-space: normal;
   display: block;
 }
-.pipeline-grid {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(170px, 1fr));
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 10px;
-}
-.pipeline-column {
-  background: var(--bg2);
-  border-radius: 16px;
-  padding: 12px;
-  min-height: 340px;
-}
-.pipeline-column h3 {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 16px;
-  color: var(--green);
-  margin-bottom: 10px;
-}
-.pipeline-card {
-  background: var(--card);
-  border: 1.5px solid var(--line);
-  border-radius: 12px;
-  padding: 12px;
-  margin-bottom: 10px;
-}
-.pipeline-card > b,
-.pipeline-card > small {
-  display: block;
-}
-.pipeline-card > small {
-  color: var(--muted);
-  margin-top: 3px;
-}
-.pipeline-card p {
-  font-size: 13px;
-  margin: 12px 0 8px;
-}
 .small-btn {
   font-size: 11px;
   padding: 7px 10px;
@@ -1121,25 +1081,6 @@ th {
 .text-bordo {
   color: var(--bordo);
   font-weight: 700;
-}
-.finance-sections {
-  display: grid;
-  gap: 16px;
-}
-.finance-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 11px 0;
-  border-bottom: 1px dashed var(--line);
-}
-.finance-row b,
-.finance-row small {
-  display: block;
-}
-.finance-row small {
-  color: var(--muted);
-  margin-top: 3px;
 }
 .report-tabs {
   max-width: 480px;
@@ -1854,9 +1795,6 @@ th {
 }
 .milestone > span:last-child {
   white-space: nowrap;
-}
-.pipeline-card .text-button {
-  justify-self: start;
 }
 td small {
   color: var(--muted);
