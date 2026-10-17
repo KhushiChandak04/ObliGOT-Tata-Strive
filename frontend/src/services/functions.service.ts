@@ -71,7 +71,8 @@ export const api = {
     remove: (partnerId: string) => request<void>(`/api/partners/${id(partnerId)}`, { method: "DELETE" }),
   },
   actions: {
-    list: (status?: string) => request<ActionItem[]>(`/api/actions${query({ status })}`),
+    list: (filters: { status?: string; relatedPartnerId?: string } = {}) =>
+      request<ActionItem[]>(`/api/actions${query({ status: filters.status, related_partner_id: filters.relatedPartnerId })}`),
     get: (actionId: string) => request<ActionItem>(`/api/actions/${id(actionId)}`),
     create: (payload: Partial<ActionItem>) => request<ActionItem>("/api/actions", send("POST", payload)),
     update: (actionId: string, payload: Partial<ActionItem>) => request<ActionItem>(`/api/actions/${id(actionId)}`, send("PATCH", payload)),

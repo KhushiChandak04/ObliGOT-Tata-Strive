@@ -17,3 +17,10 @@ export function describeDays(days?:number|null, isExpiry=false):string {
   if (days > 0) return `In ${plural(days)}`;
   return isExpiry ? `Expired ${plural(-days)} ago` : `${plural(-days)} overdue`;
 }
+/** Formats one stored amount in its own currency. Never used to add amounts together. */
+export function formatAmount(amount?:number|null, currency="INR"):string {
+  if (amount === undefined || amount === null) return "Not recorded";
+  try { return new Intl.NumberFormat("en-IN",{style:"currency",currency,maximumFractionDigits:2}).format(amount); }
+  catch { return `${amount.toLocaleString("en-IN")} ${currency}`; }
+}
+export const FINANCE_TYPE_LABELS:Record<string,string> = {budget:"Budget",fund_received:"Fund received",invoice:"Invoice",utilization_certificate:"Utilization certificate"};

@@ -4,10 +4,11 @@ import {Link} from "react-router-dom";
 import PageHeader from "../components/ui/PageHeader";
 import StateMessage from "../components/ui/StateMessage";
 import StatusBadge from "../components/ui/StatusBadge";
+import FindingList from "../features/intelligence/FindingList";
 import {api} from "../services/functions.service";
 import {useResource} from "../lib/useResource";
 import type {ActionItem,DeadlineFinding,Priority} from "../types";
-import {describeDays,formatDate} from "../lib/utils";
+import {formatDate} from "../lib/utils";
 
 const PRIORITY_RANK:Record<Priority,number>={high:0,medium:1,low:2};
 const OPEN_ACTION_STATUSES=new Set(["open","in_review"]);
@@ -45,7 +46,7 @@ export default function DashboardPage(){
   </div>
   <div className="content-grid">
    <section className="panel" aria-labelledby="findings-heading"><div className="panel-heading"><div><h2 id="findings-heading">Deadline findings</h2><p>Rule-generated from stored dates and statuses. Resolved records are excluded.</p></div></div>
-    {loading?<StateMessage kind="loading" title="Evaluating deadlines…"/>:findings.length?<div className="action-list">{findings.slice(0,6).map(f=><div className="action-row" key={f.id}><span className={`priority-dot ${f.priority}`} aria-hidden/><div className="action-copy"><strong>{f.issue}</strong><span>{[f.partner_id?partnerName.get(f.partner_id)??f.partner_id:null,...f.evidence].filter(Boolean).join(" · ")}</span></div><div className="action-meta"><StatusBadge value={f.priority} label={`${f.priority[0].toUpperCase()}${f.priority.slice(1)} priority`}/><small>{f.due_date?describeDays(f.days_remaining,f.record_type==="agreements"):"No date recorded"}</small></div></div>)}{findings.length>6&&<p className="muted panel-footnote">{findings.length-6} more findings not shown.</p>}</div>:!error&&<StateMessage title="No deadline findings" detail="No unresolved agreement, report, invoice, or UC is overdue, due within 30 days, or missing its date."/>}
+    {loading?<StateMessage kind="loading" title="Evaluating deadlines…"/>:findings.length?<FindingList findings={findings} partnerName={id=>partnerName.get(id)} limit={6}/>:!error&&<StateMessage title="No deadline findings" detail="No unresolved agreement, report, invoice, or UC is overdue, due within 30 days, or missing its date."/>}
    </section>
    <section className="panel" aria-labelledby="actions-heading"><div className="panel-heading"><div><h2 id="actions-heading">Open action queue</h2><p>Highest priority first, then earliest due date.</p></div><Link to="/actions" className="text-link">View all →</Link></div>
     {loading?<StateMessage kind="loading" title="Loading actions…"/>:openActions.length?<div className="action-list">{openActions.slice(0,5).map(item=><div className="action-row" key={item.id}><span className={`priority-dot ${item.priority}`} aria-hidden/><div className="action-copy"><strong>{item.title}</strong><span>{[item.owner,item.evidence[0]||"No supporting evidence supplied"].filter(Boolean).join(" · ")}</span></div><div className="action-meta"><StatusBadge value={item.priority} label={`${item.priority[0].toUpperCase()}${item.priority.slice(1)} priority`}/><small>{formatDate(item.due_date)}</small></div></div>)}</div>:!error&&<StateMessage title="No open actions" detail="Actions that are open or in review will appear here."/>}

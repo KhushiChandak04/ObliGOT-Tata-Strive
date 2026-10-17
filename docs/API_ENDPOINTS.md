@@ -24,7 +24,7 @@ Status legend: **tested** = covered by backend pytest in in-memory mode; live Fi
 ## Actions (tasks)
 | Method | Path | Purpose | Notes |
 |---|---|---|---|
-| GET | `/api/actions?status=` | List, optional status filter | |
+| GET | `/api/actions?status=&related_partner_id=` | List with optional status and partner filters | |
 | POST | `/api/actions` | Create (201), status starts `open` | 404 if `related_partner_id` missing |
 | GET / PATCH / DELETE | `/api/actions/{action_id}` | Detail / update (`null` clears optional fields) / delete | 404 if missing |
 

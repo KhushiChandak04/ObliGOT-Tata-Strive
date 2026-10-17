@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from app.config import settings
-from app.demo_data import PARTNERS, ACTIONS
 from app.intelligence import analyze_context
 from app.models import (
     ActionCreate, ActionItem, ActionUpdate, Agreement, AgreementCreate,
@@ -111,9 +110,11 @@ def remove_partner(partner_id: str):
     return None
 
 @router.get("/actions", response_model=list[ActionItem], tags=["actions"])
-def list_actions(status: str | None = None) -> list[dict]:
+def list_actions(status: str | None = None, related_partner_id: str | None = None) -> list[dict]:
     records = list_records("actions")
-    return [r for r in records if r.get("status", "open") == status] if status else records
+    return [r for r in records
+            if (not status or r.get("status", "open") == status)
+            and (not related_partner_id or r.get("related_partner_id") == related_partner_id)]
 
 @router.post("/actions", response_model=ActionItem, status_code=201, tags=["actions"])
 def create_action(payload: ActionCreate) -> dict:

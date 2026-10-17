@@ -10,7 +10,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 3 | Project instructions and custom skills | Done — approved |
 | 4 | Existing API route repairs (groups 4a–4f) | Done — approved |
 | 5 | Application foundation (5a frontend, 5b Firebase, 5c auth/roles) | 5a done — awaiting review; 5b/5c blocked on Firebase credentials |
-| 6 | Core partnership workflows | Not started |
+| 6 | Core partnership workflows (6a partners/360, 6b pipeline, 6c agreements, 6d projects/milestones) | 6a done — awaiting review |
 | 7 | Deadline engine and action center | Not started |
 | 8 | Funding and compliance | Not started |
 | 9 | Gemini AI integration | Not started |
@@ -68,6 +68,14 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 6a notes — partner directory and Partner 360
+- Demo dataset (in-memory fallback only; all `source_label=demo`, fictional, dates relative to the IST business date) in `backend/app/demo_data.py`. demo-001 produces exactly five findings: MOU expiring in 21 days, active addendum missing expiry, monthly report 6 days overdue, invoice without due date, UC due in 10 days; a submitted report and received/approved finance records produce none. demo-002 has a draft MOU only; demo-003 has no linked records.
+- `GET /api/actions` gains optional `related_partner_id` filter (additive).
+- Tests: new `tests/conftest.py` isolates the in-memory store per test (restores collections after each test) — previously tests leaked records into each other; `tests/test_demo_data.py` checks labels, references, create-model validity, and the exact expected findings.
+- Frontend: partner directory with search, status filter, clear filters, and "Add partner" dialog; `PartnerForm` (create/edit, client validation mirroring backend limits, blank optional fields sent as `null` to clear). Partner 360: profile, Edit, Delete (409 linked-record message shown, confirm disabled), keyboard-accessible tabs (Open findings, Agreements, Projects, Finance, Reports, Actions) with counts and empty states. Finance amounts shown per record in their own currency; never totalled. Native `<dialog>` wrapper (focus trap, Escape). Shared `FindingList` used by dashboard and Partner 360. Inline SVG favicon.
+- Verification: `pytest` → 55 passed. `npm run build` passes. Headless Chrome against live servers: filter + clear; empty-submit and bad-email validation; create → navigates to new partner with zero-count tabs; edit clears contact; delete returns to directory; demo-001 tab counts 5/2/1/4/2/1 and the five expected findings; ArrowRight moves tab selection and focus; finance tab shows ₹ amounts per record and "Not set" for the invoice due date; deleting demo-001 shows the 409 counts; Escape closes the dialog; 0 px overflow at 390 px; dialog fits at 390 px; only expected 409 in console.
+- Not done in 6a: creating/editing agreements, projects, finance, reports from Partner 360 (6c/6d/Step 8); activity history and AI summary (Steps 7/9); role restrictions (5c).
 
 ## Step 5a notes — frontend foundation
 - `npm install` (npm 11.16, Node 26.3); `package-lock.json` committed. npm 11 skipped install scripts for esbuild, @firebase/util, protobufjs (not approved); build works without them.

@@ -62,7 +62,7 @@ Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager
 - `GET /api/partners/{partner_id}`
 - `PATCH /api/partners/{partner_id}`
 - `DELETE /api/partners/{partner_id}` (409 while agreements, projects, finance, reports, actions, or follow-ups still reference the partner)
-- `GET /api/actions` / `POST /api/actions`
+- `GET /api/actions?status=...&related_partner_id=...` / `POST /api/actions`
 - `GET /api/actions/{action_id}` / `PATCH /api/actions/{action_id}` / `DELETE /api/actions/{action_id}`
 - `GET /api/agreements?partner_id=...` / `POST /api/agreements` / `GET|PATCH|DELETE /api/agreements/{agreement_id}`
 - `GET /api/projects?partner_id=...` / `POST /api/projects` / `GET|PATCH|DELETE /api/projects/{project_id}`
