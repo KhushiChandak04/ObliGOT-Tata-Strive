@@ -61,7 +61,7 @@ Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager
 - `POST /api/partners`
 - `GET /api/partners/{partner_id}`
 - `PATCH /api/partners/{partner_id}`
-- `DELETE /api/partners/{partner_id}`
+- `DELETE /api/partners/{partner_id}` (409 while agreements, projects, finance, reports, actions, or follow-ups still reference the partner)
 - `GET /api/actions` / `POST /api/actions`
 - `GET /api/actions/{action_id}` / `PATCH /api/actions/{action_id}` / `DELETE /api/actions/{action_id}`
 - `GET /api/agreements?partner_id=...` / `POST /api/agreements` / `GET|PATCH|DELETE /api/agreements/{agreement_id}`
@@ -72,6 +72,11 @@ Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager
 - `GET /api/followups?status=...&related_partner_id=...` / `POST /api/followups` / `GET|PATCH|DELETE /api/followups/{followup_id}`
 - `GET /api/rules/deadline-preview`
 - `POST /api/import/preview` (CSV/XLSX preview only; does not write records)
+
+## Error responses
+- `401` missing/invalid Firebase ID token (only when `REQUIRE_FIREBASE_AUTH=true`).
+- `503` Firestore or Firebase Auth unavailable/misconfigured — never reported as success or as an invalid token.
+- `409` delete blocked by linked records; `404` missing record; `422` validation failure.
 
 ## Tests
 ```bash

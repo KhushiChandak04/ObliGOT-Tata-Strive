@@ -1,19 +1,25 @@
-"""Optional Firebase ID-token verification for API routes.
+"""Firebase ID-token verification used by the API auth middleware.
 
 Keep REQUIRE_FIREBASE_AUTH=false only for local development. Enable it for a
 public deployment after the frontend sends Firebase ID tokens in Authorization.
 """
-from fastapi import Header, HTTPException
-from app.config import settings
+from app.firebase_app import FirebaseUnavailable, get_firebase_app
 
-def verify_bearer_token(authorization: str | None = Header(default=None)) -> dict | None:
-    if not settings.require_firebase_auth:
-        return None
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Firebase ID token required")
-    token = authorization.split(" ", 1)[1].strip()
+class AuthUnavailable(RuntimeError):
+    """Tokens cannot be verified right now (Firebase not configured or unreachable)."""
+
+class InvalidToken(ValueError):
+    """The supplied token is malformed, expired, revoked, or for another project."""
+
+def verify_token(token: str) -> dict:
     try:
-        from firebase_admin import auth
-        return auth.verify_id_token(token)
+        firebase_app = get_firebase_app()
+    except FirebaseUnavailable as exc:
+        raise AuthUnavailable(str(exc)) from exc
+    from firebase_admin import auth
+    try:
+        return auth.verify_id_token(token, app=firebase_app)
+    except auth.CertificateFetchError as exc:
+        raise AuthUnavailable("Could not fetch Firebase token certificates") from exc
     except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired Firebase ID token") from exc
+        raise InvalidToken("Invalid or expired Firebase ID token") from exc

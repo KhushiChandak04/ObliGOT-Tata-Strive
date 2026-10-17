@@ -90,8 +90,22 @@ def update_partner(partner_id: str, payload: PartnerUpdate) -> dict:
     changes["updated_at"] = business_today().isoformat()
     return _patch_validated("partners", partner_id, changes, Partner, "Partner")
 
-@router.delete("/partners/{partner_id}", status_code=204, tags=["partners"])
+# Collections that reference a partner, and the field holding the reference.
+PARTNER_LINKS = {
+    "agreements": "partner_id", "projects": "partner_id", "finance": "partner_id",
+    "reports": "partner_id", "actions": "related_partner_id", "followups": "related_partner_id",
+}
+
+@router.delete("/partners/{partner_id}", status_code=204, tags=["partners"],
+               responses={409: {"description": "Partner still has linked records"}})
 def remove_partner(partner_id: str):
+    if not get_record("partners", partner_id):
+        raise HTTPException(status_code=404, detail="Partner not found")
+    linked = {collection: count for collection, field in PARTNER_LINKS.items()
+              if (count := sum(r.get(field) == partner_id for r in list_records(collection)))}
+    if linked:
+        summary = ", ".join(f"{collection}: {count}" for collection, count in linked.items())
+        raise HTTPException(status_code=409, detail=f"Partner has linked records ({summary}). Reassign or delete them first.")
     if not delete_record("partners", partner_id):
         raise HTTPException(status_code=404, detail="Partner not found")
     return None

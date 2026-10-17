@@ -8,7 +8,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | 1 | Repository and API audit | Done — approved |
 | 2 | Architecture proposal | Done — approved |
 | 3 | Project instructions and custom skills | Done — approved |
-| 4 | Existing API route repairs (groups 4a–4f) | 4a approved; 4b done — awaiting review |
+| 4 | Existing API route repairs (groups 4a–4f) | 4a, 4b approved; 4c done — awaiting review |
 | 5 | Application foundation | Not started |
 | 6 | Core partnership workflows | Not started |
 | 7 | Deadline engine and action center | Not started |
@@ -29,7 +29,7 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 2. Location of the sample partnership workbook and the official problem statement.
 3. Backend hosting: Cloud Run (recommended) or Render (`render.yaml` exists).
 4. Freeze `followups` and use `actions` as the only task model?
-5. Approve contract changes 4c (partner DELETE → 409 while child records exist) and 4d (per-type finance status enums).
+5. Approve contract change 4d (per-type finance status enums). (4c approved.)
 
 ## Step 1 audit summary
 - Existing backend tests: 9 passed (`python -m pytest -q`, in-memory mode). Live Firestore, Gemini, auth flow, and frontend build untested (no credentials / `node_modules`).
@@ -69,6 +69,14 @@ Each step ends with a checkpoint report and requires explicit team approval befo
 | API | Each existing route tested for success, 404, 422, 401/403 |
 
 Baseline checks: `cd backend && python -m pytest -q` passes; `cd frontend && npm run build` passes; `GET /api/health` reports storage mode honestly.
+
+## Step 4c notes — referential integrity, auth init, store errors
+- `DELETE /api/partners/{id}` returns 409 listing linked record counts (agreements, projects, finance, reports via `partner_id`; actions, follow-ups via `related_partner_id`). Approved contract change.
+- New `app/firebase_app.py` creates the Firebase Admin app once; Firestore and token verification share it, so token checks no longer depend on a prior repository call.
+- `app/auth.py` now exposes `verify_token` (unused `verify_bearer_token` dependency removed). Middleware: missing/invalid token → 401; Firebase not configured, not installed, or certificates unreachable → 503.
+- Firestore operation failures raise `DataStoreUnavailable` → 503 with a clear message and a server log; fallback to in-memory mode is now logged with its reason.
+- Verification: `python -m pytest -q` → 31 passed (9 new in `tests/test_auth_and_store.py`). Startup check without `firebase_admin`: warning logged, health reports `demo-memory-fallback`.
+- Untested: real `firebase_admin` token verification and live Firestore (package and credentials not available locally). Auth outcomes are covered with monkeypatched `verify_token`.
 
 ## Step 4b notes — validation and missing routes
 - PATCH `/api/partners/{id}` and `/api/actions/{id}` now apply explicit `null` to clear optional fields. The merged record is validated against the full model, so clearing a required field (e.g. partner `name`) returns 422 instead of corrupting the record. Omitted fields are unchanged; unknown stored fields are preserved.
