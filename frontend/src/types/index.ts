@@ -17,7 +17,10 @@ export interface Partner {
   id: string; name: string; category: string; contribution_types?: string[]; status: PartnerStatus;
   owner: string; updated_at: string; summary: string; contact_name?: string | null;
   contact_email?: string | null; source_label?: SourceLabel;
+  tier?: PartnerTier | null; group?: PartnerGroup | null; location?: string | null;
 }
+export type PartnerTier = "platinum" | "gold" | "silver" | "standard";
+export type PartnerGroup = "tata_group" | "non_tata";
 export interface ActionItem {
   id: string; title: string; priority: Priority; status: ActionStatus; due_date?: string | null;
   evidence: string[]; recommended_action: string; owner?: string; related_partner_id?: string | null;
@@ -41,16 +44,18 @@ export interface FinanceRecord {
   id: string; partner_id: string; project_id?: string | null; record_type: FinanceType; title: string;
   amount?: number | null; currency: string; issue_date?: string | null; due_date?: string | null;
   received_date?: string | null; status: string;
-  reference_number?: string | null; financial_term_id?: string | null; source_label?: SourceLabel;
+  reference_number?: string | null; financial_term_id?: string | null; owner?: string; evidence?: string | null; source_label?: SourceLabel;
 }
 export interface ReportRecord {
   id: string; partner_id: string; project_id?: string | null; title: string; report_type: ReportType;
   due_date?: string | null; submitted_date?: string | null; status: ReportStatus; owner: string;
-  source_label?: SourceLabel;
+  evidence?: string | null; source_label?: SourceLabel;
 }
 export interface Opportunity {
   id: string; partner_id: string; title: string; stage: OpportunityStage; owner: string;
   next_step: string; next_step_date?: string | null; updated_at: string; source_label?: SourceLabel;
+  location?: string | null; amount?: number | null; currency?: string; sanction_probability?: number | null;
+  started_on?: string | null; last_followup_date?: string | null; source_document_id?: string | null;
 }
 export interface Followup {
   id: string; title: string; owner: string; due_date?: string | null; related_partner_id?: string | null;
@@ -157,6 +162,7 @@ export interface Alert {
   record_type: string; record_id: string; record_title: string; partner_id?: string | null; project_id?: string | null;
   owner: string; due_date?: string | null; days_remaining?: number | null; evidence: AlertEvidence[];
   why_it_matters: string; recommended_action: string; source_label?: SourceLabel; related_alert_ids: string[];
+  partner_tier?: PartnerTier | null; partner_group?: PartnerGroup | null; partner_location?: string | null;
   priority: { score: number; level: Priority; factors: PriorityFactor[]; urgency?: number; impact?: number };
   review: AlertReview | null; previous_review?: AlertReview; hidden_by_review: boolean;
 }
@@ -169,11 +175,41 @@ export interface Activity {
   partner_id?: string | null; details: Record<string, unknown>;
 }
 /** POST /api/import/preview (preview only; nothing is written). */
+export interface TimelinessRow {
+  id: string; kind: "report" | "uc"; title?: string | null; partner_id?: string | null; owner: string;
+  due_date?: string | null; done_date?: string | null;
+  state: "on_time" | "late" | "overdue" | "pending" | "no_due_date" | "done_no_due_date"; days?: number | null;
+}
+export interface TimelinessSummaryRow {
+  total: number; done: number; on_time: number; late: number; overdue: number; pending: number; no_due_date: number;
+  on_time_rate: number | null; average_days_late: number | null;
+}
+export interface TimelinessResponse {
+  as_of: string; organisation: { report: TimelinessSummaryRow; uc: TimelinessSummaryRow };
+  owners: { owner: string; report: TimelinessSummaryRow; uc: TimelinessSummaryRow }[]; rows: TimelinessRow[];
+}
+export type Money = Record<string, number>;
+export interface ServicingCount { total: number; done: number; overdue: number; no_evidence: number }
+export interface PortfolioMou {
+  agreement_id: string; project_id?: string | null; partner_id?: string | null; partner_name?: string | null;
+  tier?: PartnerTier | null; group?: PartnerGroup | null; location?: string | null; title?: string | null; status?: string | null;
+  start_date?: string | null; expiry_date?: string | null; owner?: string | null; source_document_id?: string | null;
+  committed: Money; received: Money; reports: ServicingCount; ucs: ServicingCount; milestones: ServicingCount;
+  next_deadline: { date: string; kind: string; title?: string | null } | null;
+}
+export interface PortfolioFunder {
+  partner_id: string; partner_name?: string | null; tier?: PartnerTier | null; group?: PartnerGroup | null; location?: string | null;
+  mous: number; committed: Money; received: Money; reports: ServicingCount; ucs: ServicingCount; milestones: ServicingCount;
+}
+export interface Portfolio {
+  as_of: string; mous: PortfolioMou[]; funders: PortfolioFunder[]; unscheduled_expected: Money;
+  cashflow: { month: string; currency: string; expected: number; received: number }[];
+}
 export interface ImportCleanedRow { row: number; data: Record<string, unknown>; warnings: string[]; errors: string[] }
 export interface ImportCommitResult {
   entity_type: string; dry_run: boolean; committed: boolean; header_row: number; headers: string[];
   mapping: Record<string, string>; unmapped: string[]; cleaned: ImportCleanedRow[]; rejected: ImportCleanedRow[];
-  skipped: { row: number; reason: string }[]; valid_count: number; created: number; new_partners: string[];
+  skipped: { row: number; reason: string }[]; valid_count: number; created: number; new_partners: string[]; updated: number;
 }
 export interface ImportPreview {
   entity_type: string; filename?: string | null; headers: string[]; preview_rows: Record<string, unknown>[];
@@ -206,12 +242,12 @@ export interface AppOptions {
     partner_status: string[]; agreement_status: string[]; signed_copy: string[]; renewal_status: string[]; project_status: string[];
     milestone_status: string[]; opportunity_stage: string[]; finance_record_type: string[]; finance_status: Record<string, string[]>;
     document_kind: string[]; scope_dimension: string[]; import_entity_type: string[]; report_type: string[]; report_status: string[];
-    alert_category: string[]; alert_severity: string[]; review_decision: string[];
+    alert_category: string[]; alert_severity: string[]; review_decision: string[]; partner_tier: string[]; partner_group: string[];
   };
   /** Display labels per enum group, from the backend. */
   labels: Record<"partner_status" | "agreement_status" | "signed_copy" | "renewal_status" | "project_status" | "milestone_status" |
     "opportunity_stage" | "finance_record_type" | "document_kind" | "report_type" | "report_status" | "alert_category" |
-    "alert_severity" | "review_decision", Record<string, string>>;
+    "alert_severity" | "review_decision" | "partner_tier" | "partner_group", Record<string, string>>;
   partners: { id: string; name: string }[];
   projects: { id: string; name: string; partner_id?: string | null }[];
   agreements: { id: string; title: string; partner_id?: string | null }[];

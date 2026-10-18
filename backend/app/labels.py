@@ -4,7 +4,8 @@ from typing import get_args
 
 from app.engine import RULES, SEVERITY_POINTS
 from app.models import (
-    OPPORTUNITY_STAGES, AgreementStatus, FinanceType, MilestoneStatus, PartnerStatus, RecordStatus, RenewalStatus,
+    OPPORTUNITY_STAGES, AgreementStatus, FinanceType, MilestoneStatus, PartnerGroup, PartnerStatus, PartnerTier, RecordStatus,
+    RenewalStatus,
     ReportCreate, SignedCopyStatus,
 )
 from app.documents import DocumentKind, ScopeDimension
@@ -12,6 +13,8 @@ from app.reviews import ReviewDecision
 
 LABELS: dict[str, dict[str, str]] = {
     "partner_status": {"prospect": "Prospect", "qualification": "Qualification", "active": "Active", "on_hold": "On hold", "closed": "Closed"},
+    "partner_tier": {"platinum": "Platinum", "gold": "Gold", "silver": "Silver", "standard": "Standard"},
+    "partner_group": {"tata_group": "Tata group", "non_tata": "Non-Tata"},
     "agreement_status": {"draft": "Draft", "under_review": "Under review", "active": "Active", "expired": "Expired", "closed": "Closed"},
     "signed_copy": {"received": "Received", "pending": "Pending", "unknown": "Not confirmed"},
     "renewal_status": {"none": "Not started", "in_progress": "Renewal in progress", "renewed": "Renewed", "not_renewing": "Not renewing"},
@@ -36,6 +39,8 @@ def enums() -> dict[str, list[str]]:
     """Allowed values in their defined order, straight from the backend models and rules."""
     return {
         "partner_status": list(get_args(PartnerStatus)),
+        "partner_tier": list(get_args(PartnerTier)),
+        "partner_group": list(get_args(PartnerGroup)),
         "agreement_status": list(get_args(AgreementStatus)),
         "signed_copy": list(get_args(SignedCopyStatus)),
         "renewal_status": list(get_args(RenewalStatus)),

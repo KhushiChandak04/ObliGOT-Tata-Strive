@@ -24,7 +24,7 @@ from app.rules import build_deadline_finding, business_today, scan_deadlines
 
 router = APIRouter()
 
-IMPORT_ENTITY_TYPES = {"agreements", "projects", "finance", "finance-records", "reports", "partners"}
+IMPORT_ENTITY_TYPES = {"agreements", "projects", "finance", "finance-records", "reports", "partners", "opportunities"}
 
 @router.get("/health", tags=["system"])
 def health() -> dict:
@@ -508,7 +508,8 @@ def update_followup(followup_id: str, payload: FollowupUpdate) -> dict:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     return record
 
-ALERT_SOURCES = ("agreements", "opportunities", "milestones", "reports", "finance", "actions", "financial_terms", "agreement_changes")
+ALERT_SOURCES = ("agreements", "opportunities", "milestones", "reports", "finance", "actions", "financial_terms", "agreement_changes",
+                 "partners")
 
 def load_rule_config() -> RuleConfig:
     stored = get_record("config", "rules")

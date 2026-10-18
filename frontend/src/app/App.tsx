@@ -10,6 +10,7 @@ import {
 } from "react-router-dom";
 import Dialog from "../components/ui/Dialog";
 import AgreementForm from "../features/agreements/AgreementForm";
+import PartnerForm from "../features/partners/PartnerForm";
 import OpportunityForm from "../features/pipeline/OpportunityForm";
 import MilestoneForm from "../features/projects/MilestoneForm";
 import ProjectForm from "../features/projects/ProjectForm";
@@ -42,10 +43,16 @@ import type {
   DocumentReview,
   FinancialTermProposal,
   ImportCommitResult,
+  Money,
+  ServicingCount,
+  TimelinessResponse,
+  TimelinessRow,
+  TimelinessSummaryRow,
   ImportPreview,
   Milestone,
   ObligationProposal,
   Opportunity,
+  OpportunityStage,
   Partner,
   Project,
   ProposalCollection,
@@ -78,6 +85,10 @@ type Alert = {
   recommendation: string;
   review: ApiAlert["review"];
   demo: boolean;
+  categoryKey: string;
+  tier: string | null;
+  group: string | null;
+  location: string | null;
 };
 
 const toViewAlert = (
@@ -114,7 +125,58 @@ const toViewAlert = (
   recommendation: alert.recommended_action,
   review: alert.review,
   demo: alert.source_label === "demo",
+  categoryKey: alert.category,
+  tier: alert.partner_tier ?? null,
+  group: alert.partner_group ?? null,
+  location: alert.partner_location ?? null,
 });
+
+/** Quick filters shared by Action Center, Partners, Agreements and Projects: name, tier, group, location. */
+type QuickFilter = { q: string; tier: string; group: string; location: string };
+const NO_FILTER: QuickFilter = { q: "", tier: "", group: "", location: "" };
+
+function matchesQuick(f: QuickFilter, item: { text: string; tier?: string | null; group?: string | null; location?: string | null }): boolean {
+  return (!f.q || item.text.toLowerCase().includes(f.q.trim().toLowerCase()))
+    && (!f.tier || (f.tier === "none" ? !item.tier : item.tier === f.tier))
+    && (!f.group || item.group === f.group)
+    && (!f.location || (item.location ?? "").toLowerCase() === f.location.toLowerCase());
+}
+
+function QuickFilters({ value, onChange, locations, children }: {
+  value: QuickFilter; onChange: (next: QuickFilter) => void; locations: (string | null | undefined)[]; children?: ReactNode;
+}) {
+  const label = useLabel();
+  const tiers = useEnum("partner_tier");
+  const groups = useEnum("partner_group");
+  const places = Array.from(new Set(locations.filter((l): l is string => !!l))).sort();
+  const set = (key: keyof QuickFilter) => (event: { target: { value: string } }) => onChange({ ...value, [key]: event.target.value });
+  const active = Object.values(value).some(Boolean);
+  return (
+    <div className="toolbar quick-filters">
+      <input className="search" placeholder="Search name" value={value.q} onChange={set("q")} aria-label="Search by name" />
+      <select value={value.tier} onChange={set("tier")} aria-label="Filter by tier">
+        <option value="">All tiers</option>
+        {tiers.map((t) => <option key={t} value={t}>{label("partner_tier", t)}</option>)}
+        <option value="none">Tier not set</option>
+      </select>
+      <select value={value.group} onChange={set("group")} aria-label="Filter by group">
+        <option value="">Tata and non-Tata</option>
+        {groups.map((g) => <option key={g} value={g}>{label("partner_group", g)}</option>)}
+      </select>
+      <select value={value.location} onChange={set("location")} aria-label="Filter by location">
+        <option value="">All locations</option>
+        {places.map((l) => <option key={l} value={l}>{l}</option>)}
+      </select>
+      {children}
+      {active && <button className="text-button" onClick={() => onChange(NO_FILTER)}>Clear filters</button>}
+    </div>
+  );
+}
+
+function TierBadge({ tier }: { tier?: string | null }) {
+  const label = useLabel();
+  return tier && tier !== "standard" ? <span className={`pill tier-${tier}`}>{label("partner_tier", tier)}</span> : null;
+}
 
 /** Short timing label from the backend's days_remaining; the browser does no deadline arithmetic. */
 const timing = (alert: Alert) =>
@@ -625,7 +687,9 @@ function AppShell() {
         : page === "/dashboard"
           ? "Good day, team."
           : page === "/pipeline"
-            ? "Opportunities"
+            ? "Pipeline"
+            : page === "/partners"
+            ? "Partners"
             : page === "/agreements"
               ? "Agreements"
               : page === "/projects"
@@ -640,7 +704,7 @@ function AppShell() {
         ? "MOU and addendum intake"
         : page === "/action-center"
           ? "Live rule alerts"
-          : ["/pipeline", "/agreements", "/projects"].includes(page)
+          : ["/pipeline", "/partners", "/agreements", "/projects"].includes(page)
             ? "Live records"
             : runtimeMode === "demo-memory-fallback"
               ? "Synthetic demo data"
@@ -659,7 +723,8 @@ function AppShell() {
               label: "Action Center",
               count: open.length,
             },
-            { to: "/pipeline", label: "Opportunities" },
+            { to: "/pipeline", label: "Pipeline" },
+            { to: "/partners", label: "Partners" },
             { to: "/agreements", label: "Agreements" },
             { to: "/projects", label: "Projects" },
             { to: "/reports", label: "Reports & UCs" },
@@ -752,6 +817,7 @@ function AppShell() {
           <DocumentReviewPage partners={livePartners} />
         )}
         {page === "/pipeline" && <PipelinePage onChanged={workspace.reload} />}
+        {page === "/partners" && <PartnersPage onChanged={workspace.reload} />}
         {page === "/agreements" && (
           <AgreementsPage onChanged={workspace.reload} />
         )}
@@ -788,7 +854,7 @@ function AlertRow({
     >
       <strong>{index + 1}</strong>
       <span className="alert-copy">
-        <b>{alert.partner} · {alert.recordTitle}</b>
+        <b>{alert.partner} · {alert.recordTitle} <TierBadge tier={alert.tier} /></b>
         <small>
           {alert.ruleTitle} · {alert.owner}
           {alert.review ? ` · ${alert.review.decision.replace("_", " ")}` : ""}
@@ -917,6 +983,7 @@ function Dashboard({
           )}
         </section>
       </div>
+      <CashflowTable />
     </>
   );
 }
@@ -948,17 +1015,35 @@ function ActionCenter({
   hidden: number;
   onSelect: (alert: Alert) => void;
 }) {
+  const [filter, setFilter] = useState<QuickFilter>(NO_FILTER);
+  const [level, setLevel] = useState("");
+  const [category, setCategory] = useState("");
+  const label = useLabel();
+  const categories = useEnum("alert_category");
+  const shown = sorted.filter((a) => matchesQuick(filter, { text: `${a.partner} ${a.recordTitle} ${a.ruleTitle} ${a.owner}`, ...a })
+    && (!level || a.priority === level) && (!category || a.categoryKey === category));
   return (
     <>
       <section className="box">
-        <h3>All outstanding ({open.length})</h3>
+        <h3>All outstanding ({shown.length === open.length ? open.length : `${shown.length} of ${open.length}`})</h3>
+        <QuickFilters value={filter} onChange={(f) => { setFilter(f); if (!Object.values(f).some(Boolean)) { setLevel(""); setCategory(""); } }}
+          locations={sorted.map((a) => a.location)}>
+          <select value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Filter by priority">
+            <option value="">All priorities</option>
+            {["High", "Medium", "Low"].map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Filter by category">
+            <option value="">All categories</option>
+            {categories.map((c) => <option key={c} value={c}>{label("alert_category", c)}</option>)}
+          </select>
+        </QuickFilters>
         {hidden > 0 && (
           <small>
             {hidden} deferred or dismissed alert{hidden === 1 ? " is" : "s are"}{" "}
             hidden until the date passes or the record changes.
           </small>
         )}
-        {sorted.map((alert, index) => (
+        {shown.map((alert, index) => (
           <AlertRow
             key={alert.id}
             alert={alert}
@@ -966,7 +1051,7 @@ function ActionCenter({
             onSelect={onSelect}
           />
         ))}
-        {!sorted.length && <p>No open alerts.</p>}
+        {!shown.length && <p>{sorted.length ? "No alerts match these filters." : "No open alerts."}</p>}
       </section>
     </>
   );
@@ -984,24 +1069,65 @@ function TableState({ message }: { message: string }) {
 }
 function PipelinePage({ onChanged }: { onChanged: () => void }) {
   const data = useResource(async () => {
-    const [opportunities, partners] = await Promise.all([
+    const [opportunities, partners, documents] = await Promise.all([
       api.opportunities.list(),
       api.partners.list(),
+      api.documents.list(),
     ]);
-    return { opportunities, partners };
+    return { opportunities, partners, documents };
   }, []);
   const [dialog, setDialog] = useState<{ opportunity?: Opportunity } | null>(
     null,
   );
   const [message, setMessage] = useState("");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
+  const files = new Map((data.data?.documents ?? []).map((d) => [d.id, d.filename]));
+  const origin = (item: Opportunity) => item.source_document_id
+    ? <Link to={`/documents/${item.source_document_id}`}>From MOU: {files.get(item.source_document_id) ?? "open document"}</Link>
+    : <span>Manual entry</span>;
   const label = useLabel();
+  const stages = useEnum("opportunity_stage") as OpportunityStage[];
   const stageName = (stage: string) => label("opportunity_stage", stage);
+  const [view, setView] = useState<"board" | "table">(() => {
+    try { return window.localStorage.getItem(PIPELINE_VIEW_KEY) === "table" ? "table" : "board"; } catch { return "board"; }
+  });
+  const chooseView = (next: "board" | "table") => {
+    setView(next);
+    try { window.localStorage.setItem(PIPELINE_VIEW_KEY, next); } catch { /* storage unavailable: view is not remembered */ }
+  };
+  const [moving, setMoving] = useState<string | null>(null);
   const refresh = (text: string) => {
     setDialog(null);
     setMessage(text);
     data.reload();
     onChanged();
+  };
+  const logFollowup = async (item: Opportunity) => {
+    setMoving(item.id);
+    setMessage("");
+    try {
+      // The browser's local date; the backend re-evaluates follow-up alerts from it on the next refresh.
+      const today = new Date();
+      const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      await api.opportunities.update(item.id, { last_followup_date: iso });
+      refresh(`Recorded a follow-up today on “${item.title}”. Set the next step with Edit.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not record the follow-up.");
+    } finally {
+      setMoving(null);
+    }
+  };
+  const move = async (item: Opportunity, next: OpportunityStage) => {
+    setMoving(item.id);
+    setMessage("");
+    try {
+      await api.opportunities.update(item.id, { stage: next });
+      refresh(`Moved “${item.title}” to ${stageName(next)}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not move the deal.");
+    } finally {
+      setMoving(null);
+    }
   };
   return (
     <>
@@ -1023,14 +1149,69 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
         <>
           <p className="muted-copy">
             Stages record confirmed business progress. Update them when the
-            opportunity’s status actually changes.
+            opportunity’s status actually changes. An MOU becomes operational only once its deal reaches Approval.
           </p>
+          <PipelineTotals opportunities={data.data.opportunities} />
+          <div className="tabs view-toggle" role="group" aria-label="Pipeline view">
+            <button className={view === "board" ? "active" : ""} aria-pressed={view === "board"} onClick={() => chooseView("board")}>Board</button>
+            <button className={view === "table" ? "active" : ""} aria-pressed={view === "table"} onClick={() => chooseView("table")}>Table</button>
+          </div>
+          {view === "board" ? (
+            <div className="pipeline-grid">
+              {stages.map((stage) => {
+                const column = data.data!.opportunities.filter((item) => item.stage === stage);
+                const inr = column.reduce((sum, item) => sum + ((item.currency ?? "INR") === "INR" ? item.amount ?? 0 : 0), 0);
+                return (
+                  <section className="pipeline-column" key={stage}>
+                    <h3>{stageName(stage)}<span className="pill">{column.length}</span></h3>
+                    {inr > 0 && <small className="pipeline-sum">{formatMoney(inr, "INR")}</small>}
+                    {column.length ? column.map((item) => {
+                      const followup = item.last_followup_date ? daysSince(item.last_followup_date) : null;
+                      return (
+                        <div className="pipeline-card" key={item.id}>
+                          <b>{names.get(item.partner_id) ?? item.partner_id}</b>
+                          <small>{item.title}</small>
+                          <dl className="pipeline-fields">
+                            <dt>Amount</dt><dd>{item.amount != null ? formatMoney(item.amount, item.currency) : "—"}</dd>
+                            <dt>Sanction</dt><dd>{item.sanction_probability != null ? `${item.sanction_probability}%` : "—"}</dd>
+                            <dt>Location</dt><dd>{item.location || "—"}</dd>
+                            <dt>Owner</dt><dd>{item.owner}</dd>
+                            <dt>Started</dt><dd>{item.started_on ? `${formatDate(item.started_on)} (${daysSince(item.started_on)} d)` : "—"}</dd>
+                            <dt>Follow-up</dt>
+                            <dd className={followup !== null && followup > STALE_FOLLOWUP_DAYS ? "text-bordo" : ""}>
+                              {item.last_followup_date ? `${formatDate(item.last_followup_date)} (${followup} d ago)` : "—"}
+                            </dd>
+                            <dt>Next step</dt><dd>{item.next_step || "—"}{item.next_step_date ? ` · ${formatDate(item.next_step_date)}` : ""}</dd>
+                            <dt>Source</dt><dd>{origin(item)}</dd>
+                          </dl>
+                          <div className="button-row">
+                            <select aria-label={`Stage of ${item.title}`} value={item.stage} disabled={moving !== null}
+                              onChange={(event) => void move(item, event.target.value as OpportunityStage)}>
+                              {stages.map((s) => <option key={s} value={s}>{stageName(s)}</option>)}
+                            </select>
+                            <button className="text-button" onClick={() => void logFollowup(item)} disabled={moving !== null}>Followed up today</button>
+                            <button className="text-button" onClick={() => setDialog({ opportunity: item })} aria-label={`Edit ${item.title}`}>Edit</button>
+                          </div>
+                        </div>
+                      );
+                    }) : <TableState message="No deals" />}
+                  </section>
+                );
+              })}
+            </div>
+          ) : (
           <DataTable
-            headers={["Partner", "Opportunity", "Stage", "Owner", "Next step", "Next step date", ""]}
+            headers={["Partner", "Opportunity", "Source", "Location", "Amount", "Sanction %", "Stage", "Started", "Last follow-up", "Owner", "Next step", "Next step date", ""]}
             rows={data.data.opportunities.map((item) => [
               names.get(item.partner_id) ?? item.partner_id,
               item.title,
+              origin(item),
+              item.location || "—",
+              item.amount != null ? formatMoney(item.amount, item.currency) : "—",
+              item.sanction_probability != null ? `${item.sanction_probability}%` : "—",
               stageName(item.stage),
+              item.started_on ? `${formatDate(item.started_on)} (${daysSince(item.started_on)} days)` : "—",
+              item.last_followup_date ? `${formatDate(item.last_followup_date)} (${daysSince(item.last_followup_date)} days ago)` : "—",
               item.owner,
               item.next_step || "Not recorded",
               formatDate(item.next_step_date ?? null),
@@ -1044,6 +1225,7 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
             ])}
             empty="No opportunities recorded yet."
           />
+          )}
         </>
       )}
       <Dialog
@@ -1066,6 +1248,47 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
         )}
       </Dialog>
     </>
+  );
+}
+
+const PIPELINE_VIEW_KEY = "obligot.pipelineView";
+// Matches the backend's default stale_opportunity_days rule threshold.
+const STALE_FOLLOWUP_DAYS = 30;
+
+function daysSince(isoDate: string): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(`${isoDate}T00:00:00`).getTime()) / 86_400_000));
+}
+
+function formatMoney(amount: number, currency = "INR"): string {
+  try {
+    return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
+  } catch {
+    return `${currency} ${amount.toLocaleString("en-IN")}`;
+  }
+}
+
+/** Open pipeline at a glance. Amounts are summed per currency only; probability-weighted value uses the team's own %. */
+function PipelineTotals({ opportunities }: { opportunities: Opportunity[] }) {
+  const open = opportunities.filter((o) => o.stage !== "closed" && o.stage !== "active");
+  const funders = new Set(open.map((o) => o.partner_id)).size;
+  const byCurrency = new Map<string, { total: number; weighted: number }>();
+  for (const o of open) {
+    if (o.amount == null) continue;
+    const entry = byCurrency.get(o.currency ?? "INR") ?? { total: 0, weighted: 0 };
+    entry.total += o.amount;
+    if (o.sanction_probability != null) entry.weighted += (o.amount * o.sanction_probability) / 100;
+    byCurrency.set(o.currency ?? "INR", entry);
+  }
+  return (
+    <div className="button-row">
+      <span className="pill">Open deals · {open.length}</span>
+      <span className="pill">Funders · {funders}</span>
+      {[...byCurrency].map(([currency, v]) => (
+        <span className="pill" key={currency}>
+          Pipeline · {formatMoney(v.total, currency)} (weighted {formatMoney(v.weighted, currency)})
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1108,6 +1331,144 @@ function RegisterState({
           {message}
         </p>
       )}
+    </>
+  );
+}
+
+/** Amounts per currency, side by side; never added across currencies. */
+function moneyText(money: Money): string {
+  const parts = Object.entries(money).map(([currency, amount]) => formatMoney(amount, currency));
+  return parts.length ? parts.join(" · ") : "—";
+}
+
+/** "3/5 done", with overdue and missing evidence called out. */
+function Servicing({ count }: { count: ServicingCount }) {
+  if (!count.total) return <span className="muted-copy">None</span>;
+  return (
+    <span>
+      {count.done}/{count.total} done
+      {count.overdue > 0 && <b className="text-bordo"> · {count.overdue} overdue</b>}
+      {count.no_evidence > 0 && <small className="text-bordo"> · {count.no_evidence} without evidence</small>}
+    </span>
+  );
+}
+
+/** Every signed MOU on one screen: who, how much, money in, servicing, and what is due next. */
+function MouSummary() {
+  const data = useResource(() => api.portfolio(), []);
+  const [filter, setFilter] = useState<QuickFilter>(NO_FILTER);
+  const label = useLabel();
+  const rows = (data.data?.mous ?? []).filter((m) => matchesQuick(filter, { text: `${m.partner_name ?? ""} ${m.title ?? ""} ${m.owner ?? ""}`, ...m }));
+  return (
+    <section className="box">
+      <h3>Signed MOUs — summary <small>{data.data ? `${data.data.mous.length} MOUs · as of ${formatDate(data.data.as_of)}` : ""}</small></h3>
+      {data.error && <p className="api-state error" role="alert">{data.error.message} <button className="btn small-btn" onClick={data.reload}>Retry</button></p>}
+      {data.loading && !data.data && <p className="api-state" role="status">Loading MOU summary…</p>}
+      {data.data && (
+        <>
+          <QuickFilters value={filter} onChange={setFilter} locations={data.data.mous.map((m) => m.location)} />
+          <DataTable
+            headers={["Funder", "MOU", "Period", "Committed", "Received", "Reports", "UCs", "Deliverables", "Next due"]}
+            rows={rows.map((m) => [
+              <span key="f">{m.partner_name ?? "—"} <TierBadge tier={m.tier} />{m.group && <small> · {label("partner_group", m.group)}</small>}{m.location && <small> · {m.location}</small>}</span>,
+              m.source_document_id ? <Link key="t" to={`/documents/${m.source_document_id}`}>{m.title}</Link> : m.title ?? "—",
+              `${m.start_date ? formatDate(m.start_date) : "?"} – ${m.expiry_date ? formatDate(m.expiry_date) : "no end date"}`,
+              moneyText(m.committed),
+              moneyText(m.received),
+              <Servicing key="r" count={m.reports} />,
+              <Servicing key="u" count={m.ucs} />,
+              <Servicing key="m" count={m.milestones} />,
+              m.next_deadline ? `${formatDate(m.next_deadline.date)} · ${m.next_deadline.kind}` : "Nothing dated",
+            ])}
+            empty={data.data.mous.length ? "No MOUs match these filters." : "No signed MOUs yet. Create records from an MOU on the Documents page."}
+          />
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Expected (dated payment terms) vs received (recorded receipts), month by month, per currency. */
+function CashflowTable() {
+  const data = useResource(() => api.portfolio(), []);
+  if (data.error) return <section className="box"><p className="api-state error" role="alert">{data.error.message} <button className="btn small-btn" onClick={data.reload}>Retry</button></p></section>;
+  if (!data.data) return <section className="box"><p className="api-state" role="status">Loading cashflow…</p></section>;
+  const month = (key: string) => new Intl.DateTimeFormat("en-IN", { month: "short", year: "numeric" }).format(new Date(`${key}-01T00:00:00`));
+  const current = data.data.as_of.slice(0, 7);
+  return (
+    <section className="box">
+      <h3>Cashflow by month <small>expected from MOU payment terms vs received</small></h3>
+      <DataTable
+        headers={["Month", "Expected", "Received", "Gap"]}
+        rows={data.data.cashflow.map((c) => [
+          <span key="m">{month(c.month)}{c.month === current ? " (this month)" : ""}</span>,
+          c.expected ? formatMoney(c.expected, c.currency) : "—",
+          c.received ? formatMoney(c.received, c.currency) : "—",
+          c.expected > c.received && c.month <= current
+            ? <b key="g" className="text-bordo">{formatMoney(c.expected - c.received, c.currency)} not received</b>
+            : c.expected > c.received ? `${formatMoney(c.expected - c.received, c.currency)} to come` : "—",
+        ])}
+        empty="No dated payment terms or receipts yet."
+      />
+      {Object.keys(data.data.unscheduled_expected).length > 0 && (
+        <small>Also expected, with no date in the MOU: {moneyText(data.data.unscheduled_expected)}.</small>
+      )}
+    </section>
+  );
+}
+
+const TIER_ORDER: Record<string, number> = { platinum: 0, gold: 1, silver: 2, standard: 3 };
+
+/** Every funder at a glance: tier, group, location, money, and how their MOUs are being serviced. */
+function PartnersPage({ onChanged }: { onChanged: () => void }) {
+  const data = useResource(async () => {
+    const [partners, portfolio] = await Promise.all([api.partners.list(), api.portfolio()]);
+    return { partners, portfolio };
+  }, []);
+  const [filter, setFilter] = useState<QuickFilter>(NO_FILTER);
+  const [dialog, setDialog] = useState<{ partner?: Partner } | null>(null);
+  const [message, setMessage] = useState("");
+  const label = useLabel();
+  const servicing = new Map((data.data?.portfolio.funders ?? []).map((f) => [f.partner_id, f]));
+  const none: ServicingCount = { total: 0, done: 0, overdue: 0, no_evidence: 0 };
+  const rows = (data.data?.partners ?? [])
+    .filter((p) => matchesQuick(filter, { text: `${p.name} ${p.owner} ${p.category}`, ...p }))
+    .sort((a, b) => (TIER_ORDER[a.tier ?? ""] ?? 9) - (TIER_ORDER[b.tier ?? ""] ?? 9) || a.name.localeCompare(b.name));
+  const refresh = (text: string) => { setDialog(null); setMessage(text); data.reload(); onChanged(); };
+  return (
+    <>
+      <RegisterState resource={data} label="partners" message={message}
+        action={<button className="btn small-btn" onClick={() => setDialog({})} disabled={!data.data}>Add partner</button>} />
+      {data.data && (
+        <section className="box">
+          <p className="muted-copy">Set each funder's tier and group here (or import your customer sheet on the Import page). Platinum and Gold partners' alerts rank higher.</p>
+          <QuickFilters value={filter} onChange={setFilter} locations={data.data.partners.map((p) => p.location)} />
+          <DataTable
+            headers={["Partner", "Tier", "Group", "Location", "Owner", "MOUs", "Committed", "Received", "Reports", "UCs", "Deliverables", ""]}
+            rows={rows.map((p) => {
+              const f = servicing.get(p.id);
+              return [
+                p.name,
+                p.tier ? label("partner_tier", p.tier) : "Not set",
+                p.group ? label("partner_group", p.group) : "Not set",
+                p.location || "—",
+                p.owner,
+                f?.mous ?? 0,
+                f ? moneyText(f.committed) : "—",
+                f ? moneyText(f.received) : "—",
+                <Servicing key="r" count={f?.reports ?? none} />,
+                <Servicing key="u" count={f?.ucs ?? none} />,
+                <Servicing key="m" count={f?.milestones ?? none} />,
+                <button key="e" className="text-button" onClick={() => setDialog({ partner: p })} aria-label={`Edit ${p.name}`}>Edit</button>,
+              ];
+            })}
+            empty={data.data.partners.length ? "No partners match these filters." : "No partners yet."}
+          />
+        </section>
+      )}
+      <Dialog open={dialog !== null} title={dialog?.partner ? "Edit partner" : "Add partner"} onClose={() => setDialog(null)}>
+        {dialog && <PartnerForm partner={dialog.partner} onCancel={() => setDialog(null)} onSaved={(saved) => refresh(`Saved “${saved.name}”.`)} />}
+      </Dialog>
     </>
   );
 }
@@ -1172,6 +1533,7 @@ function AgreementsPage({ onChanged }: { onChanged: () => void }) {
               </div>
             ))}
           </div>
+          <MouSummary />
           <section className="box">
             <div className="toolbar">
               <input
@@ -1277,13 +1639,16 @@ function AgreementsPage({ onChanged }: { onChanged: () => void }) {
 
 function ProjectsPage({ onChanged }: { onChanged: () => void }) {
   const data = useResource(async () => {
-    const [projects, milestones, partners] = await Promise.all([
+    const [projects, milestones, partners, portfolio] = await Promise.all([
       api.projects.list(),
       api.milestones.list(),
       api.partners.list(),
+      api.portfolio(),
     ]);
-    return { projects, milestones, partners };
+    return { projects, milestones, partners, portfolio };
   }, []);
+  const [filter, setFilter] = useState<QuickFilter>(NO_FILTER);
+  const [projectStatus, setProjectStatus] = useState("");
   const [dialog, setDialog] = useState<
     | { kind: "project"; project?: Project }
     | {
@@ -1296,6 +1661,13 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
   >(null);
   const [message, setMessage] = useState("");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
+  const partnerOf = new Map((data.data?.partners ?? []).map((p) => [p.id, p]));
+  const mouOf = new Map((data.data?.portfolio.mous ?? []).filter((m) => m.project_id).map((m) => [m.project_id!, m]));
+  const visible = (data.data?.projects ?? []).filter((project) => {
+    const partner = project.partner_id ? partnerOf.get(project.partner_id) : undefined;
+    return matchesQuick(filter, { text: `${project.name} ${partner?.name ?? ""} ${project.owner}`, tier: partner?.tier,
+      group: partner?.group, location: partner?.location }) && (!projectStatus || project.status === projectStatus);
+  });
   const refresh = (text: string) => {
     setDialog(null);
     setMessage(text);
@@ -1332,10 +1704,20 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
           </button>
         }
       />
+      {data.data && data.data.projects.length > 0 && (
+        <QuickFilters value={filter} onChange={setFilter} locations={data.data.partners.map((p) => p.location)}>
+          <select value={projectStatus} onChange={(e) => setProjectStatus(e.target.value)} aria-label="Filter by project status">
+            <option value="">All statuses</option>
+            <EnumOptions group="project_status" />
+          </select>
+        </QuickFilters>
+      )}
       {data.data &&
-        (data.data.projects.length ? (
+        (visible.length ? (
           <div className="project-grid">
-            {data.data.projects.map((project) => {
+            {visible.map((project) => {
+              const partner = project.partner_id ? partnerOf.get(project.partner_id) : undefined;
+              const mou = mouOf.get(project.id);
               const milestones = data
                 .data!.milestones.filter((m) => m.project_id === project.id)
                 .sort((a, b) =>
@@ -1353,13 +1735,25 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
                         {project.partner_id
                           ? (names.get(project.partner_id) ??
                             project.partner_id)
-                          : "No partner"}
+                          : "No partner"}{" "}
+                        <TierBadge tier={partner?.tier} />
+                        {partner?.group && <small> · {label("partner_group", partner.group)}</small>}
+                        {partner?.location && <small> · {partner.location}</small>}
                       </p>
                     </div>
                     <span className="pill">
                       {project.status.replace("_", " ")}
                     </span>
                   </div>
+                  {mou && (
+                    <dl className="pipeline-fields project-glance">
+                      <dt>Committed</dt><dd>{moneyText(mou.committed)}</dd>
+                      <dt>Received</dt><dd>{moneyText(mou.received)}</dd>
+                      <dt>Reports</dt><dd><Servicing count={mou.reports} /></dd>
+                      <dt>UCs</dt><dd><Servicing count={mou.ucs} /></dd>
+                      <dt>Next due</dt><dd>{mou.next_deadline ? `${formatDate(mou.next_deadline.date)} · ${mou.next_deadline.kind}` : "Nothing dated"}</dd>
+                    </dl>
+                  )}
                   <div className="project-meta">
                     <span>Owner: {project.owner}</span>
                     <span>
@@ -1453,7 +1847,7 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
             })}
           </div>
         ) : (
-          <TableState message="No projects recorded yet." />
+          <TableState message={data.data.projects.length ? "No projects match these filters." : "No projects recorded yet."} />
         ))}
       <Dialog
         open={dialog !== null}
@@ -1508,30 +1902,33 @@ function formatAmount(amount: number, currency?: string | null): string {
 
 type ObligationRow = {
   id: string; kind: "report" | "uc"; type: string; title: string; partnerId: string; dueDate?: string | null;
-  status: string; owner: string; overdue: boolean; done: boolean; demo: boolean;
+  status: string; owner: string; evidence: string | null; overdue: boolean; done: boolean; demo: boolean;
 };
 
 function ReportsPage() {
   const data = useResource(async () => {
-    const [reports, finance, partners, alerts] = await Promise.all([
+    const [reports, finance, partners, alerts, timeliness] = await Promise.all([
       api.reports.list(), api.finance.list(undefined, { record_type: "utilization_certificate" }), api.partners.list(), api.alerts.list(),
+      api.timeliness(),
     ]);
-    return { reports, finance, partners, alerts };
+    return { reports, finance, partners, alerts, timeliness };
   }, []);
   const [tab, setTab] = useState("All");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [submittedOn, setSubmittedOn] = useState("");
+  const [evidence, setEvidence] = useState("");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
   const overdueIds = new Set((data.data?.alerts.alerts ?? []).filter((a) => a.rule_id === "REPORT_OVERDUE" || a.rule_id === "UC_OVERDUE").map((a) => a.record_id));
+  const timing = new Map((data.data?.timeliness.rows ?? []).map((r) => [r.id, r]));
   const rows: ObligationRow[] = [
     ...(data.data?.reports ?? []).map((r) => ({
       id: r.id, kind: "report" as const, type: `${r.report_type} report`, title: r.title, partnerId: r.partner_id, dueDate: r.due_date,
-      status: r.status, owner: r.owner, overdue: overdueIds.has(r.id), done: r.status === "submitted" || r.status === "accepted", demo: r.source_label === "demo",
+      status: r.status, owner: r.owner, evidence: r.evidence ?? null, overdue: overdueIds.has(r.id), done: r.status === "submitted" || r.status === "accepted", demo: r.source_label === "demo",
     })),
     ...(data.data?.finance ?? []).map((f) => ({
       id: f.id, kind: "uc" as const, type: "Utilization certificate", title: f.title, partnerId: f.partner_id, dueDate: f.due_date,
-      status: f.status, owner: "—", overdue: overdueIds.has(f.id), done: ["submitted", "accepted"].includes(f.status), demo: f.source_label === "demo",
+      status: f.status, owner: f.owner ?? "Unassigned", evidence: f.evidence ?? null, overdue: overdueIds.has(f.id), done: ["submitted", "accepted"].includes(f.status), demo: f.source_label === "demo",
     })),
   ];
   const filtered = rows.filter((r) =>
@@ -1540,11 +1937,12 @@ function ReportsPage() {
   const markSubmitted = async (row: ObligationRow) => {
     setMessage("");
     try {
-      if (row.kind === "report") await api.reports.update(row.id, { status: "submitted", submitted_date: submittedOn });
-      else await api.finance.update(row.id, { status: "submitted" });
+      if (row.kind === "report") await api.reports.update(row.id, { status: "submitted", submitted_date: submittedOn, evidence: evidence.trim() });
+      else await api.finance.update(row.id, { status: "submitted", received_date: submittedOn, evidence: evidence.trim() });
       setMessage(`Marked “${row.title}” submitted.`);
       setSubmitting(null);
       setSubmittedOn("");
+      setEvidence("");
       data.reload();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not update the record.");
@@ -1562,22 +1960,26 @@ function ReportsPage() {
       </div>
       {data.data && (
         <DataTable
-          headers={["Type", "Title", "Partner", "Due", "Status", "Owner", ""]}
+          headers={["Type", "Title", "Partner", "Owner", "Due", "Done on", "Timeliness", "Evidence", ""]}
           rows={filtered.map((row) => [
             row.type,
             row.title,
             names.get(row.partnerId) ?? row.partnerId,
-            row.dueDate ? formatDate(row.dueDate) : "Due date not recorded",
-            <span className={`pill ${row.overdue ? "high" : ""}`} key="status">
-              {row.overdue ? "Overdue" : row.status.replace("_", " ")}
-            </span>,
             row.owner,
+            row.dueDate ? formatDate(row.dueDate) : "Due date not recorded",
+            timing.get(row.id)?.done_date ? formatDate(timing.get(row.id)!.done_date!) : "—",
+            <span className={`pill ${timing.get(row.id)?.state === "overdue" || timing.get(row.id)?.state === "late" ? "high" : ""}`} key="status">
+              {timingLabel(timing.get(row.id))}
+            </span>,
+            row.evidence ? row.evidence : row.done ? <b key="ev" className="text-bordo">No evidence recorded</b> : "—",
             row.done ? (
               ""
-            ) : submitting === row.id && row.kind === "report" ? (
+            ) : submitting === row.id ? (
               <span className="button-row" key="submit">
-                <input type="date" aria-label="Submitted on" value={submittedOn} onChange={(e) => setSubmittedOn(e.target.value)} />
-                <button className="btn small-btn" disabled={!submittedOn} onClick={() => void markSubmitted(row)}>
+                <input type="date" aria-label={row.kind === "uc" ? "Received on" : "Submitted on"} value={submittedOn} onChange={(e) => setSubmittedOn(e.target.value)} />
+                <input aria-label="Evidence" placeholder="Evidence: email subject, courier no., portal ref…" value={evidence}
+                  onChange={(e) => setEvidence(e.target.value)} maxLength={500} />
+                <button className="btn small-btn" disabled={!submittedOn || evidence.trim().length < 3} onClick={() => void markSubmitted(row)}>
                   Save
                 </button>
               </span>
@@ -1585,7 +1987,7 @@ function ReportsPage() {
               <button
                 className="btn outline small-btn"
                 key="submit"
-                onClick={() => (row.kind === "report" ? setSubmitting(row.id) : void markSubmitted(row))}
+                onClick={() => setSubmitting(row.id)}
               >
                 Mark submitted
               </button>
@@ -1594,7 +1996,134 @@ function ReportsPage() {
           empty="No reports or utilization certificates match this tab."
         />
       )}
+      {data.data && <TimelinessSummary data={data.data.timeliness} />}
     </section>
+  );
+}
+
+function timingLabel(row?: TimelinessRow): string {
+  if (!row) return "—";
+  if (row.state === "on_time") return row.days === 0 ? "On time" : `On time (${-row.days!} days early)`;
+  if (row.state === "late") return `Late by ${row.days} days`;
+  if (row.state === "overdue") return `Overdue by ${row.days} days`;
+  if (row.state === "pending") return `Due in ${row.days} days`;
+  if (row.state === "done_no_due_date") return "Done (no due date)";
+  return "No due date";
+}
+
+const APPROVED_DEAL_STAGES = ["approval", "agreement", "active", "renewal"];
+
+/** The pipeline deal this MOU represents, built from its extracted values; manual deals are entered on the Pipeline page. */
+function MouPipelineDeal({ document, partners }: { document: SourceDocument; partners: Partner[] }) {
+  const data = useResource(() => api.documents.pipelineDeal(document.id), [document.id, document.agreement_id]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const add = async () => {
+    setBusy(true);
+    setError("");
+    try { await api.documents.addPipelineDeal(document.id); data.reload(); }
+    catch (err) { setError(err instanceof Error ? err.message : "Could not add the deal."); }
+    finally { setBusy(false); }
+  };
+  const deal = data.data?.deal ?? null;
+  const shown = deal ?? data.data?.proposed;
+  const partnerName = (shown?.partner_id && partners.find((p) => p.id === shown.partner_id)?.name) || "Partner chosen when creating records";
+  return (
+    <section className="box">
+      <h3>Pipeline deal {deal ? <span className="pill">On the pipeline · {deal.stage}</span> : <span className="pill high">Not on the pipeline yet</span>}</h3>
+      {data.error && <p className="api-state error" role="alert">{data.error.message} <button className="btn small-btn" onClick={data.reload}>Retry</button></p>}
+      {data.loading && !data.data && <p className="api-state" role="status">Loading the deal…</p>}
+      {shown && (
+        <DataTable
+          headers={["Funder", "Deal", "Location", "Amount", "Sanction %", "Started", "Last follow-up"]}
+          rows={[[
+            partnerName, shown.title ?? "—", shown.location || "Not stated in the MOU",
+            shown.amount != null ? formatMoney(shown.amount, shown.currency) : "Not stated in the MOU",
+            shown.sanction_probability != null ? `${shown.sanction_probability}%` : "—",
+            shown.started_on ? formatDate(shown.started_on) : "Not stated in the MOU",
+            shown.last_followup_date ? formatDate(shown.last_followup_date) : "—",
+          ]]}
+          empty=""
+        />
+      )}
+      {deal ? (
+        <p><Link to="/pipeline">Open the pipeline</Link> to edit the stage, sanction % and follow-ups.</p>
+      ) : document.agreement_id ? (
+        <button className="btn small-btn" disabled={busy} onClick={() => void add()}>{busy ? "Adding…" : "Add to pipeline"}</button>
+      ) : (
+        <p>These values come from the MOU. The deal is added to the pipeline when you create records below.</p>
+      )}
+      {error && <p className="api-state error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+/** Is everything a Tata STRIVE MOU should state actually in this one? Checks the extracted values only; nothing is inferred. */
+function MouChecklist({ review, deals, partnerId, dealId }: {
+  review: DocumentReview; deals: Opportunity[]; partnerId: string; dealId: string;
+}) {
+  const field = (name: string) => review.fields.some((f) => f.field === name && f.review_state !== "rejected" && (f.approved_value ?? f.proposed_value) != null && (f.approved_value ?? f.proposed_value) !== "");
+  const live = <T extends { review_state?: string }>(rows: T[]) => rows.filter((r) => r.review_state !== "rejected");
+  const scope = live(review.programme_scope);
+  const terms = live(review.financial_terms);
+  const obligations = live(review.obligations);
+  const ofType = (...types: string[]) => obligations.filter((o) => types.includes(o.obligation_type));
+  const tranches = terms.filter((t) => t.term_type === "tranche" || t.term_type === "payment_term");
+  const reports = ofType("progress_report", "impact_report");
+  const ucs = ofType("utilization_certificate");
+  const dated = (rows: { due_date?: string | null }[]) => rows.filter((r) => r.due_date).length;
+  const deal = deals.find((d) => d.id === dealId) ?? deals.find((d) => partnerId && d.partner_id === partnerId);
+  const checks: [string, boolean, string][] = [
+    ["Partner named", field("partner_name") || field("legal_entity_name"), ""],
+    ["Start date", field("effective_date") || field("start_date") || field("execution_date"), ""],
+    ["End date or duration", field("expiry_date") || field("duration"), "needed for expiry alerts"],
+    ["Target group", scope.some((s) => s.dimension === "beneficiary_group"), "who the programme is for"],
+    ["Numeric targets", scope.some((s) => s.dimension === "target" && s.target_value != null),
+      scope.filter((s) => s.target_value != null).map((s) => `${s.target_value} ${s.target_unit ?? ""} ${s.value}`.trim()).slice(0, 3).join("; ")],
+    ["Locations", scope.some((s) => s.dimension === "state" || s.dimension === "region" || !!s.location), ""],
+    ["Deliverables", ofType("deliverable", "milestone").length > 0, `${ofType("deliverable", "milestone").length} found`],
+    ["Total budget", terms.some((t) => t.term_type === "total_commitment" || t.term_type === "annual_budget"), ""],
+    ["Payment schedule", tranches.length > 0, tranches.length ? `${tranches.length} instalments, ${dated(tranches)} with a date` : ""],
+    ["Progress reports", reports.length > 0, reports.length ? `${reports.length} found, ${dated(reports)} with a due date` : ""],
+    ["Utilization certificates", ucs.length > 0, ucs.length ? `${ucs.length} found, ${dated(ucs)} with a due date` : ""],
+    ["Pipeline deal approved", !!deal && APPROVED_DEAL_STAGES.includes(deal.stage),
+      deal ? `“${deal.title}” is at stage ${deal.stage}` : "no pipeline deal for this partner"],
+  ];
+  const missing = checks.filter(([, ok]) => !ok).length;
+  return (
+    <section className="box validation">
+      <h3>MOU completeness {missing ? <span className="pill high">{missing} missing</span> : <span className="pill">Complete</span>}</h3>
+      {checks.map(([name, ok, detail]) => (
+        <p key={name}>{ok ? "✓" : "✗"} {name}{detail ? ` — ${detail}` : ""}</p>
+      ))}
+    </section>
+  );
+}
+
+/** Due vs actually done: organisation totals and per account owner, separately for reports and UCs. */
+function TimelinessSummary({ data }: { data: TimelinessResponse }) {
+  const cells = (s: TimelinessSummaryRow) => [
+    s.total, s.done, s.on_time, s.late, s.overdue, s.pending,
+    s.on_time_rate === null ? "—" : `${s.on_time_rate}%`, s.average_days_late === null ? "—" : `${s.average_days_late} days`,
+  ];
+  const headers = ["Total", "Done", "On time", "Late", "Overdue", "Pending", "On-time rate", "Avg. delay"];
+  return (
+    <>
+      <h3>Timeliness — organisation (as of {formatDate(data.as_of)})</h3>
+      <DataTable
+        headers={["", ...headers]}
+        rows={[["Progress reports", ...cells(data.organisation.report)], ["Utilization certificates", ...cells(data.organisation.uc)]]}
+        empty="No reports or UCs yet."
+      />
+      <h3>Timeliness — by account owner</h3>
+      <DataTable
+        headers={["Owner", "Document", ...headers]}
+        rows={data.owners.flatMap((o) => ([["report", "Reports"], ["uc", "UCs"]] as const)
+          .filter(([kind]) => o[kind].total > 0)
+          .map(([kind, name]) => [o.owner, name, ...cells(o[kind])]))}
+        empty="No reports or UCs yet."
+      />
+    </>
   );
 }
 
@@ -1945,6 +2474,8 @@ function DocumentReviewPage({ partners }: { partners: Partner[] }) {
   const [page, setPage] = useState(1);
   const [partnerChoice, setPartnerChoice] = useState("");
   const [partnerName, setPartnerName] = useState<string | null>(null);
+  const [dealChoice, setDealChoice] = useState("");
+  const pipeline = useResource(() => api.opportunities.list(), []);
   useEffect(() => {
     if (documentId) rememberCurrentDocument(documentId);
   }, [documentId]);
@@ -2066,6 +2597,13 @@ function DocumentReviewPage({ partners }: { partners: Partner[] }) {
           </p>
         )}
       </section>
+      {doc.kind === "mou" && doc.source_label !== "demo" && extraction?.finished_at && doc.status !== "extracting" && (
+        <MouPipelineDeal document={doc} partners={partners} />
+      )}
+      {doc.kind === "mou" && extraction?.finished_at && doc.status !== "extracting" && (
+        <MouChecklist review={review} deals={pipeline.data ?? []} partnerId={partnerChoice || doc.partner_id || ""}
+          dealId={dealChoice || ""} />
+      )}
       {doc.source_label !== "demo" && doc.kind === "mou" && extraction?.finished_at && doc.status !== "extracting" && (
         <section className="box">
           <h3>Use this MOU in ObliGOT</h3>
@@ -2102,18 +2640,29 @@ function DocumentReviewPage({ partners }: { partners: Partner[] }) {
                     />
                   </label>
                 )}
+                <label>
+                  Pipeline deal{" "}
+                  <select value={dealChoice} onChange={(event) => setDealChoice(event.target.value)}>
+                    <option value="">Not in the pipeline</option>
+                    {(pipeline.data ?? []).filter((o) => !partnerChoice || o.partner_id === partnerChoice).map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.title} ({o.stage})
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   className="btn"
                   disabled={busy}
                   onClick={() =>
                     void run(
                       () =>
-                        api.documents.createRecords(
-                          documentId,
-                          partnerChoice
+                        api.documents.createRecords(documentId, {
+                          ...(partnerChoice
                             ? { partner_id: partnerChoice }
-                            : { partner_name: (partnerName ?? String(review.fields.find((f) => f.field === "partner_name")?.proposed_value ?? "")).trim() || undefined },
-                        ),
+                            : { partner_name: (partnerName ?? String(review.fields.find((f) => f.field === "partner_name")?.proposed_value ?? "")).trim() || undefined }),
+                          opportunity_id: dealChoice || undefined,
+                        }),
                       "Records created. Alerts are now calculated from this MOU.",
                     )
                   }
@@ -2433,8 +2982,8 @@ function ImportCommitPanel({ file, entityType }: { file: File; entityType: strin
       {state === "saved" && <p>Saved records now appear on their pages, and alerts are computed from them automatically.</p>}
       <div className="button-row">
         {state === "ready" && (
-          <button className="btn" disabled={result.valid_count === 0} onClick={() => void run(false)}>
-            Import {result.valid_count} valid rows
+          <button className="btn" disabled={result.valid_count === 0 && !result.updated} onClick={() => void run(false)}>
+            Import {result.valid_count} valid rows{result.updated ? ` and update ${result.updated} existing partners` : ""}
           </button>
         )}
         {state === "saving" && <button className="btn" disabled>Saving…</button>}

@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app import document_storage
 from app.document_routes import PROPOSAL_COLLECTIONS, _proposals_for
-from app.models import AgreementCreate, FinanceCreate, MilestoneCreate, PartnerCreate, ProjectCreate, ReportCreate
+from app.config import settings
+from app.models import AgreementCreate, FinanceCreate, MilestoneCreate, OpportunityCreate, PartnerCreate, ProjectCreate, ReportCreate
 from app.repository import delete_record, get_record, list_records, patch_record, put_record
 from app.reviews import actor, log_activity, now_iso
 from app.rules import business_today
@@ -26,6 +27,11 @@ class CreateRecords(BaseModel):
     partner_id: str | None = None  # an existing partner; otherwise one is created from the extracted partner name
     partner_name: str | None = Field(default=None, max_length=160)  # overrides the extracted name (e.g. redacted scans)
     owner: str | None = Field(default=None, max_length=120)
+    opportunity_id: str | None = None  # the pipeline deal this MOU closes; it must be approved in the pipeline first
+
+
+# Pipeline stages at which a deal counts as approved, so its MOU can become an operational agreement.
+APPROVED_STAGES = ("approval", "agreement", "active", "renewal")
 
 
 def _validated(model, **data) -> dict:
@@ -52,6 +58,67 @@ def _fields(proposals: dict[str, list[dict]]) -> dict[str, Any]:
     return values
 
 
+def _deal_from_mou(document: dict, proposals: dict[str, list[dict]], partner_id: str | None, owner: str, today: date) -> dict:
+    """The pipeline deal an MOU represents, from its extracted values only: no probability or follow-up is invented."""
+    values = _fields(proposals)
+    title = str(values.get("title") or values.get("programme_name") or PurePath(document["filename"]).stem)[:200]
+    start = _as_date(values.get("effective_date") or values.get("start_date") or values.get("execution_date"))
+    expiry = _as_date(values.get("expiry_date"))
+    total = next((t for t in proposals["financial_terms"] if t.get("review_state") != "rejected"
+                  and t.get("term_type") == "total_commitment" and t.get("amount") is not None and t.get("currency")), None)
+    places = [s.get("value") or s.get("location") for s in proposals["programme_scope"]
+              if s.get("review_state") != "rejected" and (s.get("dimension") in ("state", "region") or s.get("location"))]
+    location = ", ".join(dict.fromkeys(str(p) for p in places if p))[:120] or None
+    return {"partner_id": partner_id, "title": title, "stage": "closed" if expiry and expiry < today else "active",
+            "owner": owner, "amount": total["amount"] if total else None,
+            "currency": total["currency"] if total else settings.default_currency, "started_on": start, "location": location}
+
+
+def _save_deal(document_id: str, deal: dict, agreement_id: str, today: date) -> dict:
+    data = _validated(OpportunityCreate, **deal)
+    saved = put_record("opportunities", {**data, "updated_at": today.isoformat(), "source_label": "user",
+                                         "source_document_id": document_id})
+    patch_record("agreements", agreement_id, {"opportunity_id": saved["id"]})
+    return saved
+
+
+def _deal_for(document: dict) -> dict | None:
+    """The pipeline deal of this MOU: the one created from it, or the one its agreement was linked to."""
+    deal = next((o for o in list_records("opportunities") if o.get("source_document_id") == document["id"]), None)
+    agreement = get_record("agreements", document["agreement_id"]) if document.get("agreement_id") else None
+    if not deal and agreement and agreement.get("opportunity_id"):
+        deal = get_record("opportunities", agreement["opportunity_id"])
+    return deal
+
+
+@router.get("/documents/{document_id}/pipeline-deal")
+def get_pipeline_deal(document_id: str, request: Request) -> dict:
+    """This MOU's pipeline deal if it exists, and the values one would be created with."""
+    document = get_record("documents", document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    proposed = _deal_from_mou(document, _proposals_for(document_id), document.get("partner_id"), actor(request), business_today())
+    return {"deal": _deal_for(document), "proposed": {k: (v.isoformat() if isinstance(v, date) else v) for k, v in proposed.items()}}
+
+
+@router.post("/documents/{document_id}/pipeline-deal", status_code=201)
+def add_pipeline_deal(document_id: str, request: Request) -> dict:
+    """Add an MOU that already has records (e.g. created before deals were automatic) to the pipeline."""
+    document = get_record("documents", document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not document.get("agreement_id"):
+        raise HTTPException(status_code=409, detail="Create records from this MOU first; its deal is added then")
+    if _deal_for(document):
+        raise HTTPException(status_code=409, detail="This MOU already has a pipeline deal")
+    today = business_today()
+    deal = _save_deal(document_id, _deal_from_mou(document, _proposals_for(document_id), document.get("partner_id"),
+                                                  actor(request), today), document["agreement_id"], today)
+    log_activity(actor_name=actor(request), event="pipeline_deal_created", summary=f"Added “{deal['title']}” to the pipeline from its MOU",
+                 entity_type="opportunity", entity_id=deal["id"], partner_id=deal.get("partner_id"))
+    return deal
+
+
 @router.post("/documents/{document_id}/create-records")
 def create_records(document_id: str, payload: CreateRecords, request: Request) -> dict:
     document = get_record("documents", document_id)
@@ -69,8 +136,18 @@ def create_records(document_id: str, payload: CreateRecords, request: Request) -
     expiry = _as_date(values.get("expiry_date"))
     title = str(values.get("title") or values.get("programme_name") or PurePath(document["filename"]).stem)[:200]
 
+    # ---- pipeline deal: an MOU becomes operational only once its deal is approved in the pipeline ----
+    opportunity = get_record("opportunities", payload.opportunity_id) if payload.opportunity_id else None
+    if payload.opportunity_id and not opportunity:
+        raise HTTPException(status_code=404, detail="Pipeline deal not found")
+    if opportunity and opportunity.get("stage") not in APPROVED_STAGES:
+        raise HTTPException(status_code=409, detail=f"The pipeline deal “{opportunity['title']}” is at stage "
+                                                    f"“{opportunity.get('stage')}”; approve it in the pipeline first")
+    if opportunity and payload.partner_id and opportunity["partner_id"] != payload.partner_id:
+        raise HTTPException(status_code=422, detail="The pipeline deal belongs to a different partner")
+
     # ---- partner ----
-    partner_id = payload.partner_id
+    partner_id = payload.partner_id or (opportunity or {}).get("partner_id")
     if partner_id and not get_record("partners", partner_id):
         raise HTTPException(status_code=404, detail="Partner not found")
     partner_created = False
@@ -94,8 +171,11 @@ def create_records(document_id: str, payload: CreateRecords, request: Request) -
     project_id = put_record("projects", {**project, "source_label": "user", "source_document_id": document_id})["id"]
     agreement = _validated(AgreementCreate, partner_id=partner_id, title=title, reference_number=values.get("reference_number"),
                            status="expired" if ended else "active", start_date=start, expiry_date=expiry, owner=owner,
-                           project_id=project_id, signed_copy="received")
+                           project_id=project_id, signed_copy="received", opportunity_id=(opportunity or {}).get("id"))
     agreement_id = put_record("agreements", {**agreement, "source_label": "user", "source_document_id": document_id})["id"]
+
+    if opportunity and opportunity.get("stage") == "approval":
+        patch_record("opportunities", opportunity["id"], {"stage": "agreement", "updated_at": today.isoformat()})
 
     # ---- obligations → reports / UCs / milestones ----
     created = {"reports": 0, "utilization_certificates": 0, "milestones": 0, "budgets": 0, "fund_release_terms": 0, "register_only": 0}
@@ -111,7 +191,7 @@ def create_records(document_id: str, payload: CreateRecords, request: Request) -
             ref, created["reports"] = {"collection": "reports", "id": put_record("reports", {**data, "source_label": "user"})["id"]}, created["reports"] + 1
         elif kind == "utilization_certificate":
             data = _validated(FinanceCreate, partner_id=partner_id, project_id=project_id, record_type="utilization_certificate",
-                              title=label, due_date=due)
+                              title=label, due_date=due, owner=ob.get("owner") or owner)
             ref = {"collection": "finance", "id": put_record("finance", {**data, "source_label": "user"})["id"]}
             created["utilization_certificates"] += 1
         elif kind in ("milestone", "deliverable"):
@@ -136,6 +216,10 @@ def create_records(document_id: str, payload: CreateRecords, request: Request) -
         if term.get("term_type") in ("tranche", "payment_term"):
             created["fund_release_terms"] += 1
         patch_record("financial_terms", term["id"], {"review_state": "approved", "agreement_id": agreement_id, "partner_id": partner_id})
+
+    # ---- pipeline: an MOU in use is a signed deal, so it appears on the pipeline even if nobody entered it there ----
+    if not opportunity:
+        _save_deal(document_id, _deal_from_mou(document, proposals, partner_id, owner, today), agreement_id, today)
 
     document = patch_record("documents", document_id, {"partner_id": partner_id, "agreement_id": agreement_id,
                                                       "records_created_at": now_iso(), "records_created_by": who})
@@ -162,6 +246,8 @@ def _linked_records(document: dict) -> list[tuple[str, dict]]:
     projects = [p for p in list_records("projects", include_archived=True) if p.get("source_document_id") == doc_id]
     project_ids = {p["id"] for p in projects}
     linked: list[tuple[str, dict]] = [("projects", p) for p in projects]
+    linked += [("opportunities", o) for o in list_records("opportunities", include_archived=True)
+               if o.get("source_document_id") == doc_id]
     linked += [("agreements", a) for a in list_records("agreements", include_archived=True)
                if a.get("source_document_id") == doc_id or (agreement_id and a["id"] == agreement_id)]
     for collection in ("reports", "finance", "milestones"):

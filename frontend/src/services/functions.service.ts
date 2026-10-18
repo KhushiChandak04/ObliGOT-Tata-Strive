@@ -3,7 +3,7 @@ import type {
   ActionItem, Activity, Agreement, Alert, AlertReview, AlertsResponse, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup,
   HealthResponse, ImportCommitResult, ImportPreview, Milestone,
   Opportunity, Partner, Project, ReportRecord, SourceDocument, DocumentReview, AmendmentChange,
-  DashboardSummary, AppOptions,
+  DashboardSummary, AppOptions, TimelinessResponse, Portfolio,
 } from "../types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -162,6 +162,10 @@ export const api = {
     form.append("entity_type", entityType);
     return request<ImportPreview>("/api/import/preview", { method: "POST", body: form });
   },
+  /** Every signed MOU summarised, monthly cashflow, and funder servicing. */
+  portfolio: () => request<Portfolio>("/api/portfolio"),
+  /** Reports and UCs: due vs actually done, organisation totals and per owner. */
+  timeliness: () => request<TimelinessResponse>("/api/compliance/timeliness"),
   /** Clean a messy sheet (headers, ₹/lakh/crore amounts, dates) and, unless dryRun, save its valid rows. */
   importCommit: (file: File, entityType: string, dryRun: boolean) => {
     const form = new FormData();
@@ -205,8 +209,12 @@ export const api = {
     exportWorkbook: () => requestBlob("/api/export/workbook"),
     exportDocumentWorkbook: (documentId: string) =>
       requestBlob(`/api/documents/${id(documentId)}/export/workbook`),
+    /** This MOU's pipeline deal (null if none yet) and the values one is built from. */
+    pipelineDeal: (documentId: string) =>
+      request<{ deal: Opportunity | null; proposed: Partial<Opportunity> }>(`/api/documents/${id(documentId)}/pipeline-deal`),
+    addPipelineDeal: (documentId: string) => request<Opportunity>(`/api/documents/${id(documentId)}/pipeline-deal`, { method: "POST" }),
     /** Explicit user action: turn this MOU's extracted values into partner/agreement/project/report/finance records. */
-    createRecords: (documentId: string, payload: { partner_id?: string; partner_name?: string } = {}) =>
+    createRecords: (documentId: string, payload: { partner_id?: string; partner_name?: string; opportunity_id?: string } = {}) =>
       request<{ partner_id: string; partner_created: boolean; agreement_id: string; project_id: string; created: Record<string, number> }>(
         `/api/documents/${id(documentId)}/create-records`, send("POST", payload)),
   },

@@ -15,8 +15,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
 from app.config import settings
-from app.models import AgreementCreate, FinanceCreate, PartnerCreate, ProjectCreate, ReportCreate
-from app.repository import list_records, put_record
+from app.models import AgreementCreate, FinanceCreate, OpportunityCreate, PartnerCreate, ProjectCreate, ReportCreate
+from app.repository import list_records, patch_record, put_record
 from app.reviews import actor, log_activity
 from app.rules import business_today
 
@@ -36,6 +36,9 @@ FIELDS: dict[str, dict[str, list[str]]] = {
         "status": STATUS, "owner": OWNER, "contact_name": ["contact", "contact person", "contact name"],
         "contact_email": ["email", "e mail", "contact email", "mail", "email id"],
         "summary": ["notes", "remarks", "summary", "comments", "description"],
+        "tier": ["tier", "customer tier", "partner tier", "category tier", "class", "membership", "level"],
+        "group": ["group", "tata group", "tata non tata", "tata or non tata", "group company", "tata"],
+        "location": ["location", "city", "state", "region", "hq", "headquarters"],
     },
     "agreements": {
         "partner": PARTNER_NAME, "title": ["title", "agreement", "mou", "mou title", "agreement name", "agreement title",
@@ -57,6 +60,22 @@ FIELDS: dict[str, dict[str, list[str]]] = {
         "currency": ["currency", "ccy"], "issue_date": ["issue date", "invoice date", "date", "dated"],
         "due_date": DUE, "received_date": ["received", "received date", "received on", "payment date", "date received"],
         "status": STATUS, "reference_number": ["invoice no", "invoice number", "ref", "reference", "uc no", "reference number"],
+        "owner": OWNER,
+    },
+    "opportunities": {
+        "partner": PARTNER_NAME, "title": ["deal", "deal name", "opportunity", "opportunity name", "proposal", "title", "name",
+                                           "programme", "program", "project"],
+        "stage": STATUS + ["pipeline stage", "deal stage"], "owner": OWNER,
+        "location": ["location", "city", "state", "geography", "region", "district"],
+        "amount": ["amount", "deal size", "deal amount", "ask", "proposed amount", "value", "budget", "amount inr",
+                   "amount in inr", "expected amount", "grant amount"],
+        "sanction_probability": ["probability", "sanction probability", "likelihood", "chance", "probability of sanction",
+                                 "win probability", "conversion probability"],
+        "started_on": ["started", "started on", "start date", "since", "deal started", "initiated on", "first contact",
+                       "date initiated", "start"],
+        "last_followup_date": ["last follow up", "last followup", "follow up", "followup", "last contact",
+                               "last follow up date", "follow up date", "last connected"],
+        "next_step": ["next step", "next action", "action"], "next_step_date": ["next step date", "next action date"],
     },
     "reports": {
         "partner": PARTNER_NAME, "title": ["report", "title", "name", "deliverable", "report name", "report title"],
@@ -66,8 +85,11 @@ FIELDS: dict[str, dict[str, list[str]]] = {
     },
 }
 MODELS = {"partners": PartnerCreate, "agreements": AgreementCreate, "projects": ProjectCreate,
-          "finance": FinanceCreate, "reports": ReportCreate}
-DATE_FIELDS = {"start_date", "expiry_date", "end_date", "issue_date", "due_date", "received_date", "submitted_date"}
+          "finance": FinanceCreate, "reports": ReportCreate, "opportunities": OpportunityCreate}
+# Partner fields a re-imported customer sheet may fill in on existing partners.
+PARTNER_SHEET_FIELDS = ("tier", "group", "location")
+DATE_FIELDS = {"start_date", "expiry_date", "end_date", "issue_date", "due_date", "received_date", "submitted_date",
+               "started_on", "last_followup_date", "next_step_date"}
 
 # Common spreadsheet words → the model's values. Unknown values are reported and the model default is kept.
 ENUMS: dict[tuple[str, str], dict[str, str]] = {
@@ -75,6 +97,11 @@ ENUMS: dict[tuple[str, str], dict[str, str]] = {
                              "lead": "prospect", "new": "prospect", "qualification": "qualification",
                              "in discussion": "qualification", "on hold": "on_hold", "hold": "on_hold", "paused": "on_hold",
                              "closed": "closed", "inactive": "closed", "dropped": "closed"},
+    ("partners", "tier"): {"platinum": "platinum", "plat": "platinum", "gold": "gold", "silver": "silver",
+                           "standard": "standard", "regular": "standard", "normal": "standard", "bronze": "standard"},
+    ("partners", "group"): {"tata": "tata_group", "tata group": "tata_group", "yes": "tata_group", "y": "tata_group",
+                            "group company": "tata_group", "non tata": "non_tata", "nontata": "non_tata", "no": "non_tata",
+                            "n": "non_tata", "external": "non_tata", "others": "non_tata", "other": "non_tata"},
     ("agreements", "status"): {"active": "active", "signed": "active", "live": "active", "ongoing": "active",
                                "in force": "active", "draft": "draft", "under review": "under_review",
                                "in review": "under_review", "pending": "under_review", "expired": "expired",
@@ -90,6 +117,13 @@ ENUMS: dict[tuple[str, str], dict[str, str]] = {
                                  "disbursement": "fund_received", "invoice": "invoice", "inv": "invoice", "bill": "invoice",
                                  "uc": "utilization_certificate", "utilization certificate": "utilization_certificate",
                                  "utilisation certificate": "utilization_certificate"},
+    ("opportunities", "stage"): {"identified": "identified", "lead": "identified", "new": "identified", "prospect": "identified",
+                                 "qualification": "qualification", "qualified": "qualification", "in discussion": "qualification",
+                                 "proposal": "proposal", "proposal sent": "proposal", "proposal submitted": "proposal",
+                                 "approval": "approval", "approved": "approval", "sanctioned": "approval",
+                                 "agreement": "agreement", "mou": "agreement", "mou signed": "agreement", "signed": "agreement",
+                                 "active": "active", "ongoing": "active", "renewal": "renewal", "closed": "closed",
+                                 "lost": "closed", "dropped": "closed", "won": "active"},
     ("reports", "report_type"): {"monthly": "monthly", "month": "monthly", "quarterly": "quarterly", "quarter": "quarterly",
                                  "q": "quarterly", "impact": "impact", "impact report": "impact"},
     ("reports", "status"): {"planned": "planned", "not started": "planned", "pending": "planned", "upcoming": "planned",
@@ -232,6 +266,18 @@ def clean_rows(entity_type: str, rows: list[list[Any]]) -> dict:
                 if error:
                     errors.append(error)
                 data["amount"] = amount
+            elif field == "sanction_probability":
+                text = _text(value).replace("%", "").strip()
+                if text:
+                    try:
+                        number = float(text)
+                        number = number * 100 if 0 < number < 1 else number  # 0.6 written as a fraction
+                        if 0 <= number <= 100:
+                            data[field] = round(number)
+                        else:
+                            errors.append(f"probability “{value}” is not between 0 and 100")
+                    except ValueError:
+                        warnings.append(f"probability “{value}” is not a number; left blank")
             elif field in DATE_FIELDS:
                 parsed, error = clean_date(value)
                 if error:
@@ -269,6 +315,8 @@ def _key(entity_type: str, d: dict) -> tuple:
         return (d.get("partner_id"), d.get("record_type"), _norm(d.get("title")), d.get("amount"), d.get("due_date"))
     if entity_type == "reports":
         return (d.get("partner_id"), _norm(d.get("title")), d.get("due_date"))
+    if entity_type == "opportunities":
+        return (d.get("partner_id"), _norm(d.get("title")))
     return (d.get("partner_id"), _norm(d.get("title")))
 
 
@@ -304,7 +352,7 @@ async def import_commit(request: Request) -> dict:
     partners = {_norm(p["name"]): p for p in list_records("partners")}
     existing = {_key(entity_type, r) for r in list_records(entity_type)}
     new_partners: dict[str, dict] = {}
-    to_save, skipped = [], []
+    to_save, skipped, to_update = [], [], []
     model = MODELS[entity_type]
     for item in result["cleaned"]:
         data = dict(item["data"])
@@ -336,7 +384,13 @@ async def import_commit(request: Request) -> dict:
             continue
         key = _key(entity_type, validated)
         if key in existing:
-            skipped.append({"row": item["row"], "reason": "already exists"})
+            # A customer sheet often lists partners already in ObliGOT: fill in tier, group and location from it.
+            current = partners.get(key[0]) if entity_type == "partners" else None
+            changes = {k: item["data"][k] for k in PARTNER_SHEET_FIELDS if current and item["data"].get(k) not in (None, "")
+                       and item["data"][k] != current.get(k)}
+            if changes:
+                to_update.append((current, changes))
+            skipped.append({"row": item["row"], "reason": "already exists; tier/group/location updated" if changes else "already exists"})
             continue
         existing.add(key)
         to_save.append((item, validated))
@@ -348,6 +402,8 @@ async def import_commit(request: Request) -> dict:
     created = 0
     if not dry_run:
         today = business_today().isoformat()
+        for current, changes in to_update:
+            patch_record("partners", current["id"], {**changes, "updated_at": today})
         for placeholder in new_partners.values():
             saved = put_record("partners", {**PartnerCreate(name=placeholder["name"], category="Not specified", status="active",
                                                             owner="Unassigned", summary="Created by spreadsheet import.")
@@ -358,7 +414,7 @@ async def import_commit(request: Request) -> dict:
             for placeholder in new_partners.values():
                 if pid == placeholder["id"]:
                     validated["partner_id"] = placeholder["saved_id"]
-            extra = {"updated_at": today} if entity_type == "partners" else {}
+            extra = {"updated_at": today} if entity_type in ("partners", "opportunities") else {}
             put_record(entity_type, {**validated, **extra, "source_label": "user", "imported": True})
             created += 1
         filename = getattr(upload, "filename", "") or "sheet"
@@ -368,5 +424,5 @@ async def import_commit(request: Request) -> dict:
                      entity_type="import", entity_id=f"import-{entity_type}", partner_id=None,
                      details={"created": created, "rejected": len(result["rejected"]), "skipped": len(skipped)})
     return {**result, "entity_type": entity_type, "dry_run": dry_run, "committed": not dry_run,
-            "valid_count": len(to_save), "created": created, "skipped": skipped,
+            "valid_count": len(to_save), "created": created, "skipped": skipped, "updated": len(to_update),
             "new_partners": [p["name"] for p in new_partners.values()], "default_currency": settings.default_currency}

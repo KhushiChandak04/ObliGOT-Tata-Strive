@@ -13,6 +13,8 @@ from app.amendments import router as amendments_router
 from app.summary_routes import router as summary_router
 from app.document_records import router as document_records_router
 from app.import_commit import router as import_router
+from app.timeliness import router as timeliness_router
+from app.portfolio import router as portfolio_router
 
 logger = logging.getLogger("obligot")
 
@@ -67,6 +69,8 @@ app.include_router(amendments_router, prefix="/api")
 app.include_router(summary_router, prefix="/api")
 app.include_router(document_records_router, prefix="/api")
 app.include_router(import_router, prefix="/api")
+app.include_router(timeliness_router, prefix="/api")
+app.include_router(portfolio_router, prefix="/api")
 
 @app.exception_handler(DataStoreUnavailable)
 async def data_store_unavailable(request, exc: DataStoreUnavailable) -> JSONResponse:

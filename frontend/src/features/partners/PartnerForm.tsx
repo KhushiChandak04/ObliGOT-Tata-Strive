@@ -2,16 +2,19 @@ import { useState, type FormEvent } from "react";
 import FormField from "../../components/ui/FormField";
 import { api } from "../../services/functions.service";
 import { EnumOptions } from "../../lib/options";
-import type { Partner, PartnerStatus } from "../../types";
+import type { Partner, PartnerGroup, PartnerStatus, PartnerTier } from "../../types";
 
 
-type FormState = { name: string; category: string; status: PartnerStatus; owner: string; contact_name: string; contact_email: string; summary: string };
+type FormState = {
+  name: string; category: string; status: PartnerStatus; owner: string; contact_name: string; contact_email: string; summary: string;
+  tier: PartnerTier | ""; group: PartnerGroup | ""; location: string;
+};
 
 function initialState(partner?: Partner): FormState {
   return {
     name: partner?.name ?? "", category: partner?.category ?? "", status: partner?.status ?? "prospect",
     owner: partner?.owner ?? "", contact_name: partner?.contact_name ?? "", contact_email: partner?.contact_email ?? "",
-    summary: partner?.summary ?? "",
+    summary: partner?.summary ?? "", tier: partner?.tier ?? "", group: partner?.group ?? "", location: partner?.location ?? "",
   };
 }
 
@@ -45,6 +48,7 @@ export default function PartnerForm({ partner, onSaved, onCancel }: { partner?: 
       name: form.name.trim(), category: form.category.trim(), status: form.status, owner: form.owner.trim(),
       contact_name: form.contact_name.trim() || null, contact_email: form.contact_email.trim() || null,
       summary: form.summary.trim() || (partner ? "" : "No summary supplied."),
+      tier: form.tier || null, group: form.group || null, location: form.location.trim() || null,
     };
     setSaving(true);
     setSubmitError("");
@@ -66,6 +70,9 @@ export default function PartnerForm({ partner, onSaved, onCancel }: { partner?: 
     {field("category", "Category *", <input value={form.category} onChange={(e) => set("category")(e.target.value)} maxLength={100} placeholder="e.g. Training & curriculum" />)}
     {field("status", "Relationship status", <select value={form.status} onChange={(e) => set("status")(e.target.value)}><EnumOptions group="partner_status" current={form.status} /></select>)}
     {field("owner", "Responsible owner *", <input value={form.owner} onChange={(e) => set("owner")(e.target.value)} maxLength={120} />)}
+    {field("tier", "Tier", <select value={form.tier} onChange={(e) => set("tier")(e.target.value)}><option value="">Not set</option><EnumOptions group="partner_tier" current={form.tier} /></select>, "Platinum and Gold partners' alerts rank higher.")}
+    {field("group", "Group", <select value={form.group} onChange={(e) => set("group")(e.target.value)}><option value="">Not set</option><EnumOptions group="partner_group" current={form.group} /></select>)}
+    {field("location", "Location", <input value={form.location} onChange={(e) => set("location")(e.target.value)} maxLength={120} placeholder="City / state" />)}
     {field("contact_name", "Contact name", <input value={form.contact_name} onChange={(e) => set("contact_name")(e.target.value)} maxLength={120} />)}
     {field("contact_email", "Contact email", <input type="email" value={form.contact_email} onChange={(e) => set("contact_email")(e.target.value)} maxLength={254} />)}
     <div className="form-wide">{field("summary", "Summary", <textarea value={form.summary} onChange={(e) => set("summary")(e.target.value)} maxLength={1200} rows={3} />, "Record verified facts only.")}</div>

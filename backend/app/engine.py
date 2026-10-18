@@ -26,10 +26,16 @@ class RuleConfig(BaseModel):
     # Amounts in other currencies are never converted, so they do not get it.
     material_amount: float = Field(default=1_000_000, ge=0)
     material_currency: str = Field(default_factory=lambda: settings.default_currency, pattern=r"^[A-Z]{3}$")
+    # Deals need a follow-up at least this often; an open deal with no contact for longer raises an alert.
+    followup_days: int = Field(default=14, ge=1, le=180)
+    # A funder whose committed budgets (material currency) reach this is a large funder: its alerts rank higher.
+    large_funder_amount: float = Field(default=10_000_000, ge=0)
 
 
 # Base points per severity. Overdue items outrank upcoming ones; data gaps rank lowest.
 SEVERITY_POINTS = {"overdue": 50, "risk": 30, "due_soon": 25, "missing_data": 15}
+# Partner tier set by the team (platinum/gold/silver customers rank higher).
+TIER_POINTS = {"platinum": 15, "gold": 10, "silver": 5}
 RELATED_ALERTS_THRESHOLD = 2  # other open alerts for the same partner that trigger the cross-record bump
 
 RULES: dict[str, dict[str, str]] = {
@@ -57,6 +63,10 @@ RULES: dict[str, dict[str, str]] = {
         "description": "An open opportunity's next-step date has passed.",
         "why": "Missed follow-ups slow partnerships down and can lose partner interest.",
         "action": "Complete or reschedule the next step and record the new date."},
+    "OPPORTUNITY_FOLLOWUP_OVERDUE": {"title": "Deal follow-up overdue", "category": "pipeline", "severity": "overdue",
+        "description": "An open deal has had no follow-up within the follow-up window and no upcoming next step is scheduled.",
+        "why": "Follow-ups keep deals moving; a funder not contacted for weeks may lose interest or go elsewhere.",
+        "action": "Contact the funder, then record the follow-up date and the next step on the deal."},
     "OPPORTUNITY_STALE": {"title": "Opportunity not updated recently", "category": "pipeline", "severity": "risk",
         "description": "An open opportunity has no next-step date and has not been updated within the stale-opportunity window.",
         "why": "Opportunities without a next step tend to stall unnoticed.",
@@ -212,6 +222,16 @@ def _pipeline_rules(b: _Builder, opportunities: list[dict], agreements: list[dic
             b.add("OPPORTUNITY_NEXT_STEP_OVERDUE", "opportunities", o, title, due=next_date,
                   evidence=[_ev("Stage", stage), _ev("Next step", o.get("next_step")), _ev("Next step date", next_date), _ev("Days overdue", _days(b.today, next_date), "computed")], **common)
         elif not next_date:
+            # Last contact: the recorded follow-up, else when the deal started. Without either, fall back to staleness.
+            contact = _parse_date(o.get("last_followup_date")) or _parse_date(o.get("started_on"))
+            if contact:
+                due = date.fromordinal(contact.toordinal() + b.config.followup_days)
+                if due < b.today:
+                    b.add("OPPORTUNITY_FOLLOWUP_OVERDUE", "opportunities", o, title, due=due,
+                          evidence=[_ev("Stage", stage), _ev("Last follow-up", o.get("last_followup_date")),
+                                    _ev("Deal started", o.get("started_on")), _ev("Follow-up every (days)", b.config.followup_days, "computed"),
+                                    _ev("Days since last contact", _days(b.today, contact), "computed")], **common)
+                continue
             updated = _parse_date(o.get("updated_at"))
             if updated and _days(b.today, updated) > b.config.stale_opportunity_days:
                 b.add("OPPORTUNITY_STALE", "opportunities", o, title,
@@ -308,7 +328,8 @@ def _task_rules(b: _Builder, actions: list[dict]) -> None:
                   evidence=[_ev("Status", t.get("status")), _ev("Due date", due), _ev("Days overdue", _days(b.today, due), "computed")])
 
 
-def _score(alert: dict, related_count: int, config: RuleConfig) -> dict[str, Any]:
+def _score(alert: dict, related_count: int, config: RuleConfig, partner: dict | None = None,
+           committed: float = 0.0) -> dict[str, Any]:
     """Transparent points. Each factor is tagged: `urgency` (how soon/late), `impact` (what is at stake), or
     `context`. A large amount raises impact only; it is never treated as evidence of a partner's reliability."""
     factors = [{"label": f"Base: {alert['severity'].replace('_', ' ')}", "points": SEVERITY_POINTS[alert["severity"]], "kind": "urgency"}]
@@ -327,6 +348,11 @@ def _score(alert: dict, related_count: int, config: RuleConfig) -> dict[str, Any
     amount = alert["_amount"]
     if amount and amount[1] == config.material_currency and amount[0] >= config.material_amount:
         factors.append({"label": f"Material amount (at least {config.material_currency} {config.material_amount:,.0f})", "points": 10, "kind": "impact"})
+    tier = (partner or {}).get("tier")
+    if tier in TIER_POINTS:
+        factors.append({"label": f"{tier.title()} partner", "points": TIER_POINTS[tier], "kind": "impact"})
+    if config.large_funder_amount and committed >= config.large_funder_amount:
+        factors.append({"label": f"Large funder ({config.material_currency} {committed:,.0f} committed)", "points": 10, "kind": "impact"})
     factors += [{"label": label, "points": points, "kind": "context"} for label, points in alert["_adjustments"]]
     score = max(0, sum(f["points"] for f in factors))
     level = "high" if score >= 60 else "medium" if score >= 35 else "low"
@@ -349,13 +375,24 @@ def evaluate(records: dict[str, list[dict]], today: date, config: RuleConfig | N
     _fund_release_rules(b, get("financial_terms"), get("finance"), get("agreements"))
     _amendment_rules(b, get("agreement_changes"), get("agreements"))
 
+    partners = {p["id"]: p for p in get("partners")}
+    # Committed money per funder: budgets in the material currency only (other currencies are never converted).
+    committed: dict[str, float] = defaultdict(float)
+    for f in get("finance"):
+        if f.get("record_type") == "budget" and f.get("amount") is not None and f.get("currency") == config.material_currency:
+            committed[f.get("partner_id")] += float(f["amount"])
     by_partner: dict[str | None, list[str]] = defaultdict(list)
     for alert in b.alerts:
         by_partner[alert["partner_id"]].append(alert["id"])
     for alert in b.alerts:
         related = [i for i in by_partner[alert["partner_id"]] if i != alert["id"]] if alert["partner_id"] else []
         alert["related_alert_ids"] = related
-        alert["priority"] = _score(alert, len(related), config)
+        partner = partners.get(alert["partner_id"] or "")
+        # Partner facts for filtering (tier, group, location) travel with the alert.
+        alert["partner_tier"] = (partner or {}).get("tier")
+        alert["partner_group"] = (partner or {}).get("group")
+        alert["partner_location"] = (partner or {}).get("location")
+        alert["priority"] = _score(alert, len(related), config, partner, committed.get(alert["partner_id"] or "", 0.0))
         del alert["_adjustments"], alert["_amount_recorded"], alert["_amount"]
     # Highest score first; then the most urgent date; then a stable id so ordering is deterministic.
     return sorted(b.alerts, key=lambda a: (-a["priority"]["score"], a["days_remaining"] if a["days_remaining"] is not None else 10**6, a["id"]))

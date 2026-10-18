@@ -9,6 +9,9 @@ def _check_date_order(start: date | None, end: date | None, end_label: str, star
         raise ValueError(f"{end_label} must be on or after {start_label}")
 
 PartnerStatus = Literal["prospect", "qualification", "active", "on_hold", "closed"]
+# Relationship tier set by the partnerships team (e.g. from their customer sheet); it raises alert priority.
+PartnerTier = Literal["platinum", "gold", "silver", "standard"]
+PartnerGroup = Literal["tata_group", "non_tata"]
 Priority = Literal["high", "medium", "low"]
 ActionStatus = Literal["open", "in_review", "done", "deferred"]
 RecordStatus = Literal["planned", "active", "on_hold", "completed", "closed"]
@@ -33,6 +36,9 @@ class Partner(BaseModel):
     summary: str = ""
     contact_name: str | None = None
     contact_email: str | None = None
+    tier: PartnerTier | None = None
+    group: PartnerGroup | None = None
+    location: str | None = None
     source_label: str = "demo"
 
 class PartnerCreate(BaseModel):
@@ -44,6 +50,9 @@ class PartnerCreate(BaseModel):
     summary: str = Field(default="No summary supplied.", max_length=1200)
     contact_name: str | None = Field(default=None, max_length=120)
     contact_email: str | None = Field(default=None, max_length=254)
+    tier: PartnerTier | None = None
+    group: PartnerGroup | None = None
+    location: str | None = Field(default=None, max_length=120)
 
 class PartnerUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=160)
@@ -54,6 +63,9 @@ class PartnerUpdate(BaseModel):
     summary: str | None = Field(default=None, max_length=1200)
     contact_name: str | None = Field(default=None, max_length=120)
     contact_email: str | None = Field(default=None, max_length=254)
+    tier: PartnerTier | None = None
+    group: PartnerGroup | None = None
+    location: str | None = Field(default=None, max_length=120)
 
 class ActionItem(BaseModel):
     id: str
@@ -173,6 +185,8 @@ class FinanceRecord(BaseModel):
     status: str = "pending"
     financial_term_id: str | None = None  # the contractual tranche/payment term this receipt or invoice settles
     reference_number: str | None = None
+    owner: str = "Unassigned"  # account owner responsible (e.g. for getting a UC on time)
+    evidence: str | None = None  # what proves it was submitted/received: email, courier, portal or receipt reference
     source_label: str = "demo"
 
 class FinanceCreate(BaseModel):
@@ -189,6 +203,8 @@ class FinanceCreate(BaseModel):
     status: str | None = None
     financial_term_id: str | None = None
     reference_number: str | None = Field(default=None, max_length=100)
+    owner: str = Field(default="Unassigned", max_length=120)
+    evidence: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def dates_in_order(self):
@@ -216,6 +232,7 @@ class ReportRecord(BaseModel):
     submitted_date: date | None = None
     status: Literal["planned", "due", "submitted", "overdue", "accepted"] = "planned"
     owner: str = "Unassigned"
+    evidence: str | None = None  # what proves it was submitted: email, courier, portal or receipt reference
     source_label: str = "demo"
 
 class ReportCreate(BaseModel):
@@ -227,6 +244,7 @@ class ReportCreate(BaseModel):
     submitted_date: date | None = None
     status: Literal["planned", "due", "submitted", "overdue", "accepted"] = "planned"
     owner: str = "Unassigned"
+    evidence: str | None = Field(default=None, max_length=500)
 
 MilestoneStatus = Literal["planned", "in_progress", "completed", "missed", "cancelled"]
 
@@ -270,6 +288,13 @@ class Opportunity(BaseModel):
     owner: str = "Unassigned"
     next_step: str = ""
     next_step_date: date | None = None
+    # Pipeline details tracked by the partnerships team; probability is the team's own estimate, never computed.
+    location: str | None = None
+    amount: float | None = Field(default=None, ge=0)
+    currency: str = Field(default_factory=lambda: settings.default_currency)
+    sanction_probability: int | None = Field(default=None, ge=0, le=100)
+    started_on: date | None = None
+    last_followup_date: date | None = None
     updated_at: date
     source_label: str = "demo"
 
@@ -280,6 +305,12 @@ class OpportunityCreate(BaseModel):
     owner: str = Field(default="Unassigned", min_length=2, max_length=120)
     next_step: str = Field(default="", max_length=500)
     next_step_date: date | None = None
+    location: str | None = Field(default=None, max_length=120)
+    amount: float | None = Field(default=None, ge=0)
+    currency: str = Field(default_factory=lambda: settings.default_currency, pattern=r"^[A-Z]{3}$")
+    sanction_probability: int | None = Field(default=None, ge=0, le=100)
+    started_on: date | None = None
+    last_followup_date: date | None = None
 
 class AnalyzeRequest(BaseModel):
     partner_id: str | None = None

@@ -1122,6 +1122,95 @@ th {
   gap: 8px;
   flex-wrap: wrap;
 }
+.tier-platinum {
+  background: var(--green);
+  color: var(--on);
+}
+.tier-gold {
+  background: #b8860b;
+  color: #fff;
+}
+.tier-silver {
+  background: #8a8f94;
+  color: #fff;
+}
+.quick-filters {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.project-glance {
+  margin: 10px 0;
+}
+.view-toggle {
+  margin: 12px 0;
+}
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(190px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+}
+.pipeline-column {
+  background: var(--bg2);
+  border-radius: 16px;
+  padding: 12px;
+  min-height: 340px;
+}
+.pipeline-column h3 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 16px;
+  color: var(--green);
+  margin-bottom: 4px;
+}
+.pipeline-sum {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.pipeline-card {
+  display: grid;
+  gap: 3px;
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.pipeline-card > small {
+  color: var(--muted);
+}
+.pipeline-card > small.text-bordo {
+  color: var(--bordo);
+}
+.pipeline-card p {
+  font-size: 13px;
+  margin: 8px 0 4px;
+}
+.pipeline-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.pipeline-fields dt {
+  color: var(--muted);
+}
+.pipeline-fields dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.pipeline-fields dd.text-bordo {
+  color: var(--bordo);
+}
+.pipeline-card .text-button {
+  justify-self: start;
+}
 .inline-check {
   display: inline-flex;
   align-items: center;
