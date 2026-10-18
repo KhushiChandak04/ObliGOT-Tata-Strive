@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Path to a service-account JSON (git-ignored; relative paths resolve inside backend/). Empty = default credentials.
     firebase_credentials_file: str = ""
     require_firebase_auth: bool = False
+    # Collections read from Firestore are cached in memory this long (writes keep the cache current).
+    firestore_cache_seconds: float = 300.0
     # Explicit local-only synthetic dataset. Live Firestore remains the default.
     obligot_demo_mode: bool = False
     # When opted in for local demos, switch to the synthetic store after any Firestore init/read/write error.

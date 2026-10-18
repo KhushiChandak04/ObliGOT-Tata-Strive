@@ -182,5 +182,9 @@ export const api = {
     exportWorkbook: () => requestBlob("/api/export/workbook"),
     exportDocumentWorkbook: (documentId: string) =>
       requestBlob(`/api/documents/${id(documentId)}/export/workbook`),
+    /** Explicit user action: turn this MOU's extracted values into partner/agreement/project/report/finance records. */
+    createRecords: (documentId: string, payload: { partner_id?: string; partner_name?: string } = {}) =>
+      request<{ partner_id: string; partner_created: boolean; agreement_id: string; project_id: string; created: Record<string, number> }>(
+        `/api/documents/${id(documentId)}/create-records`, send("POST", payload)),
   },
 };

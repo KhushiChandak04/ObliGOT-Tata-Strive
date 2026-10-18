@@ -1593,21 +1593,45 @@ function documentStatus(document: SourceDocument): string {
   return document.status[0].toUpperCase() + document.status.slice(1);
 }
 
+const CURRENT_DOCUMENT_KEY = "obligot.currentDocument";
+
+function readCurrentDocument(): string | null {
+  try {
+    return window.localStorage.getItem(CURRENT_DOCUMENT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberCurrentDocument(documentId: string | null) {
+  try {
+    if (documentId) window.localStorage.setItem(CURRENT_DOCUMENT_KEY, documentId);
+    else window.localStorage.removeItem(CURRENT_DOCUMENT_KEY);
+  } catch {
+    // Storage unavailable (private window): the page still works, it just will not remember.
+  }
+}
+
 function DocumentsPage({ partners }: { partners: Partner[] }) {
   const data = useResource(() => api.documents.list(), []);
   const [kind, setKind] = useState<"mou" | "addendum">("mou");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [uploaded, setUploaded] = useState<SourceDocument | null>(null);
+  // The current document stays on this page (across navigation and reloads) until "Add new document".
+  const [currentId, setCurrentId] = useState<string | null>(() => readCurrentDocument());
+  const uploaded = (data.data ?? []).find((d) => d.id === currentId) ?? null;
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState("");
+  const chooseCurrent = (documentId: string | null) => {
+    rememberCurrentDocument(documentId);
+    setCurrentId(documentId);
+  };
   const upload = async (file: File) => {
     setBusy(true);
     setError("");
-    setUploaded(null);
     try {
       const saved = await api.documents.upload(file, kind);
-      setUploaded(saved);
+      chooseCurrent(saved.id);
       data.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed.");
@@ -1663,12 +1687,15 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
       {uploaded && (
         <div className="api-state success" role="status">
           <span>
-            Uploaded “{uploaded.filename}” ({uploaded.page_count ?? "?"} pages,{" "}
-            {documentStatus(uploaded)}). Nothing has been extracted yet.
+            Current document: “{uploaded.filename}” ({uploaded.page_count ?? "?"} pages, {documentStatus(uploaded)})
+            {uploaded.agreement_id ? " · records created" : ""}
           </span>
           <Link className="btn small-btn" to={`/documents/${uploaded.id}`}>
-            Open to extract
+            {uploaded.extraction?.finished_at ? "Open results" : "Open to extract"}
           </Link>
+          <button className="btn outline small-btn" type="button" onClick={() => chooseCurrent(null)}>
+            Add new document
+          </button>
         </div>
       )}
       {retryError && (
@@ -1857,6 +1884,11 @@ function DocumentReviewPage({ partners }: { partners: Partner[] }) {
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState(1);
+  const [partnerChoice, setPartnerChoice] = useState("");
+  const [partnerName, setPartnerName] = useState<string | null>(null);
+  useEffect(() => {
+    if (documentId) rememberCurrentDocument(documentId);
+  }, [documentId]);
   const status = data.data?.document.status;
   // While extraction runs in the background, refresh every few seconds to show progress.
   useEffect(() => {
@@ -1949,7 +1981,7 @@ function DocumentReviewPage({ partners }: { partners: Partner[] }) {
         {doc.status === "extracting" && extraction && (
           <p className="api-state" role="status">
             {extraction.pages_read < extraction.pages_to_read
-              ? `Reading scanned pages with Groq: ${extraction.pages_read} of ${extraction.pages_to_read}…`
+              ? `Reading scanned pages: ${extraction.pages_read} of ${extraction.pages_to_read}…`
               : `Extracting values: part ${extraction.chunks_done} of ${extraction.chunks_total || "?"}…`}
           </p>
         )}
@@ -1975,10 +2007,69 @@ function DocumentReviewPage({ partners }: { partners: Partner[] }) {
           </p>
         )}
       </section>
+      {doc.source_label !== "demo" && doc.kind === "mou" && extraction?.finished_at && doc.status !== "extracting" && (
+        <section className="box">
+          <h3>Use this MOU in ObliGOT</h3>
+          {doc.agreement_id ? (
+            <p className="api-state success" role="status">
+              Records were created from this MOU (agreement {doc.agreement_id}). Its deadlines and fund releases now appear in
+              Alerts, Agreements, Projects, Finance, and Reports. <Link to="/alerts">View alerts</Link>
+            </p>
+          ) : (
+            <>
+              <p>
+                Check the extracted values above first. This creates the partner, agreement, project, reports, utilisation
+                certificates, and budget from them, so alerts are calculated from this MOU. Missing dates stay missing.
+              </p>
+              <div className="toolbar">
+                <label>
+                  Partner{" "}
+                  <select value={partnerChoice} onChange={(event) => setPartnerChoice(event.target.value)}>
+                    <option value="">Create a new partner</option>
+                    {partners.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {!partnerChoice && (
+                  <label>
+                    Partner name{" "}
+                    <input
+                      value={partnerName ?? String(review.fields.find((f) => f.field === "partner_name")?.proposed_value ?? "")}
+                      onChange={(event) => setPartnerName(event.target.value)}
+                      placeholder="As named in the MOU"
+                    />
+                  </label>
+                )}
+                <button
+                  className="btn"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(
+                      () =>
+                        api.documents.createRecords(
+                          documentId,
+                          partnerChoice
+                            ? { partner_id: partnerChoice }
+                            : { partner_name: (partnerName ?? String(review.fields.find((f) => f.field === "partner_name")?.proposed_value ?? "")).trim() || undefined },
+                        ),
+                      "Records created. Alerts are now calculated from this MOU.",
+                    )
+                  }
+                >
+                  Create records from this MOU
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
       <div className="review-workspace">
         <section className="box">
           <h3>Extracted values</h3>
-          <p>Values are exported with their source evidence. They remain document-scoped and do not update operational records.</p>
+          <p>Values are exported with their source evidence. They stay with this document until you create records from it.</p>
           {review.fields.length ? (
             review.fields.map((field) => (
               <div className="review-field" key={field.id}>
