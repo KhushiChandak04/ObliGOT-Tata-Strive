@@ -166,6 +166,8 @@ def build_workbook(today: date | None = None) -> bytes:
     ):
         about.append([line])
     about.column_dimensions["A"].width = 120
+    from app.document_workbook import append_consolidated_sheet
+    append_consolidated_sheet(wb)
     wb.active = 0  # Partners first, so the sheet re-imports through the existing import preview
     buffer = io.BytesIO()
     wb.save(buffer)

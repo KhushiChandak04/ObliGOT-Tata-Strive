@@ -118,6 +118,10 @@ class Agreement(BaseModel):
     project_id: str | None = None
     opportunity_id: str | None = None
     source_document_id: str | None = None  # set by the server when created from an approved document
+    programme_type: str | None = None  # e.g. Skilling, SHG, School (the workbook's "Levers")
+    total_target: float | None = Field(default=None, ge=0)  # beneficiaries/learners as stated in the MOU record
+    total_budget: float | None = Field(default=None, ge=0)  # as stated in the MOU record, in budget_currency
+    budget_currency: str | None = None
     source_label: str = "demo"
 
 class AgreementCreate(BaseModel):
@@ -133,6 +137,10 @@ class AgreementCreate(BaseModel):
     renewal_status: RenewalStatus = "none"
     project_id: str | None = None
     opportunity_id: str | None = None
+    programme_type: str | None = Field(default=None, max_length=80)
+    total_target: float | None = Field(default=None, ge=0)
+    total_budget: float | None = Field(default=None, ge=0)
+    budget_currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
 
     @model_validator(mode="after")
     def expiry_after_start(self):
@@ -148,6 +156,13 @@ class AgreementCreate(BaseModel):
             raise ValueError("document_url must start with https:// or http://")
         return self
 
+class FollowupEntry(BaseModel):
+    """One scheduled follow-up on a deal or project: when it was set, when it is due, and when it was done."""
+    scheduled_on: date
+    due_date: date
+    done_on: date | None = None
+
+
 class Project(BaseModel):
     id: str
     partner_id: str | None = None
@@ -157,6 +172,7 @@ class Project(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     milestone_summary: str = ""
+    followup_log: list[FollowupEntry] = Field(default_factory=list)  # status follow-ups requested on this project
     source_label: str = "demo"
 
 class ProjectCreate(BaseModel):
@@ -167,6 +183,7 @@ class ProjectCreate(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     milestone_summary: str = ""
+    followup_log: list[FollowupEntry] = Field(default_factory=list, max_length=200)
 
     @model_validator(mode="after")
     def end_after_start(self):
@@ -297,6 +314,7 @@ class Opportunity(BaseModel):
     sanction_probability: int | None = Field(default=None, ge=0, le=100)
     started_on: date | None = None
     last_followup_date: date | None = None
+    followup_log: list[FollowupEntry] = Field(default_factory=list)
     updated_at: date
     source_label: str = "demo"
 
@@ -313,6 +331,7 @@ class OpportunityCreate(BaseModel):
     sanction_probability: int | None = Field(default=None, ge=0, le=100)
     started_on: date | None = None
     last_followup_date: date | None = None
+    followup_log: list[FollowupEntry] = Field(default_factory=list, max_length=200)
 
 class AnalyzeRequest(BaseModel):
     partner_id: str | None = None

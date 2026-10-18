@@ -240,7 +240,9 @@ async def _update_typed_record(collection: str, record_id: str, request: Request
         validated = schema.model_validate(merged)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    data = validated.model_dump(mode="json")
+    # Fields the form schema does not cover (set by the server, e.g. source_document_id) are kept as they were.
+    data = {**{k: v for k, v in current.items() if k not in schema.model_fields and k != "id"},
+            **validated.model_dump(mode="json")}
     if data.get("partner_id") and not get_record("partners", data["partner_id"]):
         raise HTTPException(status_code=404, detail="Partner not found")
     if check:
@@ -513,7 +515,7 @@ def update_followup(followup_id: str, payload: FollowupUpdate) -> dict:
     return record
 
 ALERT_SOURCES = ("agreements", "opportunities", "milestones", "reports", "finance", "actions", "financial_terms", "agreement_changes",
-                 "partners")
+                 "partners", "projects")
 
 def load_rule_config() -> RuleConfig:
     stored = get_record("config", "rules")

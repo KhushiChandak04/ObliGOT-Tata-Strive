@@ -35,7 +35,9 @@ export interface Agreement {
 export interface Project {
   id: string; partner_id?: string | null; name: string; status: RecordStatus; owner: string;
   start_date?: string | null; end_date?: string | null; milestone_summary: string; source_label?: SourceLabel;
+  followup_log?: FollowupEntry[];
 }
+export interface FollowupEntry { scheduled_on: string; due_date: string; done_on?: string | null }
 export interface Milestone {
   id: string; project_id: string; partner_id?: string | null; title: string; due_date?: string | null;
   completed_date?: string | null; status: MilestoneStatus; owner: string; source_label?: SourceLabel;
@@ -56,6 +58,7 @@ export interface Opportunity {
   next_step: string; next_step_date?: string | null; updated_at: string; source_label?: SourceLabel;
   location?: string | null; amount?: number | null; currency?: string; sanction_probability?: number | null;
   started_on?: string | null; last_followup_date?: string | null; source_document_id?: string | null;
+  followup_log?: FollowupEntry[];
 }
 export interface Followup {
   id: string; title: string; owner: string; due_date?: string | null; related_partner_id?: string | null;
@@ -196,6 +199,17 @@ export interface PortfolioMou {
   start_date?: string | null; expiry_date?: string | null; owner?: string | null; source_document_id?: string | null;
   committed: Money; received: Money; reports: ServicingCount; ucs: ServicingCount; milestones: ServicingCount;
   next_deadline: { date: string; kind: string; title?: string | null } | null;
+  programme_type?: string | null; total_target?: number | null; signed_copy?: string | null;
+}
+export interface CountLabel { label: string; count: number }
+export interface PortfolioOverview {
+  projects: { total: number; ongoing: number; by_status: CountLabel[] };
+  mous: { total: number; active: number; expiring_90d: number; expired: number; signed_copy_pending: number;
+    by_type: CountLabel[]; by_group: CountLabel[]; by_location: CountLabel[] };
+  partners: { total: number; by_tier: CountLabel[] };
+  money: { committed: Money; received: Money; pipeline_open: Money; open_deals: number };
+  targets: { stated_on_mous: number; from_extracted_mous: Record<string, number> };
+  reporting: { reports_total: number; reports_done: number; reports_overdue: number; ucs_total: number; ucs_done: number; ucs_overdue: number };
 }
 export interface PortfolioFunder {
   partner_id: string; partner_name?: string | null; tier?: PartnerTier | null; group?: PartnerGroup | null; location?: string | null;
@@ -204,6 +218,7 @@ export interface PortfolioFunder {
 export interface Portfolio {
   as_of: string; mous: PortfolioMou[]; funders: PortfolioFunder[]; unscheduled_expected: Money;
   cashflow: { month: string; currency: string; expected: number; received: number }[];
+  overview: PortfolioOverview;
 }
 export interface ImportCleanedRow { row: number; data: Record<string, unknown>; warnings: string[]; errors: string[] }
 export interface ImportCommitResult {

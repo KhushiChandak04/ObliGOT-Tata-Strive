@@ -159,6 +159,10 @@ def main(path: str, write: bool) -> None:
             owner=clean(row.get("Account Owner")) or "Unassigned",
             signed_copy={"received": "received", "pending": "pending"}.get(signed, "unknown"),
             document_url=clean(row.get("MOU Link")) or None,
+            programme_type=clean(row.get("Levers")) or None,
+            total_target=float(row["Total Target"]) if isinstance(row.get("Total Target"), (int, float)) else None,
+            total_budget=float(row["Total Budget"]) if isinstance(row.get("Total Budget"), (int, float)) else None,
+            budget_currency="INR" if isinstance(row.get("Total Budget"), (int, float)) else None,
         ).model_dump(mode="json")
         plan.append(("create MOU", {**agreement, "source_label": "workbook"}, f"agreement-wb-{n:03d}"))
 

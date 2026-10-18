@@ -43,6 +43,9 @@ import type {
   DocumentReview,
   FinancialTermProposal,
   ImportCommitResult,
+  FollowupEntry,
+  CountLabel,
+  PortfolioMou,
   Money,
   ServicingCount,
   TimelinessResponse,
@@ -908,6 +911,7 @@ function Dashboard({
           <SimCount value={summary.documents.addenda_awaiting_review} sample={1} /> Addenda extracted
         </span>
       </div>
+      <PortfolioGlance />
       <div className="grid2">
         <section className="box">
           <div className="dashboard-heading">
@@ -1073,12 +1077,13 @@ function TableState({ message }: { message: string }) {
 }
 function PipelinePage({ onChanged }: { onChanged: () => void }) {
   const data = useResource(async () => {
-    const [opportunities, partners, documents] = await Promise.all([
+    const [opportunities, partners, documents, projects] = await Promise.all([
       api.opportunities.list(),
       api.partners.list(),
       api.documents.list(),
+      api.projects.list(),
     ]);
-    return { opportunities, partners, documents };
+    return { opportunities, partners, documents, projects };
   }, []);
   const [dialog, setDialog] = useState<{ opportunity?: Opportunity } | null>(
     null,
@@ -1088,7 +1093,7 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
   const files = new Map((data.data?.documents ?? []).map((d) => [d.id, d.filename]));
   const origin = (item: Opportunity) => item.source_document_id
     ? <Link to={`/documents/${item.source_document_id}`}>From MOU: {files.get(item.source_document_id) ?? "open document"}</Link>
-    : <span>Manual entry</span>;
+    : <span>{item.source_label === "workbook" ? "Partnerships workbook" : "Manual entry"}</span>;
   const label = useLabel();
   const stages = useEnum("opportunity_stage") as OpportunityStage[];
   const stageName = (stage: string) => label("opportunity_stage", stage);
@@ -1105,21 +1110,6 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
     setMessage(text);
     data.reload();
     onChanged();
-  };
-  const logFollowup = async (item: Opportunity) => {
-    setMoving(item.id);
-    setMessage("");
-    try {
-      // The browser's local date; the backend re-evaluates follow-up alerts from it on the next refresh.
-      const today = new Date();
-      const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      await api.opportunities.update(item.id, { last_followup_date: iso });
-      refresh(`Recorded a follow-up today on “${item.title}”. Set the next step with Edit.`);
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not record the follow-up.");
-    } finally {
-      setMoving(null);
-    }
   };
   const move = async (item: Opportunity, next: OpportunityStage) => {
     setMoving(item.id);
@@ -1156,6 +1146,8 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
             opportunity’s status actually changes. An MOU becomes operational only once its deal reaches Approval.
           </p>
           <PipelineTotals opportunities={data.data.opportunities} />
+          <FollowupTracker subjects={[...data.data.opportunities.map(dealSubject), ...data.data.projects.map(projectSubject)]}
+            names={names} onSaved={refresh} />
           <div className="tabs view-toggle" role="group" aria-label="Pipeline view">
             <button className={view === "board" ? "active" : ""} aria-pressed={view === "board"} onClick={() => chooseView("board")}>Board</button>
             <button className={view === "table" ? "active" : ""} aria-pressed={view === "table"} onClick={() => chooseView("table")}>Table</button>
@@ -1188,12 +1180,12 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
                             <dt>Next step</dt><dd>{item.next_step || "—"}{item.next_step_date ? ` · ${formatDate(item.next_step_date)}` : ""}</dd>
                             <dt>Source</dt><dd>{origin(item)}</dd>
                           </dl>
+                          <FollowupControl subject={dealSubject(item)} onSaved={refresh} />
                           <div className="button-row">
                             <select aria-label={`Stage of ${item.title}`} value={item.stage} disabled={moving !== null}
                               onChange={(event) => void move(item, event.target.value as OpportunityStage)}>
                               {stages.map((s) => <option key={s} value={s}>{stageName(s)}</option>)}
                             </select>
-                            <button className="text-button" onClick={() => void logFollowup(item)} disabled={moving !== null}>Followed up today</button>
                             <button className="text-button" onClick={() => setDialog({ opportunity: item })} aria-label={`Edit ${item.title}`}>Edit</button>
                           </div>
                         </div>
@@ -1251,6 +1243,113 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
         )}
       </Dialog>
     </>
+  );
+}
+
+const FOLLOWUP_DAYS = [1, 3, 7, 14, 30];
+
+/** Something a follow-up can be requested on: a pipeline deal or a project. */
+type FollowupSubject = { kind: "deal" | "project"; id: string; title: string; partnerId?: string | null; log: FollowupEntry[] };
+const dealSubject = (d: Opportunity): FollowupSubject => ({ kind: "deal", id: d.id, title: d.title, partnerId: d.partner_id, log: d.followup_log ?? [] });
+const projectSubject = (p: Project): FollowupSubject => ({ kind: "project", id: p.id, title: p.name, partnerId: p.partner_id, log: p.followup_log ?? [] });
+const followupApi = (s: FollowupSubject) => (s.kind === "deal" ? api.opportunities : api.projects);
+const openFollowup = (s: FollowupSubject) => [...s.log].reverse().find((e) => !e.done_on);
+
+/** Follow-up needed in N days (dropdown or a typed number), or mark the open follow-up completed. */
+function FollowupControl({ subject, onSaved }: { subject: FollowupSubject; onSaved: (text: string) => void }) {
+  const [custom, setCustom] = useState(false);
+  const [days, setDays] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pending = openFollowup(subject);
+  const noun = subject.kind === "project" ? "Status follow-up" : "Follow-up";
+  const act = async (call: () => Promise<unknown>, text: string) => {
+    setBusy(true);
+    setError("");
+    try { await call(); setCustom(false); setDays(""); onSaved(text); }
+    catch (err) { setError(err instanceof Error ? err.message : "Could not save the follow-up."); }
+    finally { setBusy(false); }
+  };
+  const schedule = (n: number) => void act(() => followupApi(subject).scheduleFollowup(subject.id, n),
+    `${noun} on “${subject.title}” needed in ${n} day${n === 1 ? "" : "s"}. It is on the Pipeline page tracker.`);
+  return (
+    <div className="followup-control">
+      {pending && <small>{noun} due {formatDate(pending.due_date)}</small>}
+      <div className="button-row">
+        {custom ? (
+          <>
+            <input type="number" min={0} max={365} value={days} onChange={(e) => setDays(e.target.value)} placeholder="Days" aria-label="Follow-up in days" />
+            <button className="btn small-btn" disabled={busy || days === "" || Number(days) < 0 || Number(days) > 365}
+              onClick={() => schedule(Math.round(Number(days)))}>Set</button>
+            <button className="text-button" onClick={() => setCustom(false)}>Cancel</button>
+          </>
+        ) : (
+          <select value="" disabled={busy} aria-label={`${noun} needed for ${subject.title}`}
+            onChange={(e) => (e.target.value === "custom" ? setCustom(true) : e.target.value && schedule(Number(e.target.value)))}>
+            <option value="">{pending ? `Reschedule ${noun.toLowerCase()}…` : `${noun} needed in…`}</option>
+            {FOLLOWUP_DAYS.map((n) => <option key={n} value={n}>{n} day{n === 1 ? "" : "s"}</option>)}
+            <option value="custom">Enter number of days…</option>
+          </select>
+        )}
+        {pending && (
+          <button className="btn small-btn" disabled={busy}
+            onClick={() => void act(() => followupApi(subject).completeFollowup(subject.id), `${noun} on “${subject.title}” marked completed.`)}>
+            Mark completed
+          </button>
+        )}
+      </div>
+      {error && <small className="text-bordo" role="alert">{error}</small>}
+    </div>
+  );
+}
+
+/** Every follow-up (deals and projects) and where it stands: pending first, with a bar of the time used up. */
+function FollowupTracker({ subjects, names, onSaved }: {
+  subjects: FollowupSubject[]; names: Map<string, string>; onSaved: (text: string) => void;
+}) {
+  const entries = subjects.flatMap((subject) => subject.log.map((entry) => ({ subject, entry })));
+  if (!entries.length) {
+    return <section className="box"><h3>Follow-up tracker</h3><p className="muted-copy">No follow-ups yet. Request one on a deal below or on a project (Projects page).</p></section>;
+  }
+  const done = entries.filter((e) => e.entry.done_on).length;
+  const pending = entries.filter((e) => !e.entry.done_on).sort((a, b) => a.entry.due_date.localeCompare(b.entry.due_date));
+  const recent = entries.filter((e) => e.entry.done_on).sort((a, b) => (b.entry.done_on ?? "").localeCompare(a.entry.done_on ?? "")).slice(0, 5);
+  const day = (iso: string) => new Date(`${iso}T00:00:00`).getTime();
+  const now = new Date(new Date().toDateString()).getTime();
+  return (
+    <section className="box">
+      <h3>Follow-up tracker <small>{done} of {entries.length} completed</small></h3>
+      <div className="progress" role="img" aria-label={`${done} of ${entries.length} follow-ups completed`}>
+        <i style={{ width: `${(done / entries.length) * 100}%` }} />
+      </div>
+      <DataTable
+        headers={["Follow-up on", "Type", "Partner", "Set on", "Due", "Status", "Time used", ""]}
+        rows={[...pending, ...recent].map(({ subject, entry }) => {
+          const span = Math.max(1, day(entry.due_date) - day(entry.scheduled_on));
+          const used = Math.min(100, Math.max(0, ((now - day(entry.scheduled_on)) / span) * 100));
+          const late = !entry.done_on && now > day(entry.due_date);
+          const status = entry.done_on ? `Completed ${formatDate(entry.done_on)}`
+            : late ? `Overdue by ${daysSince(entry.due_date)} days` : now === day(entry.due_date) ? "Due today" : "Pending";
+          return [
+            subject.title, subject.kind === "project" ? "Project status" : "Deal",
+            subject.partnerId ? names.get(subject.partnerId) ?? subject.partnerId : "—",
+            formatDate(entry.scheduled_on), formatDate(entry.due_date),
+            <span key="s" className={late ? "text-bordo" : ""}>{status}</span>,
+            <div key="p" className={`progress tracker-bar ${late ? "late" : entry.done_on ? "done" : ""}`} role="img" aria-label={status}>
+              <i style={{ width: `${entry.done_on ? 100 : used}%` }} />
+            </div>,
+            entry.done_on ? "" : (
+              <button key="c" className="btn small-btn" onClick={() => void followupApi(subject).completeFollowup(subject.id)
+                .then(() => onSaved(`Follow-up on “${subject.title}” marked completed.`))
+                .catch((err: unknown) => onSaved(err instanceof Error ? `Could not complete the follow-up: ${err.message}` : "Could not complete the follow-up."))}>
+                Mark completed
+              </button>
+            ),
+          ];
+        })}
+        empty="No follow-ups."
+      />
+    </section>
   );
 }
 
@@ -1344,14 +1443,13 @@ function moneyText(money: Money): string {
   return parts.length ? parts.join(" · ") : "—";
 }
 
-/** "3/5 done", with overdue and missing evidence called out. */
+/** "3/5 done", with overdue called out. */
 function Servicing({ count }: { count: ServicingCount }) {
   if (!count.total) return <span className="muted-copy">None</span>;
   return (
     <span>
       {count.done}/{count.total} done
       {count.overdue > 0 && <b className="text-bordo"> · {count.overdue} overdue</b>}
-      {count.no_evidence > 0 && <small className="text-bordo"> · {count.no_evidence} without evidence</small>}
     </span>
   );
 }
@@ -1388,6 +1486,67 @@ function MouSummary() {
         </>
       )}
     </section>
+  );
+}
+
+/** Manager's view of the whole portfolio: projects, MOUs, money, targets and reporting, from current records. */
+function PortfolioGlance() {
+  const data = useResource(() => api.portfolio(), []);
+  const label = useLabel();
+  if (data.error) return <section className="box"><p className="api-state error" role="alert">{data.error.message} <button className="btn small-btn" onClick={data.reload}>Retry</button></p></section>;
+  if (!data.data) return <section className="box"><p className="api-state" role="status">Loading portfolio…</p></section>;
+  const o = data.data.overview;
+  const extracted = Object.entries(o.targets.from_extracted_mous);
+  const bars = (title: string, rows: CountLabel[], name: (value: string) => string = (v) => v) => {
+    const max = Math.max(1, ...rows.map((r) => r.count));
+    return (
+      <section className="box">
+        <h3>{title}</h3>
+        {rows.map((r) => (
+          <div className="bar-row" key={r.label}><span>{name(r.label)}</span><i style={{ width: `${(r.count / max) * 55}%` }} /><b>{r.count}</b></div>
+        ))}
+        {!rows.length && <p>None recorded.</p>}
+      </section>
+    );
+  };
+  const notSet = (group: "partner_group" | "partner_tier") => (v: string) => (v === "not_set" ? "Not set" : label(group, v));
+  return (
+    <>
+      <div className="kpis glance">
+        <Kpi value={o.projects.ongoing} label={`Ongoing projects (of ${o.projects.total})`} />
+        <Kpi value={o.mous.active} label={`Active MOUs (of ${o.mous.total})`} />
+        <Kpi value={o.mous.expiring_90d} label="MOUs expiring ≤90 days" hot={o.mous.expiring_90d > 0} />
+        <Kpi value={o.mous.signed_copy_pending} label="Signed copy pending" hot={o.mous.signed_copy_pending > 0} />
+      </div>
+      <div className="grid2">
+        <section className="box">
+          <h3>Money and targets</h3>
+          <div className="detail-row"><span>Total budget committed</span><span>{moneyText(o.money.committed)}</span></div>
+          <div className="detail-row"><span>Funds received</span><span>{moneyText(o.money.received)}</span></div>
+          <div className="detail-row"><span>Open pipeline ({o.money.open_deals} deals)</span><span>{moneyText(o.money.pipeline_open)}</span></div>
+          <div className="detail-row"><span>Total target (MOU records)</span><span>{o.targets.stated_on_mous.toLocaleString("en-IN")}</span></div>
+          {extracted.map(([unit, value]) => (
+            <div className="detail-row" key={unit}><span>Target from MOUs ({unit})</span><span>{value.toLocaleString("en-IN")}</span></div>
+          ))}
+          <small>Amounts are per currency; they are never combined.</small>
+        </section>
+        <section className="box">
+          <h3>Servicing</h3>
+          <div className="detail-row"><span>Reports done</span><span>{o.reporting.reports_done} of {o.reporting.reports_total}{o.reporting.reports_overdue ? ` · ${o.reporting.reports_overdue} overdue` : ""}</span></div>
+          <div className="detail-row"><span>UCs done</span><span>{o.reporting.ucs_done} of {o.reporting.ucs_total}{o.reporting.ucs_overdue ? ` · ${o.reporting.ucs_overdue} overdue` : ""}</span></div>
+          <div className="detail-row"><span>Expired MOUs</span><span>{o.mous.expired}</span></div>
+          <div className="detail-row"><span>Partners</span><span>{o.partners.total}</span></div>
+        </section>
+      </div>
+      <div className="grid2">
+        {bars("Projects by type", o.mous.by_type)}
+        {bars("MOUs by group", o.mous.by_group, notSet("partner_group"))}
+      </div>
+      <div className="grid2">
+        {bars("Partners by tier", o.partners.by_tier, notSet("partner_tier"))}
+        {bars("MOUs by location", o.mous.by_location)}
+      </div>
+    </>
   );
 }
 
@@ -1535,9 +1694,9 @@ function AgreementsPage({ onChanged }: { onChanged: () => void }) {
       {data.data && (
         <>
           <div className="radar">
-            {data.data.buckets.map(([label, count]) => (
+            {data.data.buckets.map(([label, count], index) => (
               <div key={label}>
-                <b>{count}</b>
+                <SimCount value={count} sample={[2, 3, 1][index] ?? 1} />
                 <span>Active, expiring in {label} days</span>
               </div>
             ))}
@@ -1671,7 +1830,10 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
   const [message, setMessage] = useState("");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
   const partnerOf = new Map((data.data?.partners ?? []).map((p) => [p.id, p]));
-  const mouOf = new Map((data.data?.portfolio.mous ?? []).filter((m) => m.project_id).map((m) => [m.project_id!, m]));
+  const mousOf = new Map<string, PortfolioMou[]>();
+  for (const m of data.data?.portfolio.mous ?? []) {
+    if (m.project_id) mousOf.set(m.project_id, [...(mousOf.get(m.project_id) ?? []), m]);
+  }
   const visible = (data.data?.projects ?? []).filter((project) => {
     const partner = project.partner_id ? partnerOf.get(project.partner_id) : undefined;
     return matchesQuick(filter, { text: `${project.name} ${partner?.name ?? ""} ${project.owner}`, tier: partner?.tier,
@@ -1726,7 +1888,8 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
           <div className="project-grid">
             {visible.map((project) => {
               const partner = project.partner_id ? partnerOf.get(project.partner_id) : undefined;
-              const mou = mouOf.get(project.id);
+              const projectMous = mousOf.get(project.id) ?? [];
+              const mou = projectMous[0];
               const milestones = data
                 .data!.milestones.filter((m) => m.project_id === project.id)
                 .sort((a, b) =>
@@ -1753,6 +1916,16 @@ function ProjectsPage({ onChanged }: { onChanged: () => void }) {
                     <span className="pill">
                       {project.status.replace("_", " ")}
                     </span>
+                  </div>
+                  <FollowupControl subject={projectSubject(project)} onSaved={refresh} />
+                  <div className="button-row project-mous">
+                    {projectMous.length ? projectMous.map((m) => m.source_document_id ? (
+                      <Link key={m.agreement_id} className="btn outline small-btn" to={`/documents/${m.source_document_id}`}>
+                        View MOU: {m.title}
+                      </Link>
+                    ) : (
+                      <Link key={m.agreement_id} className="btn outline small-btn" to="/agreements">MOU record: {m.title}</Link>
+                    )) : <small className="muted-copy">No MOU linked to this project</small>}
                   </div>
                   {mou && (
                     <dl className="pipeline-fields project-glance">
@@ -1911,7 +2084,7 @@ function formatAmount(amount: number, currency?: string | null): string {
 
 type ObligationRow = {
   id: string; kind: "report" | "uc"; type: string; title: string; partnerId: string; dueDate?: string | null;
-  status: string; owner: string; evidence: string | null; overdue: boolean; done: boolean; demo: boolean;
+  status: string; owner: string; overdue: boolean; done: boolean; demo: boolean;
 };
 
 function ReportsPage() {
@@ -1926,18 +2099,17 @@ function ReportsPage() {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [submittedOn, setSubmittedOn] = useState("");
-  const [evidence, setEvidence] = useState("");
   const names = new Map((data.data?.partners ?? []).map((p) => [p.id, p.name]));
   const overdueIds = new Set((data.data?.alerts.alerts ?? []).filter((a) => a.rule_id === "REPORT_OVERDUE" || a.rule_id === "UC_OVERDUE").map((a) => a.record_id));
   const timing = new Map((data.data?.timeliness.rows ?? []).map((r) => [r.id, r]));
   const rows: ObligationRow[] = [
     ...(data.data?.reports ?? []).map((r) => ({
       id: r.id, kind: "report" as const, type: `${r.report_type} report`, title: r.title, partnerId: r.partner_id, dueDate: r.due_date,
-      status: r.status, owner: r.owner, evidence: r.evidence ?? null, overdue: overdueIds.has(r.id), done: r.status === "submitted" || r.status === "accepted", demo: r.source_label === "demo",
+      status: r.status, owner: r.owner, overdue: overdueIds.has(r.id), done: r.status === "submitted" || r.status === "accepted", demo: r.source_label === "demo",
     })),
     ...(data.data?.finance ?? []).map((f) => ({
       id: f.id, kind: "uc" as const, type: "Utilization certificate", title: f.title, partnerId: f.partner_id, dueDate: f.due_date,
-      status: f.status, owner: f.owner ?? "Unassigned", evidence: f.evidence ?? null, overdue: overdueIds.has(f.id), done: ["submitted", "accepted"].includes(f.status), demo: f.source_label === "demo",
+      status: f.status, owner: f.owner ?? "Unassigned", overdue: overdueIds.has(f.id), done: ["submitted", "accepted"].includes(f.status), demo: f.source_label === "demo",
     })),
   ];
   const filtered = rows.filter((r) =>
@@ -1946,12 +2118,11 @@ function ReportsPage() {
   const markSubmitted = async (row: ObligationRow) => {
     setMessage("");
     try {
-      if (row.kind === "report") await api.reports.update(row.id, { status: "submitted", submitted_date: submittedOn, evidence: evidence.trim() });
-      else await api.finance.update(row.id, { status: "submitted", received_date: submittedOn, evidence: evidence.trim() });
+      if (row.kind === "report") await api.reports.update(row.id, { status: "submitted", submitted_date: submittedOn });
+      else await api.finance.update(row.id, { status: "submitted", received_date: submittedOn });
       setMessage(`Marked “${row.title}” submitted.`);
       setSubmitting(null);
       setSubmittedOn("");
-      setEvidence("");
       data.reload();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not update the record.");
@@ -1969,7 +2140,7 @@ function ReportsPage() {
       </div>
       {data.data && (
         <DataTable
-          headers={["Type", "Title", "Partner", "Owner", "Due", "Done on", "Timeliness", "Evidence", ""]}
+          headers={["Type", "Title", "Partner", "Owner", "Due", "Done on", "Timeliness", ""]}
           rows={filtered.map((row) => [
             row.type,
             row.title,
@@ -1980,15 +2151,12 @@ function ReportsPage() {
             <span className={`pill ${timing.get(row.id)?.state === "overdue" || timing.get(row.id)?.state === "late" ? "high" : ""}`} key="status">
               {timingLabel(timing.get(row.id))}
             </span>,
-            row.evidence ? row.evidence : row.done ? <b key="ev" className="text-bordo">No evidence recorded</b> : "—",
             row.done ? (
               ""
             ) : submitting === row.id ? (
               <span className="button-row" key="submit">
                 <input type="date" aria-label={row.kind === "uc" ? "Received on" : "Submitted on"} value={submittedOn} onChange={(e) => setSubmittedOn(e.target.value)} />
-                <input aria-label="Evidence" placeholder="Evidence: email subject, courier no., portal ref…" value={evidence}
-                  onChange={(e) => setEvidence(e.target.value)} maxLength={500} />
-                <button className="btn small-btn" disabled={!submittedOn || evidence.trim().length < 3} onClick={() => void markSubmitted(row)}>
+                <button className="btn small-btn" disabled={!submittedOn} onClick={() => void markSubmitted(row)}>
                   Save
                 </button>
               </span>
@@ -2021,51 +2189,6 @@ function timingLabel(row?: TimelinessRow): string {
 }
 
 const APPROVED_DEAL_STAGES = ["approval", "agreement", "active", "renewal"];
-
-/** The pipeline deal this MOU represents, built from its extracted values; manual deals are entered on the Pipeline page. */
-function MouPipelineDeal({ document, partners }: { document: SourceDocument; partners: Partner[] }) {
-  const data = useResource(() => api.documents.pipelineDeal(document.id), [document.id, document.agreement_id]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const add = async () => {
-    setBusy(true);
-    setError("");
-    try { await api.documents.addPipelineDeal(document.id); data.reload(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Could not add the deal."); }
-    finally { setBusy(false); }
-  };
-  const deal = data.data?.deal ?? null;
-  const shown = deal ?? data.data?.proposed;
-  const partnerName = (shown?.partner_id && partners.find((p) => p.id === shown.partner_id)?.name) || "Partner chosen when creating records";
-  return (
-    <section className="box">
-      <h3>Pipeline deal {deal ? <span className="pill">On the pipeline · {deal.stage}</span> : <span className="pill high">Not on the pipeline yet</span>}</h3>
-      {data.error && <p className="api-state error" role="alert">{data.error.message} <button className="btn small-btn" onClick={data.reload}>Retry</button></p>}
-      {data.loading && !data.data && <p className="api-state" role="status">Loading the deal…</p>}
-      {shown && (
-        <DataTable
-          headers={["Funder", "Deal", "Location", "Amount", "Sanction %", "Started", "Last follow-up"]}
-          rows={[[
-            partnerName, shown.title ?? "—", shown.location || "Not stated in the MOU",
-            shown.amount != null ? formatMoney(shown.amount, shown.currency) : "Not stated in the MOU",
-            shown.sanction_probability != null ? `${shown.sanction_probability}%` : "—",
-            shown.started_on ? formatDate(shown.started_on) : "Not stated in the MOU",
-            shown.last_followup_date ? formatDate(shown.last_followup_date) : "—",
-          ]]}
-          empty=""
-        />
-      )}
-      {deal ? (
-        <p><Link to="/pipeline">Open the pipeline</Link> to edit the stage, sanction % and follow-ups.</p>
-      ) : document.agreement_id ? (
-        <button className="btn small-btn" disabled={busy} onClick={() => void add()}>{busy ? "Adding…" : "Add to pipeline"}</button>
-      ) : (
-        <p>These values come from the MOU. The deal is added to the pipeline when you create records below.</p>
-      )}
-      {error && <p className="api-state error" role="alert">{error}</p>}
-    </section>
-  );
-}
 
 /** Is everything a Tata STRIVE MOU should state actually in this one? Checks the extracted values only; nothing is inferred. */
 function MouChecklist({ review, deals, partnerId, dealId }: {
@@ -2608,9 +2731,6 @@ function DocumentReviewPage({ partners }: { partners: Partner[] }) {
           </p>
         )}
       </section>
-      {doc.kind === "mou" && doc.source_label !== "demo" && extraction?.finished_at && doc.status !== "extracting" && (
-        <MouPipelineDeal document={doc} partners={partners} />
-      )}
       {doc.kind === "mou" && extraction?.finished_at && doc.status !== "extracting" && (
         <MouChecklist review={review} deals={pipeline.data ?? []} partnerId={partnerChoice || doc.partner_id || ""}
           dealId={dealChoice || ""} />

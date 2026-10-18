@@ -60,8 +60,8 @@ RULES: dict[str, dict[str, str]] = {
         "description": "An opportunity at the approval or agreement stage has no agreement linked to it.",
         "why": "Approved work may start before an agreement exists, or the agreement may not be recorded.",
         "action": "Create the agreement record (draft if unsigned) and link it to this opportunity."},
-    "OPPORTUNITY_NEXT_STEP_OVERDUE": {"title": "Pipeline next step overdue", "category": "pipeline", "severity": "overdue",
-        "description": "An open opportunity's next-step date has passed.",
+    "OPPORTUNITY_NEXT_STEP_OVERDUE": {"title": "Follow-up overdue", "category": "pipeline", "severity": "overdue",
+        "description": "An open deal's scheduled follow-up (next-step) date has passed and it is not marked done.",
         "why": "Missed follow-ups slow partnerships down and can lose partner interest.",
         "action": "Complete or reschedule the next step and record the new date."},
     "OPPORTUNITY_FOLLOWUP_OVERDUE": {"title": "Deal follow-up overdue", "category": "pipeline", "severity": "overdue",
@@ -72,6 +72,14 @@ RULES: dict[str, dict[str, str]] = {
         "description": "An open opportunity has no next-step date and has not been updated within the stale-opportunity window.",
         "why": "Opportunities without a next step tend to stall unnoticed.",
         "action": "Review the opportunity, record a next step with a date, or close it."},
+    "PROJECT_FOLLOWUP_OVERDUE": {"title": "Project follow-up overdue", "category": "projects", "severity": "overdue",
+        "description": "A follow-up requested on a project's status has passed its due date and is not marked completed.",
+        "why": "Without the status update, delays in delivery, reporting or funds can go unnoticed until they are costly.",
+        "action": "Get the project status from the owner or partner, then mark the follow-up completed (or reschedule it)."},
+    "PROJECT_FOLLOWUP_DUE_SOON": {"title": "Project follow-up due soon", "category": "projects", "severity": "due_soon",
+        "description": "A follow-up requested on a project's status is due within 3 days.",
+        "why": "A status check that slips becomes an overdue follow-up.",
+        "action": "Plan the status check with the project owner before the due date."},
     "MILESTONE_OVERDUE": {"title": "Milestone overdue", "category": "projects", "severity": "overdue",
         "description": "A planned or in-progress milestone is past its due date.",
         "why": "Late milestones can delay dependent reporting, fund releases, and outcomes.",
@@ -177,12 +185,12 @@ class _Builder:
 
     def deadline(self, rule_overdue: str, rule_soon: str | None, record_type: str, record: dict, title: str, due: date, *,
                  window: int, partner_id: str | None, owner: str | None, evidence: list[dict], amount_recorded: bool = False,
-                 amount: tuple[float, str] | None = None) -> None:
+                 amount: tuple[float, str] | None = None, adjustments: list[tuple[str, int]] | None = None) -> None:
         remaining = _days(due, self.today)
         if remaining < 0:
             evidence = evidence + [_ev("Days overdue", -remaining, "computed")]
             self.add(rule_overdue, record_type, record, title, partner_id=partner_id, owner=owner, due=due, evidence=evidence,
-                     amount_recorded=amount_recorded, amount=amount)
+                     amount_recorded=amount_recorded, amount=amount, adjustments=adjustments)
         elif rule_soon and remaining <= window:
             evidence = evidence + [_ev("Days remaining", remaining, "computed")]
             self.add(rule_soon, record_type, record, title, partner_id=partner_id, owner=owner, due=due, evidence=evidence,
@@ -220,7 +228,9 @@ def _pipeline_rules(b: _Builder, opportunities: list[dict], agreements: list[dic
             continue
         next_date = _parse_date(o.get("next_step_date"))
         if next_date and next_date < b.today:
+            pending = _days(b.today, next_date)
             b.add("OPPORTUNITY_NEXT_STEP_OVERDUE", "opportunities", o, title, due=next_date,
+                  adjustments=[("Follow-up pending over 2 weeks", 10)] if pending > 14 else None,
                   evidence=[_ev("Stage", stage), _ev("Next step", o.get("next_step")), _ev("Next step date", next_date), _ev("Days overdue", _days(b.today, next_date), "computed")], **common)
         elif not next_date:
             # Last contact: the recorded follow-up, else when the deal started. Without either, fall back to staleness.
@@ -237,6 +247,20 @@ def _pipeline_rules(b: _Builder, opportunities: list[dict], agreements: list[dic
             if updated and _days(b.today, updated) > b.config.stale_opportunity_days:
                 b.add("OPPORTUNITY_STALE", "opportunities", o, title,
                       evidence=[_ev("Stage", stage), _ev("Next step date", None), _ev("Last updated", updated), _ev("Days since update", _days(b.today, updated), "computed")], **common)
+
+
+def _project_followup_rules(b: _Builder, projects: list[dict]) -> None:
+    for p in projects:
+        pending = next((e for e in reversed(p.get("followup_log") or []) if not e.get("done_on")), None)
+        due = _parse_date((pending or {}).get("due_date"))
+        if not due or p.get("status") in {"completed", "closed"}:
+            continue
+        waited = _days(b.today, due)
+        b.deadline("PROJECT_FOLLOWUP_OVERDUE", "PROJECT_FOLLOWUP_DUE_SOON", "projects", p, p.get("name", p["id"]), due,
+                   window=3, partner_id=p.get("partner_id"), owner=p.get("owner"),
+                   adjustments=[("Follow-up pending over 2 weeks", 10)] if waited > 14 else None,
+                   evidence=[_ev("Project status", p.get("status")), _ev("Follow-up requested on", pending.get("scheduled_on")),
+                             _ev("Follow-up due", due)])
 
 
 def _milestone_rules(b: _Builder, milestones: list[dict]) -> None:
@@ -370,6 +394,7 @@ def evaluate(records: dict[str, list[dict]], today: date, config: RuleConfig | N
     _agreement_rules(b, get("agreements"))
     _pipeline_rules(b, get("opportunities"), get("agreements"))
     _milestone_rules(b, get("milestones"))
+    _project_followup_rules(b, get("projects"))
     _report_rules(b, get("reports"))
     _finance_rules(b, get("finance"))
     _task_rules(b, get("actions"))

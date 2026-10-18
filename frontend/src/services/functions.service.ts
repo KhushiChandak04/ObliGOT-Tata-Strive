@@ -123,10 +123,24 @@ export const api = {
     remove: (actionId: string) => request<void>(`/api/actions/${id(actionId)}`, { method: "DELETE" }),
   },
   agreements: partnerLinked<Agreement>("/api/agreements"),
-  projects: partnerLinked<Project>("/api/projects"),
+  projects: {
+    ...partnerLinked<Project>("/api/projects"),
+    /** Ask for a follow-up on this project's status in N days (dates set by the server, IST). */
+    scheduleFollowup: (projectId: string, inDays: number) =>
+      request<Project>(`/api/projects/${id(projectId)}/followup`, send("POST", { in_days: inDays })),
+    completeFollowup: (projectId: string) =>
+      request<Project>(`/api/projects/${id(projectId)}/followup/complete`, { method: "POST" }),
+  },
   finance: partnerLinked<FinanceRecord>("/api/finance"),
   reports: partnerLinked<ReportRecord>("/api/reports"),
-  opportunities: partnerLinked<Opportunity>("/api/opportunities"),
+  opportunities: {
+    ...partnerLinked<Opportunity>("/api/opportunities"),
+    /** Follow-up needed in N days (dates set by the server, IST); an open follow-up is rescheduled. */
+    scheduleFollowup: (opportunityId: string, inDays: number) =>
+      request<Opportunity>(`/api/opportunities/${id(opportunityId)}/followup`, send("POST", { in_days: inDays })),
+    completeFollowup: (opportunityId: string) =>
+      request<Opportunity>(`/api/opportunities/${id(opportunityId)}/followup/complete`, { method: "POST" }),
+  },
   milestones: {
     list: (filters: { projectId?: string; partnerId?: string; status?: string } = {}) =>
       request<Milestone[]>(`/api/milestones${query({ project_id: filters.projectId, partner_id: filters.partnerId, status: filters.status })}`),
@@ -209,10 +223,6 @@ export const api = {
     exportWorkbook: () => requestBlob("/api/export/workbook"),
     exportDocumentWorkbook: (documentId: string) =>
       requestBlob(`/api/documents/${id(documentId)}/export/workbook`),
-    /** This MOU's pipeline deal (null if none yet) and the values one is built from. */
-    pipelineDeal: (documentId: string) =>
-      request<{ deal: Opportunity | null; proposed: Partial<Opportunity> }>(`/api/documents/${id(documentId)}/pipeline-deal`),
-    addPipelineDeal: (documentId: string) => request<Opportunity>(`/api/documents/${id(documentId)}/pipeline-deal`, { method: "POST" }),
     /** Explicit user action: turn this MOU's extracted values into partner/agreement/project/report/finance records. */
     createRecords: (documentId: string, payload: { partner_id?: string; partner_name?: string; opportunity_id?: string } = {}) =>
       request<{ partner_id: string; partner_created: boolean; agreement_id: string; project_id: string; created: Record<string, number> }>(

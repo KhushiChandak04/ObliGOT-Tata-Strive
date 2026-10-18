@@ -1153,6 +1153,26 @@ th {
 .project-glance {
   margin: 10px 0;
 }
+.followup-control {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0;
+}
+.followup-control input[type="number"] {
+  width: 80px;
+}
+.tracker-bar {
+  min-width: 110px;
+}
+.tracker-bar.late i {
+  background: var(--bordo);
+}
+.project-mous {
+  margin: 8px 0;
+}
+.glance {
+  margin-top: 16px;
+}
 .doc-download {
   margin-top: 14px;
 }

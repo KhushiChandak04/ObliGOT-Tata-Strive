@@ -1,5 +1,6 @@
 """Build an editable, document-scoped workbook of extraction output and its evidence."""
 import io
+import logging
 from typing import Any
 
 from openpyxl import Workbook
@@ -55,6 +56,21 @@ def _append_sheet(wb: Workbook, name: str, headers: list[str], rows: list[list[A
         longest = max((len(str(cell.value)) for cell in column if cell.value is not None), default=0)
         ws.column_dimensions[letter].width = min(max(longest + 2, 12), 60)
     return ws
+
+
+def append_consolidated_sheet(wb: Workbook) -> None:
+    """Last sheet of every export: all MOUs in ObliGOT side by side, then totals. Never blocks the download."""
+    try:
+        from app.portfolio import CONSOLIDATED_HEADERS, consolidated_rows
+        rows, totals = consolidated_rows()
+        ws = _append_sheet(wb, "All_MOUs", CONSOLIDATED_HEADERS, rows)
+        ws.append([])
+        for line in totals:
+            ws.append([_text(v) for v in line])
+            if len(line) == 1:
+                ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
+    except Exception:  # the consolidated view is a convenience; the document's own sheets must still download
+        logging.getLogger("obligot").exception("Could not add the All_MOUs sheet")
 
 
 def build_document_workbook(document: dict, proposals: dict[str, list[dict]]) -> bytes:
@@ -157,6 +173,7 @@ def build_document_workbook(document: dict, proposals: dict[str, list[dict]]) ->
          r.get("amendment_date"), r.get("effective_date"), r.get("status"), r.get("note"),
          (r.get("evidence") or {}).get("page"), (r.get("evidence") or {}).get("quote"),
          (r.get("evidence") or {}).get("verified")] for r in changes])
+    append_consolidated_sheet(wb)
 
     wb.active = 0
     buffer = io.BytesIO()
