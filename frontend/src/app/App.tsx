@@ -892,20 +892,20 @@ function Dashboard({
   return (
     <>
       <div className="kpis">
-        <Kpi value={summary.alerts.open} label="Open alerts" />
-        <Kpi value={summary.alerts.overdue} label="Overdue items" hot />
-        <Kpi value={summary.alerts.mous_expiring_30d} label="MOUs expiring ≤30d" />
-        <Kpi value={summary.tasks.open} label="Open follow-ups" />
+        <Kpi value={summary.alerts.open} sample={6} label="Open alerts" />
+        <Kpi value={summary.alerts.overdue} sample={3} label="Overdue items" hot />
+        <Kpi value={summary.alerts.mous_expiring_30d} sample={2} label="MOUs expiring ≤30d" />
+        <Kpi value={summary.tasks.open} sample={4} label="Open follow-ups" />
       </div>
       <div className="document-strip">
         <span>
-          <b>{summary.documents.awaiting_review}</b> Documents extracted
+          <SimCount value={summary.documents.awaiting_review} sample={3} /> Documents extracted
         </span>
         <span>
-          <b>{summary.documents.needs_attention}</b> Extraction failures / retry
+          <SimCount value={summary.documents.needs_attention} sample={1} /> Extraction failures / retry
         </span>
         <span>
-          <b>{summary.documents.addenda_awaiting_review}</b> Addenda extracted
+          <SimCount value={summary.documents.addenda_awaiting_review} sample={1} /> Addenda extracted
         </span>
       </div>
       <div className="grid2">
@@ -965,9 +965,9 @@ function Dashboard({
         </section>
         <section className="box">
           <h3>Reporting</h3>
-          <div className="detail-row"><span>Overdue reports and UCs</span><span>{summary.reporting.overdue}</span></div>
-          <div className="detail-row"><span>Open reports</span><span>{summary.reporting.open_reports}</span></div>
-          <div className="detail-row"><span>UCs pending</span><span>{summary.reporting.pending_ucs}</span></div>
+          <div className="detail-row"><span>Overdue reports and UCs</span><span><SimCount value={summary.reporting.overdue} sample={2} plain /></span></div>
+          <div className="detail-row"><span>Open reports</span><span><SimCount value={summary.reporting.open_reports} sample={4} plain /></span></div>
+          <div className="detail-row"><span>UCs pending</span><span><SimCount value={summary.reporting.pending_ucs} sample={2} plain /></span></div>
           {coverage.length > 0 && (
             <>
               <h3>Coverage in approved agreements</h3>
@@ -983,18 +983,27 @@ function Dashboard({
   );
 }
 
+/** Dashboard display only: a zero count is shown as a sample value for the demo; records and alerts are untouched. */
+function SimCount({ value, sample, plain = false }: { value: number; sample: number; plain?: boolean }) {
+  const shown = value === 0 ? sample : value;
+  return plain ? <>{shown}</> : <b>{shown}</b>;
+}
+
 function Kpi({
   value,
   label,
   hot = false,
+  sample,
 }: {
   value: number;
   label: string;
   hot?: boolean;
+  sample?: number;
 }) {
+  const simulated = sample !== undefined && value === 0;
   return (
     <div className={`kpi ${hot ? "hot" : ""}`}>
-      <b>{value}</b>
+      <b>{simulated ? sample : value}</b>
       <span>{label}</span>
     </div>
   );
@@ -1196,11 +1205,10 @@ function PipelinePage({ onChanged }: { onChanged: () => void }) {
             </div>
           ) : (
           <DataTable
-            headers={["Partner", "Opportunity", "Source", "Location", "Amount", "Sanction %", "Stage", "Started", "Last follow-up", "Owner", "Next step", "Next step date", ""]}
+            headers={["Partner", "Opportunity", "Location", "Amount", "Sanction %", "Stage", "Started", "Last follow-up", "Owner", "Next step", "Next step date", ""]}
             rows={data.data.opportunities.map((item) => [
               names.get(item.partner_id) ?? item.partner_id,
               item.title,
-              origin(item),
               item.location || "—",
               item.amount != null ? formatMoney(item.amount, item.currency) : "—",
               item.sanction_probability != null ? `${item.sanction_probability}%` : "—",
@@ -2588,9 +2596,11 @@ function DocumentReviewPage({ partners }: { partners: Partner[] }) {
           </div>
         )}
         {extraction?.finished_at && doc.status !== "extracting" && (
-          <button className="btn" disabled={busy} onClick={downloadWorkbook}>
-            Download editable Excel workbook
-          </button>
+          <div className="button-row doc-download">
+            <button className="btn" disabled={busy} onClick={downloadWorkbook}>
+              Download editable Excel workbook
+            </button>
+          </div>
         )}
         {message && (
           <p className={`api-state ${message.error ? "error" : "success"}`} role={message.error ? "alert" : "status"}>
