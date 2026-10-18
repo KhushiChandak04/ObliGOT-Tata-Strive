@@ -88,6 +88,7 @@ export interface SourceDocument {
   pages?: { page_number: number; char_count: number; text_status: "text" | "low_text" }[];
   warnings: string[]; error?: string | null; extraction?: ExtractionRun | null;
   approved_by?: string | null; approved_at?: string | null; source_label?: SourceLabel;
+  archived?: boolean; archived_at?: string | null; archived_by?: string | null; archived_reason?: string | null;
 }
 export type ProposalReviewState = "proposed" | "needs_review" | "approved" | "rejected" | "deferred";
 export interface DocumentEvidence {
@@ -168,6 +169,12 @@ export interface Activity {
   partner_id?: string | null; details: Record<string, unknown>;
 }
 /** POST /api/import/preview (preview only; nothing is written). */
+export interface ImportCleanedRow { row: number; data: Record<string, unknown>; warnings: string[]; errors: string[] }
+export interface ImportCommitResult {
+  entity_type: string; dry_run: boolean; committed: boolean; header_row: number; headers: string[];
+  mapping: Record<string, string>; unmapped: string[]; cleaned: ImportCleanedRow[]; rejected: ImportCleanedRow[];
+  skipped: { row: number; reason: string }[]; valid_count: number; created: number; new_partners: string[];
+}
 export interface ImportPreview {
   entity_type: string; filename?: string | null; headers: string[]; preview_rows: Record<string, unknown>[];
   rows_previewed: number; total_rows_detected: number; valid_count: number; invalid_count: number;

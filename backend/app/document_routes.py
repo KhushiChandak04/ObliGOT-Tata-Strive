@@ -121,8 +121,9 @@ async def upload_document(request: Request) -> dict:
 
 @router.get("/documents", response_model=list[SourceDocument])
 def list_documents(partner_id: str | None = None, agreement_id: str | None = None,
-                   status: DocumentStatus | None = None, kind: Literal["mou", "addendum"] | None = None) -> list[dict]:
-    documents = list_records("documents")
+                   status: DocumentStatus | None = None, kind: Literal["mou", "addendum"] | None = None,
+                   include_archived: bool = False) -> list[dict]:
+    documents = list_records("documents", include_archived=include_archived)
     filters = {"partner_id": partner_id, "agreement_id": agreement_id, "status": status, "kind": kind}
     for field, value in filters.items():
         if value:

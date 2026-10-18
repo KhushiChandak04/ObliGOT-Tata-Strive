@@ -166,7 +166,14 @@ def _cache_set(collection: str, record_id: str, payload: dict | None) -> None:
         records[record_id] = payload
 
 
-def list_records(collection: str) -> list[dict]:
+def list_records(collection: str, include_archived: bool = False) -> list[dict]:
+    """Records of a collection. Archived records (from an archived MOU) are left out unless asked for,
+    so they drop out of every page, total, and alert while staying restorable."""
+    rows = _list_all(collection)
+    return rows if include_archived else [r for r in rows if not r.get("archived")]
+
+
+def _list_all(collection: str) -> list[dict]:
     memory = _memory_collection(collection)
     if memory is not None:
         if _DEMO_MODE:

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   Link,
   Navigate,
@@ -41,6 +41,7 @@ import type {
   DocumentEvidence,
   DocumentReview,
   FinancialTermProposal,
+  ImportCommitResult,
   ImportPreview,
   Milestone,
   ObligationProposal,
@@ -1625,7 +1626,34 @@ function rememberCurrentDocument(documentId: string | null) {
 }
 
 function DocumentsPage({ partners }: { partners: Partner[] }) {
-  const data = useResource(() => api.documents.list(), []);
+  const [showArchived, setShowArchived] = useState(false);
+  const data = useResource(() => api.documents.list({ includeArchived: showArchived }), [showArchived]);
+  const [manageId, setManageId] = useState<string | null>(null);
+  const [manageMessage, setManageMessage] = useState("");
+  // MOUs are contracts kept for audit: records created → archive (restorable); never used → remove the upload.
+  const manage = async (document: SourceDocument, action: "archive" | "restore" | "remove") => {
+    let reason = "";
+    if (action === "archive") {
+      reason = window.prompt(`Archive “${document.filename}”? Its agreement, project, reports, UCs and alerts will be hidden (restorable). Reason:`)?.trim() ?? "";
+      if (reason.length < 3) return;
+    } else if (action === "remove" && !window.confirm(`Permanently remove the upload “${document.filename}”, its pages and extracted values? This cannot be undone.`)) {
+      return;
+    }
+    setManageId(document.id);
+    setManageMessage("");
+    try {
+      if (action === "archive") await api.documents.archive(document.id, reason);
+      else if (action === "restore") await api.documents.restore(document.id);
+      else await api.documents.remove(document.id);
+      if (document.id === currentId && action !== "restore") chooseCurrent(null);
+      setManageMessage(action === "archive" ? `Archived “${document.filename}”.` : action === "restore" ? `Restored “${document.filename}”.` : `Removed “${document.filename}”.`);
+      data.reload();
+    } catch (err) {
+      setManageMessage(err instanceof Error ? err.message : "That did not work.");
+    } finally {
+      setManageId(null);
+    }
+  };
   const [kind, setKind] = useState<"mou" | "addendum">("mou");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1733,6 +1761,10 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
           Source documents{" "}
           <small>Uploaded documents are distinct from the synthetic demo samples.</small>
         </h3>
+        <label className="inline-check">
+          <input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} /> Show archived
+        </label>
+        {manageMessage && <p className="import-message" role="status">{manageMessage}</p>}
         <DataTable
           headers={[
             "Filename",
@@ -1757,7 +1789,7 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
               className={`pill ${document.status === "failed" || document.status === "blocked" ? "high" : ""}`}
               key="status"
             >
-              {documentStatus(document)}
+              {document.archived ? "Archived" : documentStatus(document)}
             </span>,
             <div className="button-row" key="actions">
               <Link className="btn small-btn" to={`/documents/${document.id}`} onClick={() => chooseCurrent(document.id)}>
@@ -1770,6 +1802,17 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
                   onClick={() => void retry(document.id)}
                 >
                   {retryingId === document.id ? "Retrying…" : "Retry extraction"}
+                </button>
+              )}
+              {document.source_label !== "demo" && document.status !== "extracting" && (
+                <button
+                  className="btn outline small-btn"
+                  disabled={manageId !== null}
+                  title={document.archived ? "Bring back this MOU and its records" : document.agreement_id
+                    ? "Hide this MOU and its records everywhere; kept for audit" : "Delete this upload (no records were created from it)"}
+                  onClick={() => void manage(document, document.archived ? "restore" : document.agreement_id ? "archive" : "remove")}
+                >
+                  {manageId === document.id ? "Working…" : document.archived ? "Restore" : document.agreement_id ? "Archive" : "Remove upload"}
                 </button>
               )}
             </div>,
@@ -2191,9 +2234,11 @@ function ImportPage() {
   const [exportMessage, setExportMessage] = useState("");
   const options = useResource(() => api.options(), []);
   const [entityType, setEntityType] = useState("projects");
+  const [file, setFile] = useState<File | null>(null);
   const parse = async (file: File) => {
     setBusy(true);
     setPreview(null);
+    setFile(file);
     setMessage("");
     try {
       const result = await api.importPreview(file, entityType);
@@ -2309,34 +2354,93 @@ function ImportPage() {
                   )}
                 </div>
               </section>
-              <section className="box validation">
-                <h3>Validation summary</h3>
-                <div>
-                  <span className="pill">Valid · {preview.valid_count}</span>
-                  <span className="pill high">
-                    Invalid · {preview.invalid_count}
-                  </span>
-                </div>
-                {preview.issues.slice(0, 5).map((issue) => (
-                  <p key={issue.row}>
-                    Row {issue.row}: {issue.issues.join("; ")}
-                  </p>
-                ))}
-                <p>{preview.warning}</p>
-              </section>
-              <button
-                className="btn"
-                disabled
-                title="Saving imported rows arrives in Step 10"
-              >
-                Confirm import (available in Step 10)
-              </button>
               <p className="import-message">{message}</p>
+              {file && <ImportCommitPanel key={`${file.name}-${file.lastModified}-${entityType}`} file={file} entityType={entityType} />}
             </>
           )}
         </>
       )}
     </div>
+  );
+}
+
+/** Cleaned rows → CSV in the browser, with a Problems column; rejected rows are kept so nothing is silently lost. */
+function cleanedCsv(result: ImportCommitResult): string {
+  const rows = [...result.cleaned, ...result.rejected].sort((a, b) => a.row - b.row);
+  const fields = Array.from(new Set(rows.flatMap((r) => Object.keys(r.data))));
+  const cell = (value: unknown) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  };
+  const lines = [["Source row", ...fields, "Result", "Problems"].map(cell).join(",")];
+  for (const r of rows) {
+    lines.push([r.row, ...fields.map((f) => r.data[f]), r.errors.length ? "Rejected" : "Clean",
+      [...r.errors, ...r.warnings].join("; ")].map(cell).join(","));
+  }
+  return lines.join("\n");
+}
+
+function ImportCommitPanel({ file, entityType }: { file: File; entityType: string }) {
+  const [result, setResult] = useState<ImportCommitResult | null>(null);
+  const [state, setState] = useState<"checking" | "ready" | "saving" | "saved" | "error">("checking");
+  const [error, setError] = useState("");
+  const run = useCallback(async (dryRun: boolean) => {
+    setState(dryRun ? "checking" : "saving");
+    setError("");
+    try {
+      setResult(await api.importCommit(file, entityType, dryRun));
+      setState(dryRun ? "ready" : "saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import failed.");
+      setState("error");
+    }
+  }, [file, entityType]);
+  useEffect(() => { void run(true); }, [run]);
+  const download = () => {
+    if (!result) return;
+    const url = URL.createObjectURL(new Blob(["﻿" + cleanedCsv(result)], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `cleaned-${file.name.replace(/\.(csv|xlsx|xlsm)$/i, "")}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+  if (state === "checking") return <p className="api-state" role="status">Cleaning the sheet…</p>;
+  if (state === "error" || !result) {
+    return (
+      <p className="api-state error" role="alert">
+        {error || "Import failed."} <button className="btn small-btn" onClick={() => void run(true)}>Retry</button>
+      </p>
+    );
+  }
+  const problems = result.rejected.slice(0, 8);
+  return (
+    <section className="box validation">
+      <h3>{state === "saved" ? "Import complete" : "Cleaned and ready to import"}</h3>
+      <p>
+        Header found on row {result.header_row}. Columns matched:{" "}
+        {Object.entries(result.mapping).map(([header, field]) => `${header} → ${field}`).join(", ") || "none"}.
+        {result.unmapped.length > 0 && ` Ignored: ${result.unmapped.join(", ")}.`}
+      </p>
+      <div>
+        <span className="pill">{state === "saved" ? `Saved · ${result.created}` : `Ready · ${result.valid_count}`}</span>
+        <span className="pill high">Rejected · {result.rejected.length}</span>
+        <span className="pill">Duplicates skipped · {result.skipped.length}</span>
+        {result.new_partners.length > 0 && <span className="pill">New partners · {result.new_partners.length}</span>}
+      </div>
+      {problems.map((r) => <p key={r.row}>Row {r.row}: {r.errors.join("; ")}</p>)}
+      {result.rejected.length > problems.length && <p>…and {result.rejected.length - problems.length} more in the cleaned file.</p>}
+      {state === "saved" && <p>Saved records now appear on their pages, and alerts are computed from them automatically.</p>}
+      <div className="button-row">
+        {state === "ready" && (
+          <button className="btn" disabled={result.valid_count === 0} onClick={() => void run(false)}>
+            Import {result.valid_count} valid rows
+          </button>
+        )}
+        {state === "saving" && <button className="btn" disabled>Saving…</button>}
+        <button className="btn outline" onClick={download}>Download cleaned sheet</button>
+      </div>
+    </section>
   );
 }
 

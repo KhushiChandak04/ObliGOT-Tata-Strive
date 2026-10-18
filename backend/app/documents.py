@@ -120,6 +120,11 @@ class SourceDocument(BaseModel):
     approved_by: str | None = None
     approved_at: datetime | None = None
     source_label: str = "user"
+    # Archived MOUs (and the records created from them) are hidden everywhere but kept for audit; restorable.
+    archived: bool = False
+    archived_at: datetime | None = None
+    archived_by: str | None = None
+    archived_reason: str | None = None
 
     @model_validator(mode="after")
     def approval_is_recorded(self):

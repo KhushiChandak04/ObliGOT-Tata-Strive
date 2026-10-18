@@ -12,9 +12,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
 
-from app.document_routes import _proposals_for
+from app import document_storage
+from app.document_routes import PROPOSAL_COLLECTIONS, _proposals_for
 from app.models import AgreementCreate, FinanceCreate, MilestoneCreate, PartnerCreate, ProjectCreate, ReportCreate
-from app.repository import get_record, list_records, patch_record, put_record
+from app.repository import delete_record, get_record, list_records, patch_record, put_record
 from app.reviews import actor, log_activity, now_iso
 from app.rules import business_today
 
@@ -145,3 +146,80 @@ def create_records(document_id: str, payload: CreateRecords, request: Request) -
                  details={"agreement_id": agreement_id, "project_id": project_id, **created})
     return {"document": document, "partner_id": partner_id, "partner_created": partner_created, "agreement_id": agreement_id,
             "project_id": project_id, "created": created}
+
+
+# ---- archive / restore / remove ----
+# MOUs are contracts kept for audit: once records exist, a document can only be archived (hidden, restorable).
+# Only an upload that never produced records can be removed outright, e.g. a mistaken or duplicate upload.
+
+class ArchiveRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+def _linked_records(document: dict) -> list[tuple[str, dict]]:
+    """Every record created from this document (archived or not)."""
+    doc_id, agreement_id = document["id"], document.get("agreement_id")
+    projects = [p for p in list_records("projects", include_archived=True) if p.get("source_document_id") == doc_id]
+    project_ids = {p["id"] for p in projects}
+    linked: list[tuple[str, dict]] = [("projects", p) for p in projects]
+    linked += [("agreements", a) for a in list_records("agreements", include_archived=True)
+               if a.get("source_document_id") == doc_id or (agreement_id and a["id"] == agreement_id)]
+    for collection in ("reports", "finance", "milestones"):
+        linked += [(collection, r) for r in list_records(collection, include_archived=True) if r.get("project_id") in project_ids]
+    for collection in PROPOSAL_COLLECTIONS:
+        linked += [(collection, r) for r in list_records(collection, include_archived=True) if r.get("document_id") == doc_id]
+    return linked
+
+
+def _set_archived(document_id: str, archived: bool, request: Request, reason: str | None = None) -> dict:
+    document = get_record("documents", document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if archived and not document.get("agreement_id"):
+        raise HTTPException(status_code=409, detail="No records were created from this document; remove the upload instead")
+    if bool(document.get("archived")) == archived:
+        raise HTTPException(status_code=409, detail="Document is already archived" if archived else "Document is not archived")
+    linked = _linked_records(document)
+    for collection, record in linked:
+        patch_record(collection, record["id"], {"archived": archived})
+    who = actor(request)
+    stamp = {"archived": archived, "archived_at": now_iso() if archived else None,
+             "archived_by": who if archived else None, "archived_reason": reason}
+    document = put_record("documents", {**document, **stamp}, document_id)
+    verb = "Archived" if archived else "Restored"
+    log_activity(actor_name=who, event="document_archived" if archived else "document_restored",
+                 summary=f"{verb} “{document['filename']}” and {len(linked)} linked records" + (f": {reason}" if reason else ""),
+                 entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"),
+                 details={"records": len(linked), "reason": reason})
+    return {"document": document, "records": len(linked)}
+
+
+@router.post("/documents/{document_id}/archive")
+def archive_document(document_id: str, payload: ArchiveRequest, request: Request) -> dict:
+    return _set_archived(document_id, True, request, payload.reason.strip())
+
+
+@router.post("/documents/{document_id}/restore")
+def restore_document(document_id: str, request: Request) -> dict:
+    return _set_archived(document_id, False, request)
+
+
+@router.delete("/documents/{document_id}", status_code=204)
+def remove_document(document_id: str, request: Request) -> None:
+    """Remove a mistaken upload that never produced records: its PDF, page readings, and extraction."""
+    document = get_record("documents", document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if document.get("agreement_id"):
+        raise HTTPException(status_code=409, detail="Records were created from this document; archive it instead")
+    if document.get("status") == "extracting":
+        raise HTTPException(status_code=409, detail="Extraction is running; wait for it to finish")
+    for collection in (*PROPOSAL_COLLECTIONS, "document_pages", "extraction_chunks"):
+        for record in list_records(collection, include_archived=True):
+            if record.get("document_id") == document_id:
+                delete_record(collection, record["id"])
+    if document.get("storage_ref"):
+        document_storage.delete_pdf(document["storage_ref"])
+    delete_record("documents", document_id)
+    log_activity(actor_name=actor(request), event="document_removed", summary=f"Removed the upload “{document['filename']}”",
+                 entity_type="document", entity_id=document_id, partner_id=document.get("partner_id"))

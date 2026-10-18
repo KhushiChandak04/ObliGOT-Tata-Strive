@@ -1122,6 +1122,14 @@ th {
   gap: 8px;
   flex-wrap: wrap;
 }
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
 .validation p,
 .import-message {
   margin-top: 12px;

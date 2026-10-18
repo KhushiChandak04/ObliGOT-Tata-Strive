@@ -36,6 +36,13 @@ def load_pdf(storage_ref: str) -> bytes:
     return (_root() / name).read_bytes()
 
 
+def delete_pdf(storage_ref: str) -> None:
+    name = storage_ref.removeprefix("local:")
+    if not storage_ref.startswith("local:") or not _SAFE_ID.match(name.removesuffix(".pdf")) or not name.endswith(".pdf"):
+        raise ValueError("invalid storage reference")
+    (_root() / name).unlink(missing_ok=True)
+
+
 def safe_display_name(filename: str | None) -> str:
     """Original filename kept for display only: path parts and control characters removed, length limited."""
     name = re.split(r"[\\/]", filename or "")[-1]

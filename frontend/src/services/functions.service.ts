@@ -1,7 +1,7 @@
 import { firebaseAuth } from "../lib/firebase";
 import type {
   ActionItem, Activity, Agreement, Alert, AlertReview, AlertsResponse, AnalyzeResponse, DashboardResponse, FinanceRecord, Followup,
-  HealthResponse, ImportPreview, Milestone,
+  HealthResponse, ImportCommitResult, ImportPreview, Milestone,
   Opportunity, Partner, Project, ReportRecord, SourceDocument, DocumentReview, AmendmentChange,
   DashboardSummary, AppOptions,
 } from "../types";
@@ -154,10 +154,25 @@ export const api = {
     form.append("entity_type", entityType);
     return request<ImportPreview>("/api/import/preview", { method: "POST", body: form });
   },
+  /** Clean a messy sheet (headers, ₹/lakh/crore amounts, dates) and, unless dryRun, save its valid rows. */
+  importCommit: (file: File, entityType: string, dryRun: boolean) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("entity_type", entityType);
+    form.append("dry_run", dryRun ? "true" : "false");
+    return request<ImportCommitResult>("/api/import/commit", { method: "POST", body: form });
+  },
   analyze: (payload: { partner_id?: string; context?: string }) => request<AnalyzeResponse>("/api/intelligence/analyze", send("POST", payload)),
   documents: {
-    list: (filters: { partnerId?: string; agreementId?: string; status?: string; kind?: string } = {}) =>
-      request<SourceDocument[]>(`/api/documents${query({ partner_id: filters.partnerId, agreement_id: filters.agreementId, status: filters.status, kind: filters.kind })}`),
+    list: (filters: { partnerId?: string; agreementId?: string; status?: string; kind?: string; includeArchived?: boolean } = {}) =>
+      request<SourceDocument[]>(`/api/documents${query({ partner_id: filters.partnerId, agreement_id: filters.agreementId, status: filters.status, kind: filters.kind, include_archived: filters.includeArchived ? "true" : undefined })}`),
+    /** Hide an MOU and every record created from it (alerts stop); kept for audit and restorable. */
+    archive: (documentId: string, reason: string) =>
+      request<{ document: SourceDocument; records: number }>(`/api/documents/${id(documentId)}/archive`, send("POST", { reason })),
+    restore: (documentId: string) =>
+      request<{ document: SourceDocument; records: number }>(`/api/documents/${id(documentId)}/restore`, { method: "POST" }),
+    /** Permanently remove an upload that never produced records (mistaken or duplicate upload). */
+    remove: (documentId: string) => request<void>(`/api/documents/${id(documentId)}`, { method: "DELETE" }),
     get: (documentId: string) => request<SourceDocument>(`/api/documents/${id(documentId)}`),
     upload: (file: File, kind: "mou" | "addendum", partnerId?: string, agreementId?: string) => {
       const form = new FormData(); form.append("file", file); form.append("kind", kind);
