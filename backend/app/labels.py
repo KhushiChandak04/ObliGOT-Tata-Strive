@@ -13,8 +13,8 @@ from app.reviews import ReviewDecision
 
 LABELS: dict[str, dict[str, str]] = {
     "partner_status": {"prospect": "Prospect", "qualification": "Qualification", "active": "Active", "on_hold": "On hold", "closed": "Closed"},
-    "partner_tier": {"platinum": "Platinum", "gold": "Gold", "silver": "Silver", "standard": "Standard"},
-    "partner_group": {"tata_group": "Tata group", "non_tata": "Non-Tata"},
+    "partner_tier": {"platinum": "Platinum", "gold": "Gold", "silver": "Silver", "bronze": "Bronze", "standard": "Standard"},
+    "partner_group": {"tata_group": "Tata", "non_tata": "Non-Tata", "government": "Government"},
     "agreement_status": {"draft": "Draft", "under_review": "Under review", "active": "Active", "expired": "Expired", "closed": "Closed"},
     "signed_copy": {"received": "Received", "pending": "Pending", "unknown": "Not confirmed"},
     "renewal_status": {"none": "Not started", "in_progress": "Renewal in progress", "renewed": "Renewed", "not_renewing": "Not renewing"},

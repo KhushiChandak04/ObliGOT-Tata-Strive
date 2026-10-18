@@ -160,7 +160,7 @@ function QuickFilters({ value, onChange, locations, children }: {
         <option value="none">Tier not set</option>
       </select>
       <select value={value.group} onChange={set("group")} aria-label="Filter by group">
-        <option value="">Tata and non-Tata</option>
+        <option value="">Tata, non-Tata and Government</option>
         {groups.map((g) => <option key={g} value={g}>{label("partner_group", g)}</option>)}
       </select>
       <select value={value.location} onChange={set("location")} aria-label="Filter by location">
@@ -756,11 +756,6 @@ function AppShell() {
           <div className="api-state demo-banner" role="status">
             <b>DEMO MODE — SYNTHETIC DATA — NOT CONNECTED TO LIVE FIRESTORE RECORDS</b>
             <span>Changes are held in backend memory and reset when the backend restarts.</span>
-          </div>
-        )}
-        {runtimeMode === "firestore" && (
-          <div className="api-state live-banner" role="status">
-            LIVE FIRESTORE MODE — this identifies the configured data source, not its current availability.
           </div>
         )}
         {runtime.error && (
@@ -1417,7 +1412,13 @@ function CashflowTable() {
   );
 }
 
-const TIER_ORDER: Record<string, number> = { platinum: 0, gold: 1, silver: 2, standard: 3 };
+/** Marks a value that was simulated because the source sheet had none. */
+function Simulated({ partner, field }: { partner: Partner; field: string }) {
+  return partner.simulated_fields?.includes(field)
+    ? <span className="sim-tag" title="Not in the source sheet; simulated for the demo">simulated</span> : null;
+}
+
+const TIER_ORDER: Record<string, number> = { platinum: 0, gold: 1, silver: 2, bronze: 3, standard: 4 };
 
 /** Every funder at a glance: tier, group, location, money, and how their MOUs are being serviced. */
 function PartnersPage({ onChanged }: { onChanged: () => void }) {
@@ -1441,7 +1442,7 @@ function PartnersPage({ onChanged }: { onChanged: () => void }) {
         action={<button className="btn small-btn" onClick={() => setDialog({})} disabled={!data.data}>Add partner</button>} />
       {data.data && (
         <section className="box">
-          <p className="muted-copy">Set each funder's tier and group here (or import your customer sheet on the Import page). Platinum and Gold partners' alerts rank higher.</p>
+          <p className="muted-copy">Tier, group and location come from the partnerships workbook; values marked “simulated” were missing there. Platinum, then Gold, Silver and Bronze partners' alerts rank higher. Edit any partner to correct them.</p>
           <QuickFilters value={filter} onChange={setFilter} locations={data.data.partners.map((p) => p.location)} />
           <DataTable
             headers={["Partner", "Tier", "Group", "Location", "Owner", "MOUs", "Committed", "Received", "Reports", "UCs", "Deliverables", ""]}
@@ -1449,9 +1450,9 @@ function PartnersPage({ onChanged }: { onChanged: () => void }) {
               const f = servicing.get(p.id);
               return [
                 p.name,
-                p.tier ? label("partner_tier", p.tier) : "Not set",
-                p.group ? label("partner_group", p.group) : "Not set",
-                p.location || "—",
+                <span key="tier">{p.tier ? label("partner_tier", p.tier) : "Not set"}<Simulated partner={p} field="tier" /></span>,
+                <span key="group">{p.group ? label("partner_group", p.group) : "Not set"}<Simulated partner={p} field="group" /></span>,
+                <span key="loc">{p.location || "—"}<Simulated partner={p} field="location" /></span>,
                 p.owner,
                 f?.mous ?? 0,
                 f ? moneyText(f.committed) : "—",

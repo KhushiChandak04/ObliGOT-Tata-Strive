@@ -35,7 +35,8 @@ class RuleConfig(BaseModel):
 # Base points per severity. Overdue items outrank upcoming ones; data gaps rank lowest.
 SEVERITY_POINTS = {"overdue": 50, "risk": 30, "due_soon": 25, "missing_data": 15}
 # Partner tier set by the team (platinum/gold/silver customers rank higher).
-TIER_POINTS = {"platinum": 15, "gold": 10, "silver": 5}
+# Big enough that, at the same urgency, Platinum outranks Gold outranks Silver outranks Bronze; timeline still counts.
+TIER_POINTS = {"platinum": 25, "gold": 15, "silver": 8, "bronze": 3}
 RELATED_ALERTS_THRESHOLD = 2  # other open alerts for the same partner that trigger the cross-record bump
 
 RULES: dict[str, dict[str, str]] = {

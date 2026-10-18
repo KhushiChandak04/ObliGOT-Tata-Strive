@@ -17,10 +17,10 @@ export interface Partner {
   id: string; name: string; category: string; contribution_types?: string[]; status: PartnerStatus;
   owner: string; updated_at: string; summary: string; contact_name?: string | null;
   contact_email?: string | null; source_label?: SourceLabel;
-  tier?: PartnerTier | null; group?: PartnerGroup | null; location?: string | null;
+  tier?: PartnerTier | null; group?: PartnerGroup | null; location?: string | null; simulated_fields?: string[];
 }
-export type PartnerTier = "platinum" | "gold" | "silver" | "standard";
-export type PartnerGroup = "tata_group" | "non_tata";
+export type PartnerTier = "platinum" | "gold" | "silver" | "bronze" | "standard";
+export type PartnerGroup = "tata_group" | "non_tata" | "government";
 export interface ActionItem {
   id: string; title: string; priority: Priority; status: ActionStatus; due_date?: string | null;
   evidence: string[]; recommended_action: string; owner?: string; related_partner_id?: string | null;

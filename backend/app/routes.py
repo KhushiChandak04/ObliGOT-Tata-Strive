@@ -100,6 +100,10 @@ def _patch_validated(collection: str, record_id: str, changes: dict, model, labe
 def update_partner(partner_id: str, payload: PartnerUpdate) -> dict:
     changes = payload.model_dump(exclude_unset=True, mode="json")
     changes["updated_at"] = business_today().isoformat()
+    current = get_record("partners", partner_id)
+    if current and current.get("simulated_fields"):
+        # A value a person changes is no longer simulated.
+        changes["simulated_fields"] = [f for f in current["simulated_fields"] if f not in changes or changes[f] == current.get(f)]
     return _patch_validated("partners", partner_id, changes, Partner, "Partner")
 
 # Collections that reference a partner, and the field holding the reference.

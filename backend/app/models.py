@@ -10,8 +10,8 @@ def _check_date_order(start: date | None, end: date | None, end_label: str, star
 
 PartnerStatus = Literal["prospect", "qualification", "active", "on_hold", "closed"]
 # Relationship tier set by the partnerships team (e.g. from their customer sheet); it raises alert priority.
-PartnerTier = Literal["platinum", "gold", "silver", "standard"]
-PartnerGroup = Literal["tata_group", "non_tata"]
+PartnerTier = Literal["platinum", "gold", "silver", "bronze", "standard"]
+PartnerGroup = Literal["tata_group", "non_tata", "government"]
 Priority = Literal["high", "medium", "low"]
 ActionStatus = Literal["open", "in_review", "done", "deferred"]
 RecordStatus = Literal["planned", "active", "on_hold", "completed", "closed"]
@@ -39,6 +39,8 @@ class Partner(BaseModel):
     tier: PartnerTier | None = None
     group: PartnerGroup | None = None
     location: str | None = None
+    # Which of tier/group/location were simulated because the source sheet had no value (shown as such in the UI).
+    simulated_fields: list[str] = Field(default_factory=list)
     source_label: str = "demo"
 
 class PartnerCreate(BaseModel):

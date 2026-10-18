@@ -1134,6 +1134,18 @@ th {
   background: #8a8f94;
   color: #fff;
 }
+.tier-bronze {
+  background: #8c5a2b;
+  color: #fff;
+}
+.sim-tag {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 0 4px;
+  margin-left: 4px;
+}
 .quick-filters {
   flex-wrap: wrap;
   gap: 8px;
