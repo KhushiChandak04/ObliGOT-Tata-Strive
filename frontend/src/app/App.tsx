@@ -572,11 +572,23 @@ function AppShell() {
     return { alerts, partners, summary };
   }, []);
   useEffect(() => {
-    if (location.pathname === "/dashboard" && previousPath.current !== "/dashboard") {
-      workspace.reload();
-    }
+    // Alerts are computed from current records, so refetch on every page change.
+    if (previousPath.current !== location.pathname) workspace.reload();
     previousPath.current = location.pathname;
   }, [location.pathname, workspace.reload]);
+  useEffect(() => {
+    // Keep alerts live without a manual refresh: poll while the tab is visible and refetch on return.
+    // The backend serves these from its Firestore read cache, so polling costs almost no Firestore reads.
+    const refresh = () => { if (document.visibilityState === "visible") workspace.reload(); };
+    const timer = window.setInterval(refresh, 20000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [workspace.reload]);
   // Live records only. While loading or when the API fails, pages show loading/error states — never sample data.
   const live = workspace.data;
   const livePartners = live?.partners ?? [];
