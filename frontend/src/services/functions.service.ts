@@ -21,7 +21,15 @@ function observeStorageMode(response: Response): void {
 async function authHeaders(): Promise<Record<string, string>> {
   const user = firebaseAuth?.currentUser;
   if (!user) return {};
-  return { Authorization: `Bearer ${await user.getIdToken()}` };
+  try {
+    return { Authorization: `Bearer ${await user.getIdToken()}` };
+  } catch (err) {
+    // The hourly token refresh failed (network block, revoked or expired session): say so instead of a raw Firebase error.
+    const code = err && typeof err === "object" && "code" in err ? String((err as { code: unknown }).code) : "";
+    throw new ApiError(code === "auth/network-request-failed"
+      ? "Could not refresh your sign-in: Google sign-in servers are unreachable from this network. Check the connection and try again."
+      : "Your sign-in has expired. Sign out and sign in again.", 401);
+  }
 }
 
 function errorMessage(detail: unknown, status: number): string {
