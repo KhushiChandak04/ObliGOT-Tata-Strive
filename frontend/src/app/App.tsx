@@ -1739,7 +1739,7 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
             document.kind.toUpperCase(),
             partners.find((partner) => partner.id === document.partner_id)
               ?.name ?? "Not linked",
-            document.agreement_id ?? "Not linked",
+            document.agreement_id ? "Records created" : document.extraction?.finished_at ? "Not yet — open to create records" : "Not linked",
             formatDate(document.uploaded_at),
             <span
               className={`pill ${document.status === "failed" || document.status === "blocked" ? "high" : ""}`}
@@ -1747,16 +1747,20 @@ function DocumentsPage({ partners }: { partners: Partner[] }) {
             >
               {documentStatus(document)}
             </span>,
-            document.source_label !== "demo" && (document.status === "retry_required" || document.status === "blocked") ? (
-              <button
-                className="btn outline small-btn"
-                key="retry"
-                disabled={retryingId !== null}
-                onClick={() => void retry(document.id)}
-              >
-                {retryingId === document.id ? "Retrying…" : "Retry extraction"}
-              </button>
-            ) : null,
+            <div className="button-row" key="actions">
+              <Link className="btn small-btn" to={`/documents/${document.id}`} onClick={() => chooseCurrent(document.id)}>
+                Open
+              </Link>
+              {document.source_label !== "demo" && (document.status === "retry_required" || document.status === "blocked") && (
+                <button
+                  className="btn outline small-btn"
+                  disabled={retryingId !== null}
+                  onClick={() => void retry(document.id)}
+                >
+                  {retryingId === document.id ? "Retrying…" : "Retry extraction"}
+                </button>
+              )}
+            </div>,
           ])}
           empty="No documents uploaded yet."
         />
