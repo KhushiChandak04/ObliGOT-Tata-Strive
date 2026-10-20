@@ -104,41 +104,66 @@ flowchart LR
 - Gemini and/or Groq credentials for AI-powered workflows
 - Optional: RapidOCR or Tesseract for local OCR
 
-### Backend
+### Windows PowerShell: first-time setup
 
-From the repository root, in PowerShell:
+Open a terminal at the repository root. The backend virtual environment belongs in `backend\.venv`; do not use a root-level `.\.venv` for this project.
 
 ```powershell
-Set-Location backend
-py -3.12 -m venv .venv
-Copy-Item .env.example .env
+Set-Location .\backend
+py -3.12 --version
+if (-not (Test-Path .\.venv\Scripts\python.exe)) { py -3.12 -m venv .venv }
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-On macOS or Linux, run from `backend/`:
-
-```bash
-python3 -m venv .venv
-cp .env.example .env
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-The API is available at `http://127.0.0.1:8000`; interactive documentation is at `/docs`, and health status is at `/api/health`.
-
-### Frontend
-
-In a second terminal:
+In a second terminal, also starting from the repository root:
 
 ```powershell
-Set-Location frontend
-Copy-Item .env.example .env
+Set-Location .\frontend
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 npm install
-npm run dev
 ```
 
-Open `http://127.0.0.1:5173`.
+Fill in the local environment files as described in [Firebase and environment configuration](#firebase-and-environment-configuration). Do not replace an existing `.env` if it already contains your local configuration.
+
+### Start the app
+
+Use **two terminals**. The working directories matter: Uvicorn must start in `backend/` so Python can import `app` and the backend loads `backend/.env`.
+
+**Terminal 1 — backend**, from the repository root. Activate the existing backend virtual environment in PowerShell:
+
+```powershell
+Set-Location .\backend
+.\.venv\Scripts\Activate.ps1
+python --version
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+After activation, PowerShell should show `(.venv)` at the start of the prompt. If script execution is blocked, allow activation for this terminal session only, then activate:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+```
+
+**Terminal 2 — frontend**, from the repository root:
+
+```powershell
+Set-Location .\frontend
+npm run dev -- --host 127.0.0.1
+```
+
+Open `http://127.0.0.1:5173`. The API is at `http://127.0.0.1:8000`; interactive documentation is at `/docs`, and its health endpoint is `/api/health`. Sign in with a Firebase user when the local web-app configuration is present.
+
+On macOS or Linux, activate the existing backend environment from `backend/` with `source .venv/bin/activate`, then run `python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`. Start Vite from `frontend/` with `npm run dev -- --host 127.0.0.1`.
+
+### Troubleshooting startup
+
+- **`ModuleNotFoundError: No module named 'app'`:** the command was run from the repository root, or used the wrong virtual environment. Run `Set-Location .\backend`, activate with `.\.venv\Scripts\Activate.ps1`, and launch Uvicorn from that directory. The backend package is `backend\app`, not a root-level `app`.
+- **Wrong Python version:** check `.\.venv\Scripts\python.exe --version` from `backend/`. Recreate `backend\.venv` with `py -3.12 -m venv .venv` if it was created with an incompatible interpreter. Do not delete or recreate an environment that contains work you need; use a new environment path if unsure.
+- **Port 8000 or 5173 is already in use:** check whether the backend or Vite is already running in another terminal and use that instance instead of starting a duplicate. Stop only the server process you own with Ctrl+C in its terminal.
+- **Frontend cannot reach the API:** confirm the backend is running at the URL in `frontend/.env` (`VITE_API_BASE_URL`) and restart Vite after editing frontend environment settings.
+- **Sign-in/API token errors:** frontend Firebase web-app settings and backend Firebase project/credentials must refer to the same Firebase project. Restart the corresponding server after changing its `.env`, then sign out and sign back in.
 
 ## Checks
 
