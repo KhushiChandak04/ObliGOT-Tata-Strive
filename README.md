@@ -1,130 +1,163 @@
-# ObliGOT — Partnership Command Center
+# ObliGOT
 
-ObliGOT is a hackathon starter for partnership lifecycle visibility, obligations, reporting, financial tracking, and evidence-grounded AI recommendations.
+### Partnership operations, obligations, and document intelligence
 
-**Direction (17 Oct 2026):** turn MOU and addendum PDFs into verified, Excel-ready records — page-level evidence, human approval, multi-sheet export — and run the deterministic alerts on approved records only. The data contract exists (`backend/app/documents.py`, `backend/app/workbook.py`, `docs/WORKBOOK_SCHEMA.md`); PDF upload with page-by-page inspection works through the API (`POST /api/documents`, private local storage, no OCR); Gemini extraction into evidence-checked proposals works through the API when `GEMINI_API_KEY` is set (not yet tested with a real key); review/approval, export, and the screens are **not built yet** (see `IMPLEMENTATION_PLAN.md`).
+ObliGOT is a partnership management platform created for the **Tata STRIVE Code Odyssey 5.0 hackathon**. It brings partner relationships, opportunities, agreements, programmes, financial records, and reporting obligations into one workspace—then highlights what needs attention, why it matters, and what to do next.
 
-## Stack
-- Frontend: React, Vite, TypeScript, React Router, Lucide
-- Authentication: Firebase Authentication starter (email/password and Google popup)
-- Persistence: Cloud Firestore through Firebase Admin SDK in FastAPI
-- Backend: FastAPI + Pydantic
-- AI: Gemini via a server-side API key, with an explicit non-AI fallback
-- Hosting: Firebase Hosting for frontend; deploy FastAPI separately (Cloud Run or another Python host)
+> **Project status:** Hackathon prototype. Validate configuration, data, authorization, and operational workflows before using it for production or real partner commitments.
 
-**No SQLite database is used.** If Firestore credentials are not configured, the backend intentionally falls back to in-memory demo records for local development. This fallback resets when the server restarts and is not persistent.
+<p align="center">
+  <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=20232A">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white">
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
+  <img alt="Firebase" src="https://img.shields.io/badge/Firebase-Auth%20%2B%20Admin-FFCA28?logo=firebase&logoColor=20232A">
+  <img alt="Firestore" src="https://img.shields.io/badge/Cloud-Firestore-FFCA28?logo=googlecloud&logoColor=20232A">
+  <img alt="Gemini" src="https://img.shields.io/badge/AI-Gemini-8E75B2?logo=googlegemini&logoColor=white">
+  <img alt="Groq" src="https://img.shields.io/badge/AI-Groq-F55036?logo=groq&logoColor=white">
+</p>
 
-## Local setup
+## What ObliGOT does
 
-### 1. Backend
-Python 3.10+ (Python 3.12 recommended):
-```bash
-cd backend
-python -m venv .venv
-# Windows PowerShell: .venv\\Scripts\\Activate.ps1
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+Partnership teams often track MOUs, opportunities, programme delivery, invoices, reports, and follow-ups in separate spreadsheets. ObliGOT provides a shared operational view and a document workflow that turns agreements into evidence-linked, editable spreadsheet output.
+
+The system is designed around a clear division of responsibility:
+
+- **Deterministic code** evaluates dates, deadlines, statuses, alert priorities, and arithmetic.
+- **AI** assists with document reading and contextual recommendations; its output is advisory and may fail.
+- **People** review the evidence, decide how to respond to alerts, and manage operational records.
+
+## Core capabilities
+
+### Operational workspace
+
+- **Dashboard:** portfolio summary and the highest-priority active alerts.
+- **Action Center:** alert evidence, reasons, recommended next steps, and human review actions.
+- **Partners and Pipeline:** partner records, opportunities, ownership, stages, and next steps.
+- **Agreements and Projects:** agreement lifecycle and programme delivery records.
+- **Reports & UCs:** reporting obligations and utilization-certificate tracking.
+- **Import:** preview, validate, and explicitly confirm supported CSV/XLSX imports.
+
+The API and data model also support finance records. There is currently **no standalone Finance page** in the frontend.
+
+### Explainable alerts
+
+Alerts are computed from current records rather than stored as fixed snapshots. Each alert includes evidence, why it matters, a recommended action, and a transparent priority breakdown. Examples include agreements approaching expiry, missing signed copies, overdue reports or milestones, and opportunities needing follow-up.
+
+Alert IDs are stable for the same rule and record. Human decisions—such as acknowledging, deferring, dismissing, or creating a task—are persisted; updating the underlying record can cause the alert to be reevaluated. Business dates use **Asia/Kolkata**.
+
+### MOU and addendum workbooks
+
+1. Upload an MOU or addendum PDF.
+2. PyMuPDF reads embedded text and renders pages when needed. Scanned pages can be read with configured AI vision or optional local OCR.
+3. The extraction workflow proposes fields, clauses, obligations, financial terms, programme scope, and tables with source-page evidence.
+4. Deterministic validation checks values and evidence against the supplied document text or page reading.
+5. Download an editable, document-scoped Excel workbook containing extracted values and their supporting evidence.
+
+Extraction is advisory: it does **not** automatically create or update operational records. Workbook edits are not synchronized back into ObliGOT. Addendum comparisons remain document-scoped rather than silently changing an agreement.
+
+### AI recommendations
+
+The alert recommendation endpoint uses Gemini when configured. Document reading and structured extraction use the configured provider path, with Gemini and Groq support; local OCR can provide an additional reading fallback when installed and enabled. Provider failures are surfaced, and deterministic alerts remain available without AI. No AI output should be treated as verified operational data without human review.
+
+## Technology
+
+| Layer               | Technologies                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| Frontend            | React 18, TypeScript, Vite, React Router, Lucide, CSS                                      |
+| Backend API         | Python, FastAPI, Pydantic                                                                  |
+| Data                | Cloud Firestore through the Firebase Admin SDK                                             |
+| Authentication      | Firebase Authentication in the browser; optional Firebase ID-token verification in FastAPI |
+| Document processing | PyMuPDF, openpyxl, Gemini, Groq; optional RapidOCR/Tesseract                               |
+| Testing             | pytest, TypeScript compiler, Vite production build                                         |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U[Team member] --> FE[React + Firebase Auth]
+    FE -->|ID token + API request| API[FastAPI]
+    API --> AUTH[Firebase Admin token verification]
+    API --> RULES[Deterministic rules and validation]
+    API --> DB[Firestore repository]
+    API --> DOC[PDF extraction and workbook export]
+    DOC --> AI[Gemini / Groq / optional OCR]
+    AI --> DOC
+    RULES --> FE
+    DB --> FE
+    DOC --> FE
 ```
-On Windows, copy `.env.example` to `.env` manually if `cp` is unavailable.
-If you start Uvicorn from the repository root instead of `backend/` on Windows, use the backend virtual environment explicitly:
+
+- FastAPI is the only application backend; API routes are mounted under `/api`.
+- The browser uses Firebase Authentication and calls FastAPI. It does not access Firestore directly.
+- Firestore client rules deny direct browser reads and writes. Backend authorization is enforced by the API when `REQUIRE_FIREBASE_AUTH=true`.
+- AI keys and Firebase Admin credentials belong in the backend environment or a secret manager—never in frontend variables or source control.
+
+## Run locally
+
+### Prerequisites
+
+- Python 3.12 recommended
+- Node.js and npm
+- A Firebase project with Authentication and Cloud Firestore enabled for live use
+- Gemini and/or Groq credentials for AI-powered workflows
+- Optional: RapidOCR or Tesseract for local OCR
+
+### Backend
+
+From the repository root, in PowerShell:
+
 ```powershell
-.\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload --host 127.0.0.1 --port 8000
+Set-Location backend
+py -3.12 -m venv .venv
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
-- API root: http://127.0.0.1:8000
-- Swagger docs: http://127.0.0.1:8000/docs
-- Health: http://127.0.0.1:8000/api/health
 
-### 2. Frontend
-In another terminal:
+On macOS or Linux, run from `backend/`:
+
 ```bash
-cd frontend
-npm install
+python3 -m venv .venv
 cp .env.example .env
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+The API is available at `http://127.0.0.1:8000`; interactive documentation is at `/docs`, and health status is at `/api/health`.
+
+### Frontend
+
+In a second terminal:
+
+```powershell
+Set-Location frontend
+Copy-Item .env.example .env
+npm install
 npm run dev
 ```
-Open http://127.0.0.1:5173.
 
-### 3. Configure Firebase
-1. Select the existing Firebase project `obligot-95487` (the web app configuration is in the ignored local `frontend/.env`; do not commit it).
-2. Enable Cloud Firestore in Native mode.
-3. Enable Authentication providers you want to use (Email/Password and/or Google).
-4. The Firebase Web App is already registered and linked to the Hosting site.
-5. Set `FIREBASE_PROJECT_ID` in `backend/.env`.
-6. For local backend Firestore access, put the service-account JSON at `backend/firebase-admin.json` (git-ignored) and set `FIREBASE_CREDENTIALS_FILE=firebase-admin.json` in `backend/.env` (relative paths resolve inside `backend/`; an absolute path also works). Never commit the file. Alternatively set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable — a value in `.env` alone is not seen by the Admin SDK.
-7. Check: `GET /api/health` must report `"database": "firestore"`.
-8. Load the fictional demo records once (optional; Firestore starts empty): `cd backend && python scripts/seed_demo.py`. It only adds records whose ID does not exist, so it never overwrites edits; dates are fixed at the time of seeding.
-9. Sign-in: the workspace requires a Firebase user (email/password or Google) whenever the web config is present. Set `REQUIRE_FIREBASE_AUTH=true` in `backend/.env` so the API rejects requests without a valid ID token (401). The frontend attaches the signed-in user's token; the activity log records the user's email.
+Open `http://127.0.0.1:5173`.
 
-The Firebase Admin SDK uses Application Default Credentials in supported Google Cloud environments. Prefer attached service identity on Cloud Run instead of shipping service-account keys.
+## Checks
 
-### Gemini
-Set `GEMINI_API_KEY` in `backend/.env` or your hosting provider's secret manager, then restart the backend. On Windows, a user-level `GEMINI_API_KEY` overrides the value in `.env`; if it is stale, clear it from the current PowerShell session before restarting with `Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue`. Never use `VITE_GEMINI_API_KEY`; Vite variables are exposed to the browser. Rotate any key accidentally shared in chat or source control. When Gemini is absent or errors, the API returns a clear rules-first response with `ai_used=false` and a machine-readable `ai_error` (`not_configured`, `timeout`, `empty_response`, `api_error:<HTTP code>`, or `error:<type>`). `GEMINI_TIMEOUT_SECONDS` (default 20) bounds each request.
+Run the backend tests:
 
-### Reading scanned MOUs: Gemini first, optional OCR fallback
-- Gemini reads scanned pages from page images (keeps tables, stamps, Hindi/English) and extracts the agreement terms.
-- If Gemini is unavailable, pages it could not read are read by **Tesseract OCR** when it is installed (plain text; tables may be flattened), then only labelled dates, references, and amounts are extracted by pattern matching. Everything is labelled with how it was read and goes through review.
-- Install Tesseract (optional):
-  - Windows: `winget install --id UB-Mannheim.TesseractOCR`, then add `C:\Program Files\Tesseract-OCR` to PATH (or set `TESSERACT_CMD` to the full path of `tesseract.exe`). For Hindi, tick "Hindi" under additional languages in the installer and set `OCR_LANGUAGES=eng+hin`.
-  - Linux / Docker: `apt-get install tesseract-ocr tesseract-ocr-hin` (already in `backend/Dockerfile`).
-- Check: `GET /api/health` → `"ocr_available": true`.
-- Regional settings (defaults for Tata STRIVE's Indian agreements): `DEFAULT_CURRENCY=INR`, `DATE_ORDER=dmy` (numeric dates day-first), `NUMBER_DECIMAL_SEPARATOR=.`. Amounts in lakh/crore are kept as written, never converted; a symbol shared by several currencies (e.g. `$`) is flagged, not guessed.
-
-## API endpoints
-- `GET /api/health`
-- `GET /api/dashboard`
-- `GET /api/partners?q=...`
-- `POST /api/partners`
-- `GET /api/partners/{partner_id}`
-- `PATCH /api/partners/{partner_id}`
-- `DELETE /api/partners/{partner_id}` (409 while agreements, projects, finance, reports, actions, or follow-ups still reference the partner)
-- `GET /api/actions?status=...&related_partner_id=...` / `POST /api/actions`
-- `GET /api/actions/{action_id}` / `PATCH /api/actions/{action_id}` / `DELETE /api/actions/{action_id}`
-- `GET /api/agreements?partner_id=...` / `POST /api/agreements` / `GET|PATCH|DELETE /api/agreements/{agreement_id}`
-- `GET /api/projects?partner_id=...` / `POST /api/projects` / `GET|PATCH|DELETE /api/projects/{project_id}`
-- `GET /api/finance?partner_id=...` / `POST /api/finance` / `GET|PATCH|DELETE /api/finance/{finance_id}`
-- `GET /api/reports?partner_id=...` / `POST /api/reports` / `GET|PATCH|DELETE /api/reports/{report_id}`
-- `POST /api/intelligence/analyze`
-- `GET /api/milestones?project_id=...&partner_id=...&status=...` / `POST /api/milestones` / `GET|PATCH|DELETE /api/milestones/{milestone_id}`
-- `GET /api/opportunities?partner_id=...&stage=...` / `POST /api/opportunities` / `GET|PATCH|DELETE /api/opportunities/{opportunity_id}`
-- `GET /api/followups?status=...&related_partner_id=...` / `POST /api/followups` / `GET|PATCH|DELETE /api/followups/{followup_id}`
-- `GET /api/alerts?partner_id=...&level=...&category=...&include_reviewed=...` / `POST|DELETE /api/alerts/{alert_id}/review` / `POST /api/alerts/{alert_id}/task` / `GET /api/rules` / `GET|PATCH /api/rules/config`
-- `GET /api/activities?partner_id=...&entity_id=...&limit=...`
-- `GET /api/rules/deadline-preview`
-- `POST /api/import/preview` (CSV/XLSX preview only; does not write records)
-
-## Error responses
-- `401` missing/invalid Firebase ID token (only when `REQUIRE_FIREBASE_AUTH=true`).
-- `503` Firestore or Firebase Auth unavailable/misconfigured — never reported as success or as an invalid token.
-- `409` delete blocked by linked records; `404` missing record; `422` validation failure.
-
-## Tests
-```bash
-cd backend
-pip install -r requirements.txt
-pytest
+```powershell
+Set-Location backend
+.\.venv\Scripts\python.exe -m pytest -q .\tests
 ```
 
-## Deploy
-### Frontend on Firebase Hosting
-From repo root:
-```bash
-npm install -g firebase-tools
-cd frontend && npm install && npm run build && cd ..
-firebase login
-firebase use --add
-firebase deploy --only hosting
+Build and type-check the frontend:
+
+```powershell
+Set-Location frontend
+npm run build
 ```
-Set frontend environment values before building; Vite embeds them into the generated bundle.
 
-### Backend on Cloud Run
-Build/deploy from the `backend` directory using your selected Google Cloud project and region. Configure environment variables and secrets in the service configuration, allow HTTPS traffic, and use a service identity with only the required Firestore permissions. Set `CORS_ORIGINS` to a JSON array containing your actual deployed frontend origin, for example `[\"https://your-app.web.app\"]`. Keep `REQUIRE_FIREBASE_AUTH=true` for a public service after validating the sign-in flow.
+## API and project references
 
-## Current limits and safety
-- This is a starter, not a finished production system.
-- Demo records are explicitly illustrative. Do not present them as verified partner commitments.
-- Firestore is used when credentials are available; otherwise the in-memory fallback is not persistent.
-- CSV/XLSX import is preview-only, deliberately not an unsafe bulk write.
-- Several frontend modules remain UI scaffolds; the API has more initial CRUD coverage than the UI.
-- Before handling real data, test authorization, data ownership/tenant boundaries, backup/restore, validation, error handling, and deployment settings.
+- API overview: [`docs/API_ENDPOINTS.md`](docs/API_ENDPOINTS.md)
+- Workbook schema: [`docs/WORKBOOK_SCHEMA.md`](docs/WORKBOOK_SCHEMA.md)
+- Backend API docs while running: `http://127.0.0.1:8000/docs`

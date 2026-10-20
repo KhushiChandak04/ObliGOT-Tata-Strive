@@ -112,6 +112,14 @@ Steps 9–13 were replaced on 17 Oct 2026 by the document-to-Excel phases below 
 - Kept finance API/data support intact because Reports & UCs still lists utilization certificates and the dashboard still displays finance-related alerts/summary values. No backend routes, persisted records, or API contracts changed.
 - Verification: `Set-Location frontend; npm run build` → passed (TypeScript and Vite production build, 1,609 modules); `git diff --check` → exit code 0; source search found no remaining Finance page/component/navigation/style references. Browser verification was not performed because no browser page was shared.
 
+### Firebase ID-token rejection troubleshooting (18 Oct 2026)
+
+- Investigation found the ignored backend/frontend `.env` files parse successfully and currently agree on Firebase project `obligot1`; the backend service-account JSON also identifies `obligot1`. The running API requires auth. `.firebaserc` selects the same project, while README previously named a different project ID; corrected that setup instruction.
+- Rotating Gemini/Groq keys does not refresh or alter Firebase ID tokens. The generic `Invalid or expired Firebase ID token` response is emitted when Firebase Admin rejects the bearer token; this can occur for an expired/revoked token or a token issued by a different Firebase project. The current local environment files themselves do not show a project ID mismatch; the exact token origin cannot be confirmed without the signed-in browser request.
+- Frontend API calls now retry one 401 once with Firebase's forced ID-token refresh, for both JSON and blob requests. Backend logs the Firebase exception class for rejected tokens, never token contents. Authentication requirements and 401 behavior remain enforced.
+- Updated README setup guidance to match `.firebaserc` and added direct troubleshooting steps for aligning project IDs, restarting Vite/Uvicorn after env changes, and signing in again when switching projects.
+- Verification: backend auth/store tests → **11 passed**; full backend `.venv\Scripts\python.exe -m pytest -q .\tests` → **303 passed, 4 skipped**, one existing Starlette/httpx deprecation warning; frontend `npm run build` → **passed**, TypeScript and Vite build (1,609 modules); `git diff --check` → exit 0 (CRLF normalization notice only). No signed-in browser token was available, so live token acceptance after refresh remains unverified.
+
 ### Opt-in Firestore-to-demo fallback (18 Oct 2026)
 
 - Added `OBLIGOT_AUTO_DEMO_FALLBACK` (default `false`). When explicitly enabled and Firestore initialization or an operation fails, the repository switches once to the isolated synthetic in-memory dataset, retries the failed operation there, and keeps all later data operations in demo mode until backend restart. Without the flag, live-store failures still return 503. Firebase Auth is unchanged.

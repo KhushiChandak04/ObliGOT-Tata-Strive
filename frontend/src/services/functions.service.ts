@@ -32,6 +32,32 @@ async function authHeaders(): Promise<Record<string, string>> {
   }
 }
 
+async function fetchResponse(
+  url: string,
+  init: RequestInit | undefined,
+  headers: Record<string, string>,
+): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, headers });
+  } catch {
+    throw new ApiError(`Cannot reach the ObliGOT API at ${API_BASE}.`, 0);
+  }
+}
+
+async function authenticatedFetch(
+  url: string,
+  init: RequestInit | undefined,
+  headers: Record<string, string>,
+): Promise<Response> {
+  let response = await fetchResponse(url, init, headers);
+  const user = firebaseAuth?.currentUser;
+  if (response.status === 401 && user) {
+    headers.Authorization = `Bearer ${await user.getIdToken(true)}`;
+    response = await fetchResponse(url, init, headers);
+  }
+  return response;
+}
+
 function errorMessage(detail: unknown, status: number): string {
   if (typeof detail === "string") return detail;
   // FastAPI request validation returns a list of {loc, msg}.
@@ -50,12 +76,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { ...(await authHeaders()), ...(init?.headers as Record<string, string> | undefined) };
   // JSON bodies are sent as strings; FormData uploads let the browser set the multipart boundary.
   if (typeof init?.body === "string") headers["Content-Type"] = "application/json";
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
-  } catch {
-    throw new ApiError(`Cannot reach the ObliGOT API at ${API_BASE}.`, 0);
-  }
+  const response = await authenticatedFetch(`${API_BASE}${path}`, init, headers);
   observeStorageMode(response);
 
   if (!response.ok) {
@@ -69,12 +90,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function requestBlob(path: string): Promise<Blob> {
   const headers = await authHeaders();
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, { headers });
-  } catch {
-    throw new ApiError(`Cannot reach the ObliGOT API at ${API_BASE}.`, 0);
-  }
+  const response = await authenticatedFetch(`${API_BASE}${path}`, undefined, headers);
   observeStorageMode(response);
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

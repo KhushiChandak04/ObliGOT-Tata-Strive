@@ -94,6 +94,22 @@ def test_verify_token_reports_unavailable_without_firebase_admin(monkeypatch):
         auth.verify_token("anything")
 
 
+def test_verify_token_logs_rejection_type_without_token(monkeypatch, caplog):
+    import firebase_admin.auth as firebase_auth
+
+    monkeypatch.setattr(auth, "get_firebase_app", lambda: object())
+
+    def reject(token, app):
+        raise firebase_auth.ExpiredIdTokenError("expired", None)
+
+    monkeypatch.setattr(firebase_auth, "verify_id_token", reject)
+    with pytest.raises(auth.InvalidToken):
+        auth.verify_token("sensitive-test-token")
+
+    assert "ExpiredIdTokenError" in caplog.text
+    assert "sensitive-test-token" not in caplog.text
+
+
 def test_credentials_file_setting_is_used_and_resolved_inside_backend(monkeypatch):
     """FIREBASE_CREDENTIALS_FILE in .env must reach the Admin SDK (pydantic settings do not set os.environ)."""
     import firebase_admin
