@@ -6,7 +6,13 @@ import type {
   DashboardSummary, AppOptions, TimelinessResponse, Portfolio,
 } from "../types";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const configuredApiBase = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
+const isLoopbackApi = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)/i.test(configuredApiBase);
+const API_BASE = (
+  import.meta.env.PROD && isLoopbackApi
+    ? ""
+    : configuredApiBase || (import.meta.env.DEV ? "http://127.0.0.1:8000" : "")
+).replace(/\/$/, "");
 
 /** An HTTP error from the backend; `status` is 0 when the backend could not be reached. */
 export class ApiError extends Error {
@@ -73,6 +79,7 @@ function errorMessage(detail: unknown, status: number): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if (!API_BASE) throw new ApiError("The ObliGOT API is not configured for this deployment.", 0);
   const headers: Record<string, string> = { ...(await authHeaders()), ...(init?.headers as Record<string, string> | undefined) };
   // JSON bodies are sent as strings; FormData uploads let the browser set the multipart boundary.
   if (typeof init?.body === "string") headers["Content-Type"] = "application/json";
@@ -89,6 +96,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function requestBlob(path: string): Promise<Blob> {
+  if (!API_BASE) throw new ApiError("The ObliGOT API is not configured for this deployment.", 0);
   const headers = await authHeaders();
   const response = await authenticatedFetch(`${API_BASE}${path}`, undefined, headers);
   observeStorageMode(response);
